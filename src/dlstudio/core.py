@@ -181,7 +181,7 @@ class Studio:
             p.set_boxes(str(b.get("name", "")), b.get("boxes") or [])
             return p.state()
         if op == "export_yolo":
-            return {"boxes": p.export_yolo(_path(b.get("folder")), bool(b.get("confirmed_only")))}
+            return {"boxes": p.export_yolo(_path(b.get("folder")), bool(b.get("confirmed_only")))}         # 도형 수
         if op == "export_coco":
             return {"file": p.export_coco(_path(b.get("file")), bool(b.get("confirmed_only")))}
         if op == "paint":
@@ -229,8 +229,8 @@ class Studio:
     def _label_use(self, p, confirmed_only: bool, file) -> dict:
         """정답을 내보내고 studio 데이터로 불러옴. 시계열·그림 폴더는 정답 표로, 표는 정답 열을 붙인 학습용 CSV로."""
         if p.schema == "boxes":
-            raise UserError("상자 정답으로 학습하는 '객체 탐지' 과제는 아직 DL studio에 없음",
-                            "[내보내기]에서 YOLO·COCO 형식으로 저장해 다른 탐지 도구에서 쓸 수 있습니다")
+            raise UserError("도형(상자·다각형·점) 정답으로 학습하는 '객체 탐지·분할' 과제는 아직 DL studio에 없음",
+                            "[내보내기]에서 YOLO·COCO 형식으로 저장해 다른 탐지·분할 도구에서 쓸 수 있습니다")
         if p.schema == "segments":
             raise UserError("구간 정답으로 학습하는 '구간 분할' 과제는 아직 studio에 없음",
                             "[내보내기]로 구간 표(file,start,end,label)를 저장해 두세요. 구간 분할 과제가 생기면 그대로 씁니다")

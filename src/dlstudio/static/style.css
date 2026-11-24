@@ -673,3 +673,28 @@ body.lab > .message.ok { border-left-color: var(--ok); }
 .lab-extra-cols label.check { display: inline-flex; align-items: center; gap: 4px; }
 body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .proj-card .pa button { white-space: nowrap; }
+
+/* 라벨링: 도형 도구 (상자·다각형·점) */
+.shape-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+.shape-tools .tool { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 10px; font-size: 13.5px; }
+.shape-tools .tool.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent-ink); box-shadow: none; }
+.shape-tools kbd { font: 600 10.5px/1 var(--font); color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 2px 4px; background: #fff; }
+.tool-help { font-size: 12px; color: var(--muted); flex: 1 1 220px; line-height: 1.4; }
+.lab-boxwrap #lab-boxsvg { cursor: crosshair; }
+#lab-boxsvg [data-i] { cursor: move; }
+#lab-boxsvg .shape-vertex { fill: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; }
+#lab-boxsvg .shape-mid { fill-opacity: .55; stroke: #fff; stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: copy; }
+#lab-boxsvg .shape-handle { cursor: nwse-resize; }
+#lab-boxsvg .draft-first { cursor: pointer; }
+#lab-boxsvg .shape-text { pointer-events: none; font-weight: 700; paint-order: stroke; stroke: #fff; stroke-width: 5px; stroke-linejoin: round; }
+.shape-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.shape-item { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 3px 8px 3px 10px; font-size: 13px; border-radius: 999px; box-shadow: none; }
+.shape-item .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
+.shape-item .muted { font-size: 12px; }
+.shape-item .x { color: var(--muted); padding: 0 2px; font-size: 15px; line-height: 1; }
+.shape-item .x:hover { color: var(--bad); }
+.shape-item.sel { border-color: var(--c); background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
+#lab-boxsvg .shape-hit { fill: transparent; stroke: none; cursor: grab; }
+#lab-boxsvg .shape-hit.shape-handle { cursor: nwse-resize; }
+#lab-boxsvg .shape-hit.draft-first { cursor: pointer; }
+#lab-boxsvg .shape-vertex, #lab-boxsvg .shape-mid, #lab-boxsvg .shape-handle-look { pointer-events: none; }

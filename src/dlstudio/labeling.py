@@ -58,6 +58,44 @@ def _finite(v) -> bool:
         return False
 
 
+MAX_POLY = 200            # 다각형 꼭짓점 수 상한
+
+
+def _in01(v) -> bool:
+    return _finite(v) and -1e-6 <= float(v) <= 1 + 1e-6
+
+
+def _clean_shape(x, classes: set):
+    """도형 하나 (그림 크기에 대한 0–1 비율) → 정리한 값 또는 None.
+    상자 [x, y, w, h, 클래스] · 다각형 ["poly", [[x, y], …], 클래스] (꼭짓점 3개 이상) · 점 ["pt", x, y, 클래스]."""
+    if not isinstance(x, (list, tuple)) or not x or not isinstance(x[-1], str) or x[-1] not in classes:
+        return None
+    k = x[-1]
+    if x[0] == "poly":
+        pts = x[1] if len(x) == 3 and isinstance(x[1], (list, tuple)) else None
+        if not pts or not 3 <= len(pts) <= MAX_POLY or not all(isinstance(p, (list, tuple)) and len(p) == 2 and _in01(p[0]) and _in01(p[1]) for p in pts):
+            return None
+        return ["poly", [[round(min(1.0, max(0.0, float(a))), 5), round(min(1.0, max(0.0, float(b))), 5)] for a, b in pts], k]
+    if x[0] == "pt":
+        if len(x) != 4 or not (_in01(x[1]) and _in01(x[2])):
+            return None
+        return ["pt", round(min(1.0, max(0.0, float(x[1]))), 5), round(min(1.0, max(0.0, float(x[2]))), 5), k]
+    if len(x) != 5 or not all(_finite(t) for t in x[:4]):
+        return None
+    a, b, c, d = (float(t) for t in x[:4])
+    if 0 <= a and 0 <= b and c > 0 and d > 0 and a + c <= 1 + 1e-6 and b + d <= 1 + 1e-6:
+        return [round(a, 5), round(b, 5), round(c, 5), round(d, 5), k]
+    return None
+
+
+def _shape_kind(x) -> str:
+    return "poly" if x[0] == "poly" else "pt" if x[0] == "pt" else "box"
+
+
+def _poly_area(pts) -> float:
+    return abs(sum(pts[i][0] * pts[i - 1][1] - pts[i - 1][0] * pts[i][1] for i in range(len(pts)))) / 2
+
+
 def _clean_value(schema: str, v, classes: set):
     """정답 값 하나를 정답 종류 규칙대로 정리 (맞지 않으면 None). 작업 파일·합치기·충돌에 같은 규칙."""
     if schema == "class":
@@ -71,16 +109,10 @@ def _clean_value(schema: str, v, classes: set):
                if isinstance(a, int) and not isinstance(a, bool) and isinstance(b, int) and not isinstance(b, bool)
                and isinstance(c, str) and c in classes and 0 <= a < b]
         return out or None
-    if schema == "boxes":
+    if schema == "boxes":                                   # 도형: 상자·다각형·점 (섞어 담음)
         if not isinstance(v, list):
             return None
-        out = []
-        for x in v:
-            if not (isinstance(x, list) and len(x) == 5 and all(_finite(t) for t in x[:4]) and isinstance(x[4], str) and x[4] in classes):
-                continue
-            a, b, c, d = (float(t) for t in x[:4])
-            if 0 <= a and 0 <= b and c > 0 and d > 0 and a + c <= 1 + 1e-6 and b + d <= 1 + 1e-6:
-                out.append([a, b, c, d, x[4]])
+        out = [s for s in (_clean_shape(x, classes) for x in v) if s is not None]
         return out or None
     return None
 
@@ -927,23 +959,21 @@ class LabelProject:
 
     # ------------------------------------------------------------ L5: 이미지 상자 (객체 탐지)
     def set_boxes(self, name: str, boxes: list) -> None:
-        """그림 하나의 상자 전체 [[x, y, w, h, 클래스], …] (왼쪽 위 기준, 그림 크기에 대한 0–1 비율). 사람 정답(확인됨)."""
+        """그림 하나의 도형 전체 (상자 [x, y, w, h, 클래스] · 다각형 ["poly", [[x, y], …], 클래스] · 점 ["pt", x, y, 클래스],
+        왼쪽 위 기준, 그림 크기에 대한 0–1 비율). 사람 정답(확인됨)."""
         if self.schema != "boxes":
-            raise _err("상자 작업이 아님", "")
+            raise _err("도형(상자·다각형·점) 작업이 아님", "")
         self._need(name)
         known = {c["name"] for c in self.classes}
         clean = []
         for b in boxes or []:
-            ok = isinstance(b, (list, tuple)) and len(b) == 5 and \
-                all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in b[:4])
-            if not ok:
-                raise _err(f"상자 값이 맞지 않음: {b}", "[x, y, 너비, 높이, 클래스] (0–1 비율)")
-            x, y, w, h, k = float(b[0]), float(b[1]), float(b[2]), float(b[3]), b[4]
-            if not (0 <= x and 0 <= y and w > 0 and h > 0 and x + w <= 1 + 1e-6 and y + h <= 1 + 1e-6):
-                raise _err(f"상자가 그림 밖으로 나감: {b}", "상자는 그림 안에 (0–1 비율)")
-            if k not in known:
-                raise _err(f"클래스 '{k}'이(가) 없음", "클래스를 먼저 더하세요")
-            clean.append([round(x, 5), round(y, 5), round(w, 5), round(h, 5), k])
+            if isinstance(b, (list, tuple)) and b and isinstance(b[-1], str) and b[-1] not in known:
+                raise _err(f"클래스 '{b[-1]}'이(가) 없음", "클래스를 먼저 더하세요")
+            s = _clean_shape(b, known)
+            if s is None:
+                raise _err(f"도형 값이 맞지 않음: {str(b)[:80]}",
+                           "상자 [x, y, 너비, 높이, 클래스] · 다각형 [\"poly\", [[x, y], …], 클래스] (꼭짓점 3개 이상) · 점 [\"pt\", x, y, 클래스] (그림 안, 0–1 비율)")
+            clean.append(s)
 
         def run():
             it = dict(self.meta["items"].get(name) or {"note": ""})
@@ -962,9 +992,10 @@ class LabelProject:
                 if self._it(n).get("boxes") and (self._it(n).get("confirmed") or not confirmed_only)]
 
     def export_yolo(self, folder: str, confirmed_only: bool = False) -> int:
-        """YOLO: folder/classes.txt + folder/labels/<그림 이름>.txt (클래스번호 cx cy w h, 0–1). 쓴 상자 수."""
+        """YOLO: folder/classes.txt + folder/labels/<그림 이름>.txt. 상자만이면 탐지 형식 (클래스번호 cx cy w h),
+        다각형이 하나라도 있으면 분할 형식 (클래스번호 x1 y1 x2 y2 …, 상자는 네 꼭짓점으로). 점은 YOLO에 넣지 않음 (COCO로). 쓴 도형 수."""
         if self.schema != "boxes":
-            raise _err("상자 작업이 아님", "")
+            raise _err("도형(상자·다각형·점) 작업이 아님", "")
         _guard_outside(folder, self.source.guard_root(), "YOLO 폴더")
         idx = {c["name"]: i for i, c in enumerate(self.classes)}
         stems: dict = {}
@@ -978,31 +1009,57 @@ class LabelProject:
             root = Path(folder)
             (root / "labels").mkdir(parents=True, exist_ok=True)
             (root / "classes.txt").write_text(chr(10).join(c["name"] for c in self.classes) + chr(10), encoding="utf-8")
-            for n, boxes in self._boxed(confirmed_only):
+            seg = any(_shape_kind(s) == "poly" for _, sh in self._boxed(confirmed_only) for s in sh)
+            for n, shapes in self._boxed(confirmed_only):
                 f = root / "labels" / Path(n).with_suffix(".txt")
                 f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text("".join(f"{idx[k]} {round(x + w / 2, 6):g} {round(y + h / 2, 6):g} {w:g} {h:g}\n" for x, y, w, h, k in boxes),
-                             encoding="utf-8")
-                n_box += len(boxes)
+                lines = []
+                for s in shapes:
+                    kind = _shape_kind(s)
+                    if kind == "pt":
+                        continue
+                    if seg:
+                        pts = s[1] if kind == "poly" else [[s[0], s[1]], [s[0] + s[2], s[1]], [s[0] + s[2], s[1] + s[3]], [s[0], s[1] + s[3]]]
+                        lines.append(f"{idx[s[-1]]} " + " ".join(f"{round(a, 6):g} {round(b, 6):g}" for a, b in pts) + "\n")
+                    else:
+                        x, y, w, h, k = s
+                        lines.append(f"{idx[k]} {round(x + w / 2, 6):g} {round(y + h / 2, 6):g} {w:g} {h:g}\n")
+                f.write_text("".join(lines), encoding="utf-8")
+                n_box += len(lines)
         except OSError as e:
             raise _err(f"YOLO 폴더에 쓸 수 없음: {folder} ({type(e).__name__})", "쓸 수 있는 폴더의 경로를 넣으세요")
         return n_box
 
     def export_coco(self, file: str, confirmed_only: bool = False) -> str:
-        """COCO JSON (bbox = 픽셀 [x, y, w, h], 그림 크기는 원본). 저장한 경로."""
+        """COCO JSON (픽셀, 그림 크기는 원본): 상자 = bbox, 다각형 = segmentation(+ 둘레 상자·넓이), 점 = keypoints(클래스마다 점 하나).
+        저장한 경로."""
         if self.schema != "boxes":
-            raise _err("상자 작업이 아님", "")
+            raise _err("도형(상자·다각형·점) 작업이 아님", "")
         _guard_outside(file, self.source.guard_root(), "COCO 파일")
-        cats = [{"id": i + 1, "name": c["name"]} for i, c in enumerate(self.classes)]
+        used_pt = {s[-1] for _, sh in self._boxed(confirmed_only) for s in sh if _shape_kind(s) == "pt"}
+        cats = [dict({"id": i + 1, "name": c["name"]}, **({"keypoints": [c["name"]], "skeleton": []} if c["name"] in used_pt else {}))
+                for i, c in enumerate(self.classes)]
         cid = {c["name"]: c["id"] for c in cats}
         images, anns = [], []
-        for i, (n, boxes) in enumerate(self._boxed(confirmed_only), start=1):
+        for i, (n, shapes) in enumerate(self._boxed(confirmed_only), start=1):
             W, H = self.samples[n].get("width") or 1, self.samples[n].get("height") or 1
             images.append({"id": i, "file_name": n, "width": W, "height": H})
-            for x, y, w, h, k in boxes:
-                bb = [round(x * W, 2), round(y * H, 2), round(w * W, 2), round(h * H, 2)]
-                anns.append({"id": len(anns) + 1, "image_id": i, "category_id": cid[k], "bbox": bb,
-                             "area": round(bb[2] * bb[3], 2), "iscrowd": 0})
+            for s in shapes:
+                kind, k = _shape_kind(s), s[-1]
+                a = {"id": len(anns) + 1, "image_id": i, "category_id": cid[k], "iscrowd": 0}
+                if kind == "poly":
+                    px = [[round(x * W, 2), round(y * H, 2)] for x, y in s[1]]
+                    xs, ys = [p[0] for p in px], [p[1] for p in px]
+                    a.update(segmentation=[[v for p in px for v in p]], bbox=[min(xs), min(ys), round(max(xs) - min(xs), 2), round(max(ys) - min(ys), 2)],
+                             area=round(_poly_area(px), 2))
+                elif kind == "pt":
+                    x, y = round(s[1] * W, 2), round(s[2] * H, 2)
+                    a.update(keypoints=[x, y, 2], num_keypoints=1, bbox=[x, y, 0, 0], area=0)
+                else:
+                    x, y, w, h, _ = s
+                    bb = [round(x * W, 2), round(y * H, 2), round(w * W, 2), round(h * H, 2)]
+                    a.update(bbox=bb, area=round(bb[2] * bb[3], 2))
+                anns.append(a)
         try:
             Path(file).parent.mkdir(parents=True, exist_ok=True)
             Path(file).write_text(json.dumps({"images": images, "annotations": anns, "categories": cats}, ensure_ascii=False, indent=1),

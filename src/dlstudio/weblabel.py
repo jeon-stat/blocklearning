@@ -82,7 +82,7 @@ def summary(studio: Studio) -> str:
     st = studio.label.state()
     c = st["counts"]
     kind = {"series_folder": "시계열", "image_folder": "이미지", "table": "표"}.get(st["source"]["kind"], "")
-    schema = {"class": "클래스", "number": "숫자", "segments": "구간", "boxes": "상자"}.get(st["schema"], "")
+    schema = {"class": "클래스", "number": "숫자", "segments": "구간", "boxes": "도형"}.get(st["schema"], "")
     return json.dumps({"kind": st["source"]["kind"], "schema": st["schema"], "text": f"{kind} · {schema} 정답",
                        "total": c["total"], "labeled": c["labeled"], "unconfirmed": c["unconfirmed"],
                        "classes": [k["name"] for k in st["classes"]]}, ensure_ascii=False)

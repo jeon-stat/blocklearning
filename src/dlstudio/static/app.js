@@ -328,7 +328,7 @@ async function renderLabelJobs() {                      // 웹: 라벨링 페이
   let items = [];
   try { items = await DLStore.labels.list(); } catch (e) { /* 보관함을 못 열면 빈 목록 */ }
   const kind = { series_folder: "시계열", image_folder: "이미지", table: "표" };
-  const schema = { class: "클래스", number: "숫자", segments: "구간", boxes: "상자" };
+  const schema = { class: "클래스", number: "숫자", segments: "구간", boxes: "도형" };
   $("label-jobs").innerHTML = items.length ? items.map((p) => {
     const m = p.meta || {}, ok = m.schema === "class" || m.schema === "number";
     return `<div class="label-job"><div><b>${esc(p.name)}</b><span class="muted">${esc(`${kind[m.kind] || ""} · ${schema[m.schema] || ""} 정답 · ${m.labeled || 0}/${m.total || 0}개`)}</span></div>` +

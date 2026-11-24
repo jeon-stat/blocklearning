@@ -100,3 +100,17 @@ def test_norm_box_and_copy_key():
 def test_click_without_drag_does_not_paint():
     assert _run("return L.isDrag(100, 100, 102, 101);") is False
     assert _run("return L.isDrag(100, 100, 108, 100);") is True
+
+
+def test_shape_helpers():
+    """도형: 통째로 옮겨도 그림 안, 다각형 닫기는 겹친 점을 하나로·3개 이상만."""
+    r = _run("""return [L.shapeKind([0.1, 0.1, 0.2, 0.2, "a"]), L.shapeKind(["poly", [[0, 0], [1, 0], [0, 1]], "a"]), L.shapeKind(["pt", 0.5, 0.5, "a"]),
+      L.moveShape(["poly", [[0.1, 0.1], [0.3, 0.1], [0.2, 0.4]], "a"], -0.5, 0.7),
+      L.moveShape(["pt", 0.9, 0.2, "a"], 0.3, -0.1), L.moveShape([0.7, 0.7, 0.2, 0.2, "a"], 0.5, 0),
+      L.closePoly([[0.1, 0.1], [0.5, 0.1], [0.5, 0.1], [0.3, 0.6], [0.1, 0.1]]), L.closePoly([[0.1, 0.1], [0.5, 0.1]])];""")
+    assert r[:3] == ["box", "poly", "pt"]
+    xs = [p[0] for p in r[3][1]]; ys = [p[1] for p in r[3][1]]
+    assert min(xs) == 0 and abs(max(ys) - 1) < 1e-9                 # 왼쪽·아래 끝에 붙음, 모양은 그대로
+    assert r[4][1] == 1 and abs(r[4][2] - 0.1) < 1e-9                  # 점도 그림 안으로
+    assert abs(r[5][0] - 0.8) < 1e-9
+    assert r[6] == [[0.1, 0.1], [0.5, 0.1], [0.3, 0.6]] and r[7] is None

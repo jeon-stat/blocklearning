@@ -29,7 +29,7 @@
   <section id="lab-start" class="panel">
     <h2>라벨링</h2>
     <p class="lead">데이터에 정답을 붙입니다. 데이터는 <b>시계열</b>(샘플마다 CSV 하나인 폴더), <b>이미지</b>(그림 폴더), <b>표</b>(CSV 한 파일, 한 행 = 샘플) 중에서 고르고,
-      정답은 클래스(분류)·숫자(회귀)·구간(시계열 시점별 단계)·상자(이미지 객체 탐지) 중에서 고릅니다.
+      정답은 클래스(분류)·숫자(회귀)·구간(시계열 시점별 단계)·도형(이미지 속 물체를 상자·다각형·점으로) 중에서 고릅니다.
       붙인 정답은 작업 파일에 바로바로 저장되고, 다 붙이면 studio 학습 데이터로 씁니다. 데이터 파일은 바꾸지 않습니다.</p>
     <div id="lab-back-box" class="row" hidden><button id="lab-back">← 지금 작업으로 돌아가기</button> <span id="lab-back-name" class="muted"></span></div>
     <h3>새 작업</h3>
@@ -37,7 +37,7 @@
       <label>데이터 <select id="lab-kind"><option value="series_folder">시계열: 샘플마다 CSV 하나인 폴더</option>
         <option value="image_folder">이미지 폴더 (하위 폴더 포함)</option><option value="table">표: CSV 한 파일 (한 행 = 샘플)</option></select></label>
       <label>목적 <select id="lab-purpose"><option value="general">일반</option><option value="anomaly">이상 탐지 (정상·이상)</option></select></label>
-      <label>정답 <select id="lab-schema"><option value="class">클래스 (분류)</option><option value="number">숫자 (회귀)</option><option value="segments">구간 (시계열 시점별 단계·상태)</option><option value="boxes">상자 (이미지 객체 탐지)</option></select></label>
+      <label>정답 <select id="lab-schema"><option value="class">클래스 (분류)</option><option value="number">숫자 (회귀)</option><option value="segments">구간 (시계열 시점별 단계·상태)</option><option value="boxes">도형: 상자·다각형·점 (이미지)</option></select></label>
     </div>
     <div class="row">
       <input id="lab-folder" class="path" placeholder="C:\data\사이클 (샘플마다 CSV 하나)">

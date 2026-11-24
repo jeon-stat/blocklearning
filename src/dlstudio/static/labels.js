@@ -9,7 +9,7 @@ const ST = () => window.DLStore.labels;
 const W = () => window.DLS_WEB;
 const LB = () => window.DLLabel;
 const when = (t) => { const d = new Date(t); return isNaN(d) ? "" : d.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); };
-const SCHEMA = { class: "클래스", number: "숫자", segments: "구간", boxes: "상자" };
+const SCHEMA = { class: "클래스", number: "숫자", segments: "구간", boxes: "도형" };
 const svgI = (d) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const PEN = svgI('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>');
 const TRASH = svgI('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>');
@@ -185,7 +185,7 @@ function setup() {
   $("lab-export-go").onclick = () => out("export", (r) => `정답 ${r.rows}개를 CSV로 내려받았음`);
   $("lab-yolo-dir").hidden = true; $("lab-coco-file").hidden = true;
   $("lab-yolo-go").textContent = "YOLO로 내려받기 (.zip)"; $("lab-coco-go").textContent = "COCO로 내려받기 (.json)";
-  $("lab-yolo-go").onclick = () => out("export_yolo", (r) => `YOLO로 상자 ${r.boxes}개를 내려받았음`);
+  $("lab-yolo-go").onclick = () => out("export_yolo", (r) => `YOLO로 도형 ${r.boxes}개를 내려받았음 (다각형이 있으면 분할 형식, 점은 COCO로)`);
   $("lab-coco-go").onclick = () => out("export_coco", () => "COCO 형식으로 내려받았음");
   $("lab-export-normal").onclick = () => out("export_normals", (r) => `정상 ${r.rows}개 목록을 내려받았음`);
   $("lab-split-go").onclick = () => out("split", (r) => `작업을 ${r.files.length}개로 나눠 내려받았음 — 각자 라벨링 페이지의 [작업 묶음 가져오기]로 엽니다`,
@@ -205,7 +205,7 @@ function setup() {
     if (!cur) return;
     const sc = (LB().state() || {}).schema;
     if (sc === "boxes" || sc === "segments")                // studio에 아직 없는 과제: 내보내기로 안내
-      return LB().showMessage(sc === "boxes" ? "상자 정답으로 학습하는 '객체 탐지' 과제는 아직 studio에 없습니다" : "구간 정답으로 학습하는 '구간 분할' 과제는 아직 studio에 없습니다",
+      return LB().showMessage(sc === "boxes" ? "도형(상자·다각형·점) 정답으로 학습하는 '객체 탐지·분할' 과제는 아직 studio에 없습니다" : "구간 정답으로 학습하는 '구간 분할' 과제는 아직 studio에 없습니다",
         sc === "boxes" ? "[내보내기]에서 YOLO·COCO로 받아 다른 탐지 도구에서 쓸 수 있습니다" : "[내보내기]로 구간 표를 받아 두세요");
     await saveNow();
     useInStudio(cur.id);
