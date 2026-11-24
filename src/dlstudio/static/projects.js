@@ -8,7 +8,7 @@ const WEBB = () => window.DLS_WEB;
 const KEY = "dlstudio-current";                       // 지금 프로젝트 {kind, id, name} (이 브라우저에만 기억)
 const SAVE_DELAY = 1500;
 
-let cur = null, dirty = false, dataDirty = false, timer = null, saving = null, tab = "local", quietUntil = 0;
+let cur = null, dirty = false, dataDirty = false, timer = null, saving = null, tab = "local", quietUntil = 0, pendingDrive = false;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -184,7 +184,16 @@ async function render() {
         <p class="muted">권한은 "DL studio가 만든 파일만"(drive.file)입니다. 다른 드라이브 파일·메일·계정 정보는 볼 수 없습니다. 데이터 사본이 본인 드라이브에 올라가니, 회사·의료 데이터는 규정을 확인하세요.</p>
         <button class="primary" id="proj-login">구글로 로그인</button> <a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>`;
       $("proj-login").onclick = async () => {
-        try { await dv.signIn("consent"); render(); if (dirty) saveNow(); } catch (e) { showError({ message: e.message }); }
+        try {
+          await dv.signIn("");                                // 처음엔 구글이 동의를 묻고, 그다음부터는 계정만 확인
+          if (pendingDrive && cur && cur.kind === "drive") {      // 새로 고친 뒤: 하던 드라이브 프로젝트를 이어서
+            pendingDrive = false;
+            const p = (await dv.list()).find((x) => x.id === cur.id);
+            if (p) return openProject("drive", p);
+          }
+          render();
+          if (dirty) saveNow();
+        } catch (e) { showError({ message: e.message }); }
       };
       return;
     }
@@ -236,7 +245,11 @@ async function init() {
     if (p) await openProject("local", p);
     else { cur = null; remember(); showCurrent(); }
   } else if (cur && cur.kind === "drive") {
-    status("구글 드라이브 프로젝트 — 이어서 하려면 [" + cur.name + "] → 구글로 로그인 → 열기");
+    pendingDrive = true;
+    status("구글 드라이브 프로젝트 — 눌러서 로그인하면 이어서 엽니다");
+    const el = $("proj-status");
+    el.classList.add("link");
+    el.onclick = () => { el.classList.remove("link"); el.onclick = null; tab = "drive"; openDialog(); };
   }
 }
 

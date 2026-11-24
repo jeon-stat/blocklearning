@@ -338,3 +338,4 @@ body.web input[readonly] { background: #f6f7f9; }
 .proj-list .pn { flex: 1; min-width: 160px; font-weight: 600; }
 .proj-list .pt { color: var(--muted); font-size: 12px; }
 .proj-list .bad { color: var(--bad); }
+.proj-status.link { color: var(--accent); text-decoration: underline; cursor: pointer; }
