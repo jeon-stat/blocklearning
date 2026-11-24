@@ -106,7 +106,10 @@ function filterBody() {
 // 요약값 이름 (데이터 종류마다 다름: 시계열·그림은 고정, 표는 열 이름 그대로)
 const STAT_LABEL = { max: "최대", min: "최소", mean: "평균", std: "표준편차", range: "범위 (최대 − 최소)", length: "길이",
   first: "처음 값", last: "마지막 값", argmax_frac: "최대 위치 (0–1)", width: "너비 (픽셀)", height: "높이 (픽셀)" };
-const statLabel = (k) => STAT_LABEL[k] || k;
+const statLabel = (k) => {
+  const i = k.lastIndexOf("·");
+  return i > 0 && STAT_LABEL[k.slice(i + 1)] ? `${k.slice(0, i)} ${STAT_LABEL[k.slice(i + 1)]}` : STAT_LABEL[k] || k;
+};
 const isNum = () => S.state && S.state.schema === "number";
 const isSeg = () => S.state && S.state.schema === "segments";
 const isBox = () => S.state && S.state.schema === "boxes";
@@ -131,10 +134,21 @@ function bars(vals, w, h) {                              // 표 썸네일: 열�
     return `<rect x="${(2 + i * bw).toFixed(1)}" y="${(v >= 0 ? mid - hh : mid).toFixed(1)}" width="${Math.max(1, bw - 1).toFixed(1)}" height="${Math.max(0.5, hh).toFixed(1)}" fill="#7f77dd"/>`;
   }).join("") + `<line x1="0" x2="${w}" y1="${mid}" y2="${mid}" stroke="#e3e6eb"/></svg>`;
 }
+function sparks(ts, w, h, color) {                      // 여러 열: 위아래로 작은 선
+  const bh = h / ts.length;
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none">` + ts.map((vals, ci) => {
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi - lo < 1e-12) { lo -= 1; hi += 1; }
+    const pts = vals.map((v, i) => `${(2 + (i / Math.max(1, vals.length - 1)) * (w - 4)).toFixed(1)},${(ci * bh + 1 + (bh - 2) - ((v - lo) / (hi - lo)) * (bh - 2)).toFixed(1)}`);
+    const col = ci === 0 ? color : ["#0ea5e9", "#f97316", "#10b981", "#e11d48", "#a855f7", "#64748b", "#ca8a04"][(ci - 1) % 7];
+    return `<polyline fill="none" stroke="${col}" stroke-width="1.1" points="${pts.join(" ")}"/>`;
+  }).join("") + `</svg>`;
+}
 function thumbOf(it, w, h, color) {
   const k = kindOf();
   if (k === "image_folder") return svgGray(it.thumb, 24, h);
   if (k === "table") return bars(it.thumb, w, h);
+  if (it.thumbs && it.thumbs.length > 1) return sparks(it.thumbs, w, h, color);
   return spark(it.thumb, w, h, color);
 }
 const labelText = (v) => (typeof v === "number" ? String(fmt(v)) : String(v));
@@ -152,6 +166,7 @@ function kindChanged() {
   const k = $("lab-kind").value;
   $("lab-folder").placeholder = { series_folder: "C:\\data\\사이클 (샘플마다 CSV 하나)", image_folder: "C:\\data\\사진 (그림 폴더)", table: "C:\\data\\공정.csv (한 행 = 샘플)" }[k];
   $("lab-column-box").hidden = k !== "series_folder";
+  $("lab-extra-box").hidden = true;
   $("lab-idcol-box").hidden = k !== "table";
   $("lab-classes-box").hidden = $("lab-schema").value === "number";
   $("lab-new-box").hidden = true;
@@ -179,16 +194,28 @@ async function scan(column) {
       (s.skipped.length ? `<div class="muted">${s.skipped.map(esc).join(" · ")}</div>` : "");
     $("lab-column").innerHTML = s.columns.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
     $("lab-column").value = column && s.columns.includes(column) ? column : s.default_column;
+    $("lab-extra-cols").innerHTML = s.columns.map((c) => `<label class="check"><input type="checkbox" value="${esc(c)}"> ${esc(c)}</label>`).join("");
+    $("lab-extra-box").hidden = s.columns.length < 2;
+    extraSync();
     if (s.classes) $("lab-classes-input").value = s.classes.join(", ");
     if (!$("lab-file").value) $("lab-file").value = defaultWorkFile(path);
   } catch (e) { showError(e); }
 }
 $("lab-scan").onclick = () => scan();
+function extraSync() {                                  // 기준 열은 '함께 볼 열'에서 뺌, 7개까지
+  const main = $("lab-column").value, boxes = [...document.querySelectorAll("#lab-extra-cols input")];
+  boxes.forEach((b) => { if (b.value === main) b.checked = false; b.disabled = b.value === main; });
+  const on = boxes.filter((b) => b.checked).length;
+  boxes.forEach((b) => { if (!b.checked && b.value !== main) b.disabled = on >= 7; });
+}
+$("lab-column").onchange = extraSync;
+$("lab-extra-cols").onchange = extraSync;
 $("lab-folder").oninput = () => { $("lab-new-box").hidden = true; $("lab-file").value = ""; delete $("lab-folder").dataset.path; };
 $("lab-new").onclick = async () => {
   const classes = $("lab-classes-input").value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
   try {
-    const st = await L("new", { path: pathOf("lab-folder"), column: $("lab-column").value, classes, file: $("lab-file").value.trim(),
+    const columns = $("lab-kind").value === "series_folder" ? [...document.querySelectorAll("#lab-extra-cols input:checked")].map((b) => b.value) : [];
+    const st = await L("new", { path: pathOf("lab-folder"), column: $("lab-column").value, columns, classes, file: $("lab-file").value.trim(),
       kind: $("lab-kind").value, schema: $("lab-schema").value, id_col: $("lab-idcol").value.trim() || null, purpose: $("lab-purpose").value });
     start(st);
   } catch (e) { showError(e); }
@@ -216,7 +243,7 @@ function setState(st) {
   const pct = (n) => (c.total ? (100 * n) / c.total : 0);
   $("lab-progress").innerHTML = `<div class="lab-bar"><span style="width:${pct(c.labeled - c.unconfirmed)}%" class="done"></span>` +
     `<span style="width:${pct(c.unconfirmed)}%" class="unconf"></span></div><div class="lab-bar-text">${esc(progressText(c))}</div>`;
-  $("lab-title").textContent = `${st.source.path.split(/[\\/]/).pop()}` + (st.source.kind === "series_folder" ? ` · 값 열 ${st.source.column}` : "") +
+  $("lab-title").textContent = `${st.source.path.split(/[\\/]/).pop()}` + (st.source.kind === "series_folder" ? ` · 기준 열 ${st.source.column}` + ((st.source.columns || []).length > 1 ? ` (+${st.source.columns.length - 1}개 함께)` : "") : "") +
     (st.schema === "number" ? " · 숫자 정답" : "");
   $("lab-numbar").hidden = st.schema !== "number";
   $("lab-who-show").textContent = st.who ? `작업자: ${st.who}` : "작업자 이름 없음";
@@ -227,6 +254,7 @@ function setState(st) {
   $("lab-rule-label-box").hidden = st.schema === "number";
   $("lab-rule-num-box").hidden = st.schema !== "number";
   $("lab-suggest").hidden = st.schema !== "class";
+  $("lab-deep").hidden = st.schema !== "class";
   $("lab-normal-cand").hidden = st.purpose !== "anomaly";
   $("lab-export-normal").hidden = st.purpose !== "anomaly" || st.schema !== "class";
   $("lab-tool-rule").hidden = st.schema === "segments" || st.schema === "boxes";
@@ -355,26 +383,36 @@ function bigView() {                                     // 데이터 종류마�
   return bigChart() + (isSeg() ? `<div class="muted lab-help">끌어서 구간 칠하기 (붓 = 숫자키 1–9, 0 = 지우개) · Shift+끌기 이동 · 휠 확대 · 두 번 눌러 원래 크기</div>`
     : `<div class="muted lab-help">휠로 확대 · 끌어서 이동 · 두 번 눌러 원래 크기</div>`);
 }
-function bigChart() {
-  const v = S.detail.values, W = 400, H = 220, P = 30;
-  if (!v.length) return `<p class="err">${esc(S.detail.error || "값이 없음")}</p>`;
-  const [a, b] = S.view, part = v.slice(Math.floor(a), Math.ceil(b) + 1);
-  let lo = Math.min(...part), hi = Math.max(...part);
-  if (hi - lo < 1e-12) { lo -= 1; hi += 1; }
-  const x = (i) => P + ((i - a) / Math.max(1e-9, b - a)) * (W - P - 6), y = (t) => 6 + (H - 26) - ((t - lo) / (hi - lo)) * (H - 26);
-  const pts = part.map((t, k) => `${x(Math.floor(a) + k).toFixed(1)},${y(t).toFixed(1)}`).join(" ");
-  const col = S.detail.label ? colorOf(S.detail.label) : "#2f6fde";
-  const scale = S.detail.n / Math.max(1, v.length);       // 줄였으면 원래 행 번호로
-  return `<svg id="lab-big" viewBox="0 0 ${W} ${H}" width="100%" class="lab-big"><rect x="${P}" y="6" width="${W - P - 6}" height="${H - 26}" fill="#fbfbfc" stroke="#e3e6eb"/>` +
-    `<polyline fill="none" stroke="${col}" stroke-width="1.4" points="${pts}"/>` +
-    `<text x="${P - 4}" y="12" font-size="10" text-anchor="end" fill="#6b7280">${fmt(hi)}</text><text x="${P - 4}" y="${H - 20}" font-size="10" text-anchor="end" fill="#6b7280">${fmt(lo)}</text>` +
-    (isSeg() ? (S.detail.segments || []).map(([s0, s1, c]) => {     // 구간 띠 (원래 행 → 보이는 값 위치)
-      const xa = Math.max(P, x(s0 / scale)), xb = Math.min(W - 6, x(s1 / scale));
-      return xb > xa ? `<rect x="${xa.toFixed(1)}" y="6" width="${(xb - xa).toFixed(1)}" height="${H - 26}" fill="${colorOf(c)}" fill-opacity=".18"/>` +
-        `<rect x="${xa.toFixed(1)}" y="${H - 22}" width="${(xb - xa).toFixed(1)}" height="5" fill="${colorOf(c)}"/>` : "";
-    }).join("") : "") +
-    (S.paintSel ? `<rect x="${Math.min(S.paintSel[0], S.paintSel[1])}" y="6" width="${Math.abs(S.paintSel[1] - S.paintSel[0])}" height="${H - 26}" fill="${S.brush == null ? "#999" : colorOf(S.state.classes[S.brush].name)}" fill-opacity=".35"/>` : "") +
-    `<text x="${P}" y="${H - 6}" font-size="10" fill="#6b7280">행 ${Math.round(a * scale) + 1}</text><text x="${W - 6}" y="${H - 6}" font-size="10" text-anchor="end" fill="#6b7280">${Math.round(b * scale) + 1}</text></svg>`;
+const CH_COLORS = ["#4f46e5", "#0ea5e9", "#f97316", "#10b981", "#e11d48", "#a855f7", "#64748b", "#ca8a04"];
+function bigChart() {                                     // 크게 보기: 열이 여럿이면 위아래로 (가로축·확대·칠하기는 함께)
+  const d = S.detail, v = d.values, W = 400, P = 30;
+  if (!v.length) return `<p class="err">${esc(d.error || "값이 없음")}</p>`;
+  const chans = d.channels && d.channels.length > 1 ? d.channels : [{ name: "", values: v }];
+  const nC = chans.length, gap = 6, bandH = nC === 1 ? 194 : Math.max(56, Math.min(110, Math.floor(440 / nC)));
+  const top = 6, bottom = top + nC * bandH + (nC - 1) * gap, H = bottom + 20;
+  const [a, b] = S.view;
+  const x = (i) => P + ((i - a) / Math.max(1e-9, b - a)) * (W - P - 6);
+  const scale = d.n / Math.max(1, v.length);              // 줄였으면 원래 행 번호로
+  let s = `<svg id="lab-big" viewBox="0 0 ${W} ${H}" width="100%" class="lab-big">`;
+  chans.forEach((ch, ci) => {
+    const t0 = top + ci * (bandH + gap), part = ch.values.slice(Math.floor(a), Math.ceil(b) + 1);
+    let lo = Math.min(...part), hi = Math.max(...part);
+    if (hi - lo < 1e-12) { lo -= 1; hi += 1; }
+    const y = (t) => t0 + bandH - ((t - lo) / (hi - lo)) * bandH;
+    const col = ci === 0 ? (d.label && !isSeg() ? colorOf(d.label) : CH_COLORS[0]) : CH_COLORS[ci % CH_COLORS.length];
+    s += `<rect x="${P}" y="${t0}" width="${W - P - 6}" height="${bandH}" fill="#fbfbfc" stroke="#e3e6eb"/>` +
+      `<polyline fill="none" stroke="${col}" stroke-width="1.4" points="${part.map((t, k) => `${x(Math.floor(a) + k).toFixed(1)},${y(t).toFixed(1)}`).join(" ")}"/>` +
+      `<text x="${P - 4}" y="${t0 + 8}" font-size="10" text-anchor="end" fill="#6b7280">${fmt(hi)}</text>` +
+      `<text x="${P - 4}" y="${t0 + bandH}" font-size="10" text-anchor="end" fill="#6b7280">${fmt(lo)}</text>` +
+      (nC > 1 ? `<text x="${P + 6}" y="${t0 + 12}" font-size="10.5" font-weight="600" fill="${col}">${esc(ch.name)}${ci === 0 ? " (기준)" : ""}</text>` : "");
+  });
+  if (isSeg()) s += (d.segments || []).map(([s0, s1, c]) => {   // 구간 띠 (원래 행 → 보이는 값 위치), 모든 열에 걸침
+    const xa = Math.max(P, x(s0 / scale)), xb = Math.min(W - 6, x(s1 / scale));
+    return xb > xa ? `<rect x="${xa.toFixed(1)}" y="${top}" width="${(xb - xa).toFixed(1)}" height="${bottom - top}" fill="${colorOf(c)}" fill-opacity=".18"/>` +
+      `<rect x="${xa.toFixed(1)}" y="${bottom - 4}" width="${(xb - xa).toFixed(1)}" height="5" fill="${colorOf(c)}"/>` : "";
+  }).join("");
+  if (S.paintSel) s += `<rect x="${Math.min(S.paintSel[0], S.paintSel[1])}" y="${top}" width="${Math.abs(S.paintSel[1] - S.paintSel[0])}" height="${bottom - top}" fill="${S.brush == null ? "#999" : colorOf(S.state.classes[S.brush].name)}" fill-opacity=".35"/>`;
+  return s + `<text x="${P}" y="${H - 6}" font-size="10" fill="#6b7280">행 ${Math.round(a * scale) + 1}</text><text x="${W - 6}" y="${H - 6}" font-size="10" text-anchor="end" fill="#6b7280">${Math.round(b * scale) + 1}</text></svg>`;
 }
 function renderDetail() {
   const d = S.detail;
@@ -718,6 +756,19 @@ $("lab-suggest").onclick = async () => {
     $("lab-sort").value = "uncertainty";
     await after(st, false);
   } catch (e) { showError(e); }
+};
+$("lab-deep").onclick = async () => {                    // 딥러닝 제안: 대표 모델을 학습해 정답 없는 샘플에
+  const b = $("lab-deep");
+  b.disabled = true;
+  try {
+    showMessage("딥러닝 모델을 학습하는 중… (수십 초 걸릴 수 있음)", "", "", true);
+    const st = await L("deep_suggest", { onProgress: (t) => showMessage(t, "", "", true) });
+    showMessage(`${st.model}이(가) ${st.applied}개에 정답을 제안했음 (학습 ${st.trained_on}개` +
+      (st.acc != null ? `, 떼어 둔 정답으로 잰 정확도 ${Math.round(st.acc * 100)}%` : "") + `)`,
+      "정렬을 '헷갈리는 것부터'로 두고 확인하세요 (Enter 확인, 숫자키로 고치기)", "", true);
+    $("lab-sort").value = "uncertainty";
+    await after(st, false);
+  } catch (e) { showError(e); } finally { b.disabled = false; }
 };
 $("lab-tool-rule").onclick = () => { togglePanel("lab-rule"); if (!$("lab-conds").children.length) addCond(); };
 $("lab-tool-import").onclick = () => togglePanel("lab-import");

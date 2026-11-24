@@ -46,7 +46,9 @@
     <div id="lab-new-box" hidden>
       <div id="lab-scan-info" class="series-info"></div>
       <div class="grid4">
-        <label id="lab-column-box">값 열 <select id="lab-column"></select></label>
+        <label id="lab-column-box">기준 열 (정렬·규칙·학습에 씀) <select id="lab-column"></select></label>
+        <div id="lab-extra-box" class="wide lab-extra" hidden><span>함께 볼 열 (선택, 7개까지) — 여러 센서를 위아래로 함께 보며 붙입니다</span>
+          <div id="lab-extra-cols" class="lab-extra-cols"></div></div>
         <label id="lab-idcol-box" hidden>ID 열 (선택, 비우면 '행 번호') <input id="lab-idcol" placeholder="예: lot"></label>
         <label id="lab-classes-box">클래스 (쉼표로 나눔, 9개까지) <input id="lab-classes-input" value="정상, 이상"></label>
         <label class="wide">작업 파일 (.dllabel) <input id="lab-file" class="path"></label>
@@ -66,7 +68,8 @@
       <span id="lab-title" class="lab-title"></span>
       <button id="lab-tool-rule">규칙으로 붙이기</button>
       <button id="lab-tool-cluster">비슷한 것끼리 묶기</button>
-      <button id="lab-suggest" title="사람이 붙인·확인한 정답으로 작은 모델을 학습해 나머지에 제안">모델 제안</button>
+      <button id="lab-suggest" title="사람이 붙인·확인한 정답으로 요약값(최대·평균 등)만 보는 작은 모델을 학습해 나머지에 제안 (빠름)">빠른 제안</button>
+      <button id="lab-deep" title="사람이 붙이거나 확인한 정답(10개 이상)으로 딥러닝 모델(시계열 1D CNN·그림 작은 CNN·표 MLP)을 학습해 나머지에 제안 (모양까지 봄, 수십 초)">딥러닝 제안</button>
       <button id="lab-tool-import">정답 표 가져오기</button>
       <button id="lab-tool-column" hidden>열에서 구간 가져오기</button>
       <button id="lab-tool-export">내보내기</button>

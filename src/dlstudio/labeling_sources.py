@@ -1,6 +1,6 @@
 """라벨링 작업실의 데이터 종류: 샘플 목록·요약값(규칙·정렬·묶기용 숫자)·썸네일·크게 보기.
 
-- series_folder: 샘플마다 CSV 하나인 폴더 (값 열 하나)
+- series_folder: 샘플마다 CSV 하나인 폴더 (기준 값 열 하나 + 함께 볼 열 여러 개)
 - image_folder: 그림 폴더 (맨 위 + 하위 폴더 한 단계)
 - table: CSV 한 파일, 한 행 = 샘플
 화면·HTTP·정답은 모른다 (labeling.py가 씀). 데이터 파일은 읽기만 한다.
@@ -13,12 +13,14 @@ from pathlib import Path
 import numpy as np
 
 from dlstudio.data import (DataError, Issue, _fit_length, _gray01, _num, _numeric_columns, _read_table,
-                              _series_files, _series_key, _series_key_img, _series_values, image_files)
+                              _series_files, _series_key, _series_key_img, _series_matrix, image_files)
 
 THUMB = 120                # 시계열 썸네일 점 수
 IMG_THUMB = 24             # 그림 썸네일 (24×24 흑백)
 DETAIL_MAX = 2000          # 크게 보기: 이보다 길면 구간별 최소·최대로 줄임
 SERIES_STATS = ("length", "min", "max", "mean", "std", "first", "last", "range", "argmax_frac")
+EXTRA_STATS = ("mean", "std", "min", "max")   # 함께 볼 열마다 요약값 (이름은 "열·mean")
+MAX_CHANNELS = 8
 IMAGE_STATS = ("mean", "std", "min", "max", "width", "height")
 
 
@@ -53,7 +55,9 @@ class SeriesSource:
 
     def __init__(self, src: dict):
         self.path, self.column = str(src["path"]), str(src.get("column", ""))
-        self.stat_names = SERIES_STATS
+        extra = [str(c) for c in (src.get("columns") or []) if isinstance(c, str) and c and c != self.column]
+        self.columns = [self.column] + list(dict.fromkeys(extra))[:MAX_CHANNELS - 1]   # 첫 열 = 기준 열 (정렬·학습)
+        self.stat_names = SERIES_STATS + tuple(f"{c}·{k}" for c in self.columns[1:] for k in EXTRA_STATS)
 
     def guard_root(self) -> str:                         # 작업 파일·내보내기를 두면 안 되는 곳
         return self.path
@@ -64,18 +68,25 @@ class SeriesSource:
         samples = {}
         for n, f, _ in files:
             try:
-                v = _series_values(n, f, self.column)
-                samples[n] = _sample(f, _series_stats(v), [round(float(x), 5) for x in _fit_length(v, THUMB, "interp")])
+                M = _series_matrix(n, f, self.columns)
+                stats = _series_stats(M[0])
+                for c, v in zip(self.columns[1:], M[1:]):
+                    stats.update({f"{c}·{k}": float(getattr(v, k)()) for k in EXTRA_STATS})
+                thumbs = [[round(float(x), 5) for x in _fit_length(v, THUMB, "interp")] for v in M]
+                samples[n] = _sample(f, stats, thumbs[0], thumbs=thumbs if len(thumbs) > 1 else None)
             except DataError as e:
                 samples[n] = _sample(f, error=e.issues[0].message)
         return samples, ({n: c for n, _, c in files} if mode == "folders" else {})
 
     def values(self, name: str, s: dict) -> np.ndarray:
-        return _series_values(name, s["path"], self.column)
+        return _series_matrix(name, s["path"], [self.column])[0]
 
     def detail(self, name: str, s: dict) -> dict:
-        v = self.values(name, s)
-        return {"values": downsample(v), "n": int(len(v))}
+        M = _series_matrix(name, s["path"], self.columns)
+        out = {"values": downsample(M[0]), "n": int(M.shape[1])}
+        if len(self.columns) > 1:
+            out["channels"] = [{"name": c, "values": downsample(v)} for c, v in zip(self.columns, M)]
+        return out
 
 
 class ImageSource:

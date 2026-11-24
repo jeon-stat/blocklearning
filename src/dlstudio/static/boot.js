@@ -6,6 +6,7 @@
     ["https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js", "sha384-90so5tCKvl0xs9agU29IMKlAVzhfzFX7QO//YxQkRhJG58bBZrFN+2ZTRB026X5X"],
     ["https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js", "sha384-vE8hbVJ4lezako5rlvE7bY0BVzWlFhZncPlckrqNwcUQpVtgbENTgZ8TBbnPjZre"],
   ];
+  window.DL_BOOT = { STATIC, TF: CDN[1] };                        // 라벨링 페이지가 학습 엔진을 필요할 때 불러옴 (web.js)
   const LABEL = document.body.dataset.page === "label";        // 라벨링 페이지 (label.html): 학습 엔진(TF.js)은 필요 없음
   const html = await (await fetch(STATIC + (LABEL ? "label.html" : "index.html"), { cache: "no-cache" })).text();
   const doc = new DOMParser().parseFromString(html, "text/html");

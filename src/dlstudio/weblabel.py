@@ -13,6 +13,8 @@ import os
 import re
 import zipfile
 
+import numpy as np
+
 from dlstudio.core import Studio, UserError, _clean
 from dlstudio import web
 from dlstudio.web import _wrap
@@ -268,3 +270,47 @@ def file_path(studio: Studio, name: str) -> str:
     if studio.label is None:
         raise UserError("라벨링 작업이 없음", "")
     return str(studio.label.file_path(name))
+
+
+# ------------------------------------------------------------ 딥러닝 제안 (웹: 학습은 화면의 엔진이, 데이터 준비·적용은 여기서)
+_deep = {}
+
+
+@_wrap
+def deep_prepare(studio: Studio) -> dict:
+    """정답 붙은 샘플로 학습할 데이터와 계획을 준비 (엔진이 deep_payload로 값을 가져감)."""
+    from dlstudio import codegen
+    from dlstudio.core import deep_graph, graph_name
+    p = studio.label
+    if p is None:
+        raise UserError("라벨링 작업이 없음", "작업을 새로 만들거나 여세요")
+    prep = p.deep_data()
+    d = prep["data"]
+    _deep.clear()
+    _deep.update(prep)
+    plan = codegen.plan_dict(deep_graph(prep["kind"]), d.length, d.n_out, d.image)
+    return {"plan": plan, "model": graph_name(prep["kind"]), "n_pred": len(prep["targets"]),
+            "classes": [str(c) for c in d.classes]}
+
+
+def deep_payload() -> dict:
+    """엔진 학습용 값: web.data_payload와 같은 모양 + 제안할 값 X_pred."""
+    d = _deep["data"]
+    f32 = lambda a: np.ascontiguousarray(a, dtype=np.float32).tobytes()
+    return {"X_train": f32(d.X_train), "X_test": f32(d.X_test), "y_train": f32(d.y_train), "y_test": f32(d.y_test),
+            "X_pred": f32(_deep["X_pred"]),
+            "meta": json.dumps({"n_train": int(len(d.y_train)), "n_test": int(len(d.y_test)), "n_features": int(d.X_train.shape[1]),
+                                "task": d.task, "n_out": int(d.n_out), "length": int(d.length),
+                                "image": list(d.image) if d.image else None, "n_pred": len(_deep["targets"])})}
+
+
+@_wrap
+def deep_apply(studio: Studio, probs_bytes, acc) -> dict:
+    """엔진이 낸 확률 (제안할 샘플 수 × 클래스 수) → 모델 제안으로 붙임."""
+    raw = probs_bytes.to_bytes() if hasattr(probs_bytes, "to_bytes") else bytes(probs_bytes)
+    d = _deep["data"]
+    P = np.frombuffer(raw, dtype=np.float32).reshape(len(_deep["targets"]), -1)
+    r = studio.label.apply_model(_deep["targets"], list(d.classes), P)
+    trained = int(len(d.y_train) + len(d.y_test))
+    _deep.clear()
+    return _clean(dict(studio.label.state(), **r, acc=None if acc is None else float(acc), trained_on=trained))

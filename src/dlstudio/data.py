@@ -326,13 +326,23 @@ def scan_series_folder(path: str, label_file: Optional[str] = None) -> dict:
 
 
 def _series_values(name: str, path, column: str) -> np.ndarray:
+    return _series_matrix(name, path, [column])[0]
+
+
+def _series_matrix(name: str, path, columns: list) -> np.ndarray:
+    """CSV 한 번 읽어 여러 값 열 → (열 수, 길이). 빈 칸은 앞뒤 값으로 메움."""
     names, rows = _read_table(path)
-    if column not in names:
-        raise DataError([Issue(None, None, f"{name}에 열 '{column}'이(가) 없음", "모든 파일의 머리글(열 이름)을 같게 하세요")])
+    for column in columns:
+        if column not in names:
+            raise DataError([Issue(None, None, f"{name}에 열 '{column}'이(가) 없음", "모든 파일의 머리글(열 이름)을 같게 하세요")])
     if not rows:
         raise DataError([Issue(None, None, f"{name}: 값이 없음", "빈 파일을 지우세요")])
     if len(rows) > SERIES_MAX_ROWS:
         raise DataError([Issue(None, None, f"{name}: {len(rows):,}행 (한도 {SERIES_MAX_ROWS:,}행)", "파일을 나누거나 줄이세요")])
+    return np.stack([_column_values(name, names, rows, c) for c in columns])
+
+
+def _column_values(name: str, names: list, rows: list, column: str) -> np.ndarray:
     j = names.index(column)
     v = np.empty(len(rows))
     for k, (rn, r) in enumerate(rows):

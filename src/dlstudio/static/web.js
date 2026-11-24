@@ -237,6 +237,7 @@ function labelCall(op, body) {
   if (op === "new") { resetLabelUrls(); r = wrapped(W.lab.new_job(W.studio, JSON.stringify(body))); }
   else if (op === "merge") r = wrapped(W.lab.merge_file(W.studio, body.file || ""));
   else if (op === "use" || op === "open") throw { message: "웹 버전은 라벨링 페이지의 작업 목록으로 엽니다", hint: "" };
+  else if (op === "deep_suggest") return deepSuggest(body);
   else if (LABEL_OUT.has(op)) {                          // 내보내기: Pyodide 안에 쓴 파일을 내려받기
     r = wrapped(W.lab.export_file(W.studio, op, JSON.stringify(body)));
     for (const [name, p] of r.files) download(name, W.py.FS.readFile(p));
@@ -244,6 +245,53 @@ function labelCall(op, body) {
   } else r = pyCall("POST", "/api/label/" + op, body);
   if (!LABEL_READ.has(op)) changed("label");
   return r;
+}
+function loadScript(src, integrity) {
+  return new Promise((ok, no) => {
+    const s = document.createElement("script");
+    s.src = src;
+    if (integrity) { s.integrity = integrity; s.crossOrigin = "anonymous"; }
+    s.onload = ok;
+    s.onerror = () => no(new Error("불러오지 못함: " + src));
+    document.body.appendChild(s);
+  });
+}
+async function ensureEngine() {                         // 라벨링 페이지: 학습 엔진(TF.js + engine.js)은 처음 쓸 때 불러옴
+  if (window.tf && window.DLEngine) return;
+  const B = window.DL_BOOT || {};
+  if (!window.tf) await loadScript(B.TF[0], B.TF[1]);
+  if (!window.DLEngine) await loadScript((B.STATIC || "src/dlstudio/static/") + "engine.js?v=" + Date.now());
+}
+async function deepSuggest(body) {                      // 딥러닝 제안: 정답 붙은 샘플로 대표 모델 학습 → 정답 없는 샘플에 확률
+  const prep = wrapped(W.lab.deep_prepare(W.studio));
+  if (body.onProgress) body.onProgress(`${prep.model} 준비 중… (처음이면 학습 엔진을 받느라 몇 초 걸립니다)`);
+  await ensureEngine();
+  const p = W.lab.deep_payload();
+  const f32 = (k) => { const u8 = bytesOf(p.get(k)); return new Float32Array(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)); };
+  const meta = JSON.parse(p.get("meta"));
+  const d = Object.assign(meta, { X_train: f32("X_train"), X_test: f32("X_test"), y_train: f32("y_train"), y_test: f32("y_test") });
+  const Xp = f32("X_pred");
+  p.destroy();
+  const epochs = 40;
+  const { net, result } = await E().train(prep.plan, d, { epochs, lr: 0.003, batch_size: 32, seed: 0 },
+    (pr) => { if (body.onProgress) body.onProgress(`${prep.model} 학습 중… ${pr.epoch}/${epochs}`); return false; });
+  let probs;
+  const x = E().toInput(Xp, meta.n_pred, net.kind, d.length, d.image);
+  try {
+    const out = await E().onCpu(() => net.predict(x));
+    const k = d.n_out;
+    probs = new Float32Array(out.length);
+    for (let i = 0; i < meta.n_pred; i++) {             // softmax
+      let m = -Infinity, s = 0;
+      for (let j = 0; j < k; j++) m = Math.max(m, out[i * k + j]);
+      for (let j = 0; j < k; j++) { probs[i * k + j] = Math.exp(out[i * k + j] - m); s += probs[i * k + j]; }
+      for (let j = 0; j < k; j++) probs[i * k + j] /= s;
+    }
+  } finally { x.dispose(); net.dispose(); }
+  const acc = meta.n_test ? result.test_metric : null;
+  const r = wrapped(W.lab.deep_apply(W.studio, new Uint8Array(probs.buffer), acc));
+  changed("label");
+  return Object.assign(r, { model: prep.model });
 }
 async function labelFileUrl(name) {                     // 그림 원본 → blob URL
   if (labelUrls[name]) return labelUrls[name];

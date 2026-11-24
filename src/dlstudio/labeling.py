@@ -200,7 +200,8 @@ class LabelProject:
     # ------------------------------------------------------------ 만들기·열기·저장
     @classmethod
     def new(cls, data_path: str, column: str, classes: list, file: str, kind: str = "series_folder",
-            schema: str = "class", id_col: Optional[str] = None, purpose: str = "general") -> "LabelProject":
+            schema: str = "class", id_col: Optional[str] = None, purpose: str = "general",
+            columns: Optional[list] = None) -> "LabelProject":
         """새 작업. kind: series_folder | image_folder | table, schema: class | number (회귀) | segments (구간).
         purpose "anomaly"(이상 탐지)면 클래스를 정상·이상으로 둠 (정상 후보 찾기·정상만 내보내기)."""
         if purpose not in PURPOSES:
@@ -221,6 +222,9 @@ class LabelProject:
         src = {"kind": kind, "path": str(data_path), "column": column}
         if id_col:
             src["id_col"] = id_col
+        extra = [str(c) for c in (columns or []) if str(c) and str(c) != column]
+        if kind == "series_folder" and extra:                # 함께 볼 열 (기준 열은 column)
+            src["columns"] = [column] + list(dict.fromkeys(extra))
         _guard_outside(file, make_source(src).guard_root(), "작업 파일")
         if Path(file).exists():
             raise _err(f"작업 파일이 이미 있음: {file}", "이어서 하려면 '작업 파일 열기'를 쓰고, 새로 하려면 다른 경로를 고르세요")
@@ -388,7 +392,7 @@ class LabelProject:
     def _row(self, n: str) -> dict:
         s, it = self.samples[n], self._it(n)
         return {"name": n, "label": it.get("label"), "by": it.get("by"), "confirmed": bool(it.get("confirmed")),
-                "note": it.get("note", ""), "thumb": s["thumb"], "stats": s["stats"], "error": s["error"],
+                "note": it.get("note", ""), "thumb": s["thumb"], "thumbs": s.get("thumbs"), "stats": s["stats"], "error": s["error"],
                 "p": it.get("p"), "cluster": self.clusters.get(n), "segments": it.get("segments", []), "boxes": it.get("boxes", []),
                 "who": it.get("who"), "conflict": it.get("conflict")}
 
@@ -450,6 +454,7 @@ class LabelProject:
         s = self._need(name)
         out = dict(self._row(name), values=[], n=0)
         out.pop("thumb")
+        out.pop("thumbs")
         if not s["error"]:
             out.update(self.source.detail(name, s))
         return out
@@ -694,8 +699,10 @@ class LabelProject:
         names = [n for n, s in self.samples.items() if s["stats"] and s["thumb"]]
         if not names:
             raise _err("특징을 만들 샘플이 없음", "값 열을 읽을 수 있는 샘플이 있어야 합니다")
-        T = np.array([self.samples[n]["thumb"] for n in names], dtype=float)
-        T = (T - T.mean(1, keepdims=True)) / (T.std(1, keepdims=True) + 1e-9)
+        def shape(n):                                       # 여러 열이면 열마다 모양을 이어 붙임
+            ts = self.samples[n].get("thumbs") or [self.samples[n]["thumb"]]
+            return np.concatenate([(np.asarray(t, float) - np.mean(t)) / (np.std(t) + 1e-9) for t in ts])
+        T = np.array([shape(n) for n in names], dtype=float)
         S = np.array([[self.samples[n]["stats"][k] for k in self.stat_names] for n in names], dtype=float)
         S = (S - S.mean(0)) / (S.std(0) + 1e-9)
         return names, np.hstack([T, 2 * S])
@@ -752,6 +759,54 @@ class LabelProject:
         todo = {names[i]: (cls[int(P[r].argmax())], float(P[r].max())) for r, i in enumerate(targets)}
         self._edit(list(todo), lambda: [self._put(n, lab, "model", p) for n, (lab, p) in todo.items()])
         return {"applied": len(todo), "trained_on": len(train), "acc": acc}
+
+    # ------------------------------------------------------------ 딥러닝 제안 (studio 대표 모델로 학습 → 정답 없는 샘플에 제안)
+    def deep_data(self) -> dict:
+        """학습할 정답(사람이 붙였거나 확인한 것)과 제안할 샘플 → Dataset(학습/시험 나눔·정규화) + 제안할 값(같은 정규화).
+        시계열은 기준 열을 중앙값 길이로 맞추고, 그림은 28×28 흑백, 표는 숫자 열."""
+        from dlstudio.data import SERIES_MAX_LEN, _fit_length, _gray01, make_dataset
+        if self.schema != "class":
+            raise _err("딥러닝 제안은 클래스 정답 작업에서만", "숫자·구간·상자 정답은 규칙·가져오기로 붙이세요")
+        cls = [c["name"] for c in self.classes]
+        ok = [n for n, s in self.samples.items() if not s["error"]]
+        train = [n for n in ok if self._it(n).get("label") in cls and (self._it(n).get("by") == "manual" or self._it(n).get("confirmed"))]
+        targets = [n for n in ok if not _has(self._it(n)) or (self._it(n).get("by") == "model" and not self._it(n).get("confirmed"))]
+        counts = {c: sum(1 for n in train if self._it(n)["label"] == c) for c in cls}
+        if sum(1 for v in counts.values() if v >= 2) < 2 or len(train) < 10:
+            raise _err(f"딥러닝 제안에는 사람이 붙이거나 확인한 정답이 10개 이상 필요함 (지금 {len(train)}개)",
+                       "클래스 2개 이상에, 클래스마다 2개 이상 붙인 뒤 다시 누르세요. 적으면 [모델 제안]이 낫습니다")
+        if not targets:
+            raise _err("제안할 샘플이 없음", "정답 없는 샘플이 있어야 합니다")
+        kind, image = self.source.kind, None
+        if kind == "series_folder":
+            lens = [self.samples[n]["stats"]["length"] for n in ok]
+            L = int(min(SERIES_MAX_LEN, max(8, int(np.median(lens)) // 8 * 8)))
+            X = {n: _fit_length(self.source.values(n, self.samples[n]), L, "interp") for n in train + targets}
+        elif kind == "image_folder":
+            Image = self.source._pil()
+            X = {}
+            for n in train + targets:
+                with Image.open(self.source.file(self.samples[n])) as im:
+                    X[n] = _gray01(im, 28, Image).reshape(-1)
+            image = (28, 28)
+        else:
+            X = {n: np.array([self.samples[n]["stats"][k] for k in self.stat_names], float) for n in train + targets}
+        d = make_dataset(np.stack([X[n] for n in train]), np.array([self._it(n)["label"] for n in train], dtype=object),
+                         task="classification", test_ratio=0.2 if len(train) >= 20 else 0.15, seed=0, image=image,
+                         features=list(self.stat_names) if kind == "table" else None)
+        P = (np.stack([X[n] for n in targets]) - d.mean) / d.std
+        return {"data": d, "X_pred": P.astype(np.float32), "targets": targets, "kind": kind}
+
+    def apply_model(self, targets: list, classes: list, probs) -> dict:
+        """딥러닝 모델의 확률 (샘플 수, 클래스 수) → 정답 없는 샘플에 '모델 제안'으로 (사람·규칙·가져온 정답은 덮지 않음)."""
+        P = np.asarray(probs, dtype=float).reshape(len(targets), len(classes))
+        todo = {}
+        for n, p in zip(targets, P):
+            it = self._it(n)
+            if n in self.samples and (not _has(it) or (it.get("by") == "model" and not it.get("confirmed"))):
+                todo[n] = (str(classes[int(p.argmax())]), float(p.max()))
+        self._edit(list(todo), lambda: [self._put(n, lab, "model", p) for n, (lab, p) in todo.items()])
+        return {"applied": len(todo)}
 
     def labels(self, confirmed_only: bool = False) -> dict:
         """폴더에 있는 샘플 중 정답이 있는 것 → {이름: 정답}."""

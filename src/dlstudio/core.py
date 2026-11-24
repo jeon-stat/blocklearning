@@ -124,7 +124,8 @@ class Studio:
             self.label = LabelProject.new(_path(b.get("path")), str(b.get("column", "")), list(b.get("classes") or []),
                                           _path(b.get("file")), kind=str(b.get("kind") or "series_folder"),
                                           schema=str(b.get("schema") or "class"), id_col=b.get("id_col") or None,
-                                          purpose=str(b.get("purpose") or "general"))
+                                          purpose=str(b.get("purpose") or "general"),
+                                          columns=[str(c) for c in (b.get("columns") or []) if isinstance(c, str)])
             self.label.who = self.label_who
             return self.label.state()
         if op == "open":
@@ -195,6 +196,9 @@ class Studio:
         if op == "suggest":
             r = p.suggest()
             return dict(p.state(), **r)
+        if op == "deep_suggest":
+            r = self._deep_suggest(p)
+            return dict(p.state(), **r)
         if op == "import":
             r = p.import_table(_path(b.get("label_file")))
             return dict(p.state(), **r)
@@ -204,6 +208,23 @@ class Studio:
         if op == "use":
             return self._label_use(p, bool(b.get("confirmed_only")), _path(b.get("file")) or None)
         raise UserError(f"라벨링 동작 '{op}'을(를) 모름", "")
+
+    def _deep_suggest(self, p) -> dict:
+        """PC판 딥러닝 제안: 정답 붙은 샘플로 대표 모델(시계열 1D CNN·그림 작은 CNN·표 MLP)을 학습해 나머지에 제안."""
+        import torch
+        from dlstudio.jobs import fit, metric
+        prep = p.deep_data()
+        d = prep["data"]
+        graph = deep_graph(prep["kind"])
+        net = build_graph_model(graph, d.length, d.n_out, seed=0, image=d.image)
+        xin = lambda X: torch.as_tensor(to_model_input(net.kind, X, image=d.image), dtype=torch.float32)
+        net = fit(net, to_model_input(net.kind, d.X_train, image=d.image), d.y_train, "classification", DEEP_EPOCHS, DEEP_LR, 32, seed=0)
+        net.eval()
+        with torch.no_grad():
+            acc = metric(net(xin(d.X_test)).numpy(), d.y_test, "classification") if len(d.y_test) else None
+            probs = torch.softmax(net(xin(prep["X_pred"])), 1).numpy()
+        r = p.apply_model(prep["targets"], list(d.classes), probs)
+        return dict(r, acc=acc, trained_on=int(len(d.y_train) + len(d.y_test)), model=graph_name(prep["kind"]))
 
     def _label_use(self, p, confirmed_only: bool, file) -> dict:
         """정답을 내보내고 studio 데이터로 불러옴. 시계열·그림 폴더는 정답 표로, 표는 정답 열을 붙인 학습용 CSV로."""
@@ -576,6 +597,23 @@ ROUTES = {
     "/api/samples": "api_samples", "/api/preview": "api_preview",
 }
 MAX_RUNS = 20             # 학습 기록은 최근 이만큼 (가중치까지 프로젝트 파일에 들어감)
+DEEP_EPOCHS, DEEP_LR = 40, 0.003                 # 라벨링 딥러닝 제안: 적은 정답으로 빠르게
+DEEP_TEMPLATE = {"series_folder": "cnn", "image_folder": "cnn2d", "table": "mlp"}
+
+
+def deep_graph(kind: str) -> dict:
+    """라벨링 딥러닝 제안에 쓰는 대표 모델 그래프 (데이터 종류별 첫 추천 모델)."""
+    want = DEEP_TEMPLATE[kind]
+    for f in tasks.catalog_view()["families"]:
+        for s in f["subtasks"]:
+            for t in s.get("templates", []):
+                if t["id"] == want:
+                    return t["graph"]
+    raise UserError("대표 모델을 찾을 수 없음", "")
+
+
+def graph_name(kind: str) -> str:
+    return {"series_folder": "1D CNN", "image_folder": "작은 CNN", "table": "MLP"}[kind]
 MAX_SAMPLES = 24          # 틀린 샘플 모아 보기에서 한 번에 보이는 수
 
 
