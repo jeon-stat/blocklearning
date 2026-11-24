@@ -114,3 +114,11 @@ def test_shape_helpers():
     assert r[4][1] == 1 and abs(r[4][2] - 0.1) < 1e-9                  # 점도 그림 안으로
     assert abs(r[5][0] - 0.8) < 1e-9
     assert r[6] == [[0.1, 0.1], [0.5, 0.1], [0.3, 0.6]] and r[7] is None
+
+
+def test_circle_helpers():
+    """원: 반지름은 너비 비율 (세로로 끈 거리는 너비/높이로 나눔), 옮겨도 가운데는 그림 안."""
+    r = _run("""return [L.shapeKind(["circle", 0.5, 0.5, 0.1, "a"]), L.circleR(0.5, 0.5, 0.6, 0.5, 2), L.circleR(0.5, 0.5, 0.5, 0.6, 2),
+      L.circleR(0, 0, 1, 1, 1), L.moveShape(["circle", 0.9, 0.2, 0.1, "a"], 0.3, -0.5)];""")
+    assert r[0] == "circle" and abs(r[1] - 0.1) < 1e-9 and abs(r[2] - 0.05) < 1e-9 and r[3] == 1
+    assert r[4] == ["circle", 1, 0, 0.1, "a"]

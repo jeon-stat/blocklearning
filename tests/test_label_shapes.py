@@ -48,3 +48,24 @@ def test_boxes_only_stays_detection_format(tmp_path):
     s.call("POST", "/api/label/set_boxes", {"name": "g0.png", "boxes": [[0.1, 0.1, 0.2, 0.3, "흠"]]})
     s.call("POST", "/api/label/export_yolo", {"folder": str(tmp_path / "yolo")})
     assert (tmp_path / "yolo" / "labels" / "g0.txt").read_text(encoding="utf-8").split() == ["0", "0.2", "0.25", "0.2", "0.3"]
+
+
+def test_circle_save_and_export(tmp_path):
+    """원: 반지름은 그림 너비 비율 (40×20 그림이면 세로 반지름은 2배 비율) → YOLO 분할 32각형, COCO 32각형 + 감싸는 상자 + 원 넓이."""
+    s = _job(tmp_path)
+    shapes = [["circle", 0.5, 0.5, 0.1, "구멍"], [0.1, 0.1, 0.2, 0.3, "흠"]]
+    c, st = s.call("POST", "/api/label/set_boxes", {"name": "g0.png", "boxes": shapes})
+    assert c == 200 and {k["name"]: k["count"] for k in st["classes"]} == {"흠": 1, "구멍": 1}
+    assert s.call("POST", "/api/label/item", {"name": "g0.png"})[1]["boxes"] == shapes
+    for b in ([["circle", 0.5, 0.5, 0, "흠"]], [["circle", 0.5, 0.5, 1.5, "흠"]], [["circle", 1.2, 0.5, 0.1, "흠"]], [["circle", 0.5, 0.5, "흠"]]):
+        assert s.call("POST", "/api/label/set_boxes", {"name": "g1.png", "boxes": b})[0] == 400
+    s.call("POST", "/api/label/export_yolo", {"folder": str(tmp_path / "yolo")})
+    lines = (tmp_path / "yolo" / "labels" / "g0.txt").read_text(encoding="utf-8").splitlines()
+    first = lines[0].split()
+    assert first[0] == "1" and len(first) == 1 + 32 * 2 and first[1:3] == ["0.6", "0.5"]     # 분할 형식, 오른쪽 끝에서 시작
+    ys = [float(v) for v in first[2::2]]
+    assert abs(max(ys) - 0.7) < 1e-6 and abs(min(ys) - 0.3) < 1e-6                         # 세로 반지름 0.2 (= 4픽셀 / 20)
+    assert len(lines[1].split()) == 9                                                     # 상자는 네 꼭짓점
+    s.call("POST", "/api/label/export_coco", {"file": str(tmp_path / "coco.json")})
+    a = json.loads((tmp_path / "coco.json").read_text(encoding="utf-8"))["annotations"][0]
+    assert a["bbox"] == [16.0, 6.0, 8.0, 8.0] and a["area"] == 50.27 and len(a["segmentation"][0]) == 64

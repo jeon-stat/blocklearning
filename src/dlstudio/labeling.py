@@ -67,7 +67,8 @@ def _in01(v) -> bool:
 
 def _clean_shape(x, classes: set):
     """도형 하나 (그림 크기에 대한 0–1 비율) → 정리한 값 또는 None.
-    상자 [x, y, w, h, 클래스] · 다각형 ["poly", [[x, y], …], 클래스] (꼭짓점 3개 이상) · 점 ["pt", x, y, 클래스]."""
+    상자 [x, y, w, h, 클래스] · 다각형 ["poly", [[x, y], …], 클래스] (꼭짓점 3개 이상) · 점 ["pt", x, y, 클래스]
+    · 원 ["circle", 가운데 x, 가운데 y, 반지름(그림 너비에 대한 비율), 클래스]."""
     if not isinstance(x, (list, tuple)) or not x or not isinstance(x[-1], str) or x[-1] not in classes:
         return None
     k = x[-1]
@@ -80,6 +81,10 @@ def _clean_shape(x, classes: set):
         if len(x) != 4 or not (_in01(x[1]) and _in01(x[2])):
             return None
         return ["pt", round(min(1.0, max(0.0, float(x[1]))), 5), round(min(1.0, max(0.0, float(x[2]))), 5), k]
+    if x[0] == "circle":
+        if len(x) != 5 or not (_in01(x[1]) and _in01(x[2]) and _finite(x[3]) and 0 < float(x[3]) <= 1):
+            return None
+        return ["circle", round(min(1.0, max(0.0, float(x[1]))), 5), round(min(1.0, max(0.0, float(x[2]))), 5), round(float(x[3]), 5), k]
     if len(x) != 5 or not all(_finite(t) for t in x[:4]):
         return None
     a, b, c, d = (float(t) for t in x[:4])
@@ -89,7 +94,21 @@ def _clean_shape(x, classes: set):
 
 
 def _shape_kind(x) -> str:
-    return "poly" if x[0] == "poly" else "pt" if x[0] == "pt" else "box"
+    return x[0] if x[0] in ("poly", "pt", "circle") else "box"
+
+
+def _circle_poly(cx: float, cy: float, r: float, W: float, H: float, n: int = 32) -> list:
+    """원 (반지름은 그림 너비 비율) → 꼭짓점 n개 다각형 (0–1 비율, 그림 안으로 자름). 그림이 정사각형이 아니어도 진짜 원."""
+    ry = r * W / max(H, 1e-9)
+    return [[round(min(1.0, max(0.0, cx + r * np.cos(t))), 6), round(min(1.0, max(0.0, cy + ry * np.sin(t))), 6)]
+            for t in np.linspace(0, 2 * np.pi, n, endpoint=False)]
+
+
+def _circle_box(cx: float, cy: float, r: float, W: float, H: float) -> list:
+    """원을 감싸는 상자 [x, y, w, h] (0–1, 그림 안으로)."""
+    ry = r * W / max(H, 1e-9)
+    x0, y0, x1, y1 = max(0.0, cx - r), max(0.0, cy - ry), min(1.0, cx + r), min(1.0, cy + ry)
+    return [x0, y0, x1 - x0, y1 - y0]
 
 
 def _poly_area(pts) -> float:
@@ -959,7 +978,8 @@ class LabelProject:
 
     # ------------------------------------------------------------ L5: 이미지 상자 (객체 탐지)
     def set_boxes(self, name: str, boxes: list) -> None:
-        """그림 하나의 도형 전체 (상자 [x, y, w, h, 클래스] · 다각형 ["poly", [[x, y], …], 클래스] · 점 ["pt", x, y, 클래스],
+        """그림 하나의 도형 전체 (상자 [x, y, w, h, 클래스] · 다각형 ["poly", [[x, y], …], 클래스] · 점 ["pt", x, y, 클래스]
+        · 원 ["circle", 가운데 x, 가운데 y, 반지름(너비 비율), 클래스],
         왼쪽 위 기준, 그림 크기에 대한 0–1 비율). 사람 정답(확인됨)."""
         if self.schema != "boxes":
             raise _err("도형(상자·다각형·점) 작업이 아님", "")
@@ -972,7 +992,7 @@ class LabelProject:
             s = _clean_shape(b, known)
             if s is None:
                 raise _err(f"도형 값이 맞지 않음: {str(b)[:80]}",
-                           "상자 [x, y, 너비, 높이, 클래스] · 다각형 [\"poly\", [[x, y], …], 클래스] (꼭짓점 3개 이상) · 점 [\"pt\", x, y, 클래스] (그림 안, 0–1 비율)")
+                           "상자 [x, y, 너비, 높이, 클래스] · 다각형 [\"poly\", [[x, y], …], 클래스] (꼭짓점 3개 이상) · 점 [\"pt\", x, y, 클래스] · 원 [\"circle\", x, y, 반지름, 클래스] (그림 안, 0–1 비율)")
             clean.append(s)
 
         def run():
@@ -1009,17 +1029,19 @@ class LabelProject:
             root = Path(folder)
             (root / "labels").mkdir(parents=True, exist_ok=True)
             (root / "classes.txt").write_text(chr(10).join(c["name"] for c in self.classes) + chr(10), encoding="utf-8")
-            seg = any(_shape_kind(s) == "poly" for _, sh in self._boxed(confirmed_only) for s in sh)
+            seg = any(_shape_kind(s) in ("poly", "circle") for _, sh in self._boxed(confirmed_only) for s in sh)
             for n, shapes in self._boxed(confirmed_only):
                 f = root / "labels" / Path(n).with_suffix(".txt")
                 f.parent.mkdir(parents=True, exist_ok=True)
+                W, H = self.samples[n].get("width") or 1, self.samples[n].get("height") or 1
                 lines = []
                 for s in shapes:
                     kind = _shape_kind(s)
                     if kind == "pt":
                         continue
                     if seg:
-                        pts = s[1] if kind == "poly" else [[s[0], s[1]], [s[0] + s[2], s[1]], [s[0] + s[2], s[1] + s[3]], [s[0], s[1] + s[3]]]
+                        pts = s[1] if kind == "poly" else _circle_poly(s[1], s[2], s[3], W, H) if kind == "circle" else \
+                            [[s[0], s[1]], [s[0] + s[2], s[1]], [s[0] + s[2], s[1] + s[3]], [s[0], s[1] + s[3]]]
                         lines.append(f"{idx[s[-1]]} " + " ".join(f"{round(a, 6):g} {round(b, 6):g}" for a, b in pts) + "\n")
                     else:
                         x, y, w, h, k = s
@@ -1055,6 +1077,11 @@ class LabelProject:
                 elif kind == "pt":
                     x, y = round(s[1] * W, 2), round(s[2] * H, 2)
                     a.update(keypoints=[x, y, 2], num_keypoints=1, bbox=[x, y, 0, 0], area=0)
+                elif kind == "circle":                         # 원: 다각형(32각형) segmentation + 감싸는 상자, 넓이는 원 넓이
+                    px = [[round(x * W, 2), round(y * H, 2)] for x, y in _circle_poly(s[1], s[2], s[3], W, H)]
+                    bx = _circle_box(s[1], s[2], s[3], W, H)
+                    a.update(segmentation=[[v for p in px for v in p]], bbox=[round(bx[0] * W, 2), round(bx[1] * H, 2), round(bx[2] * W, 2), round(bx[3] * H, 2)],
+                             area=round(float(np.pi) * (s[3] * W) ** 2, 2))
                 else:
                     x, y, w, h, _ = s
                     bb = [round(x * W, 2), round(y * H, 2), round(w * W, 2), round(h * H, 2)]

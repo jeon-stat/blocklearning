@@ -48,8 +48,12 @@ function normBox(x0, y0, x1, y1) {                     // 끈 두 점(0–1) →
   return w < 0.005 || h < 0.005 ? null : [+x.toFixed(5), +y.toFixed(5), +w.toFixed(5), +h.toFixed(5)];
 }
 // 도형 (그림 크기에 대한 0–1 비율): 상자 [x, y, w, h, k] · 다각형 ["poly", [[x, y], …], k] · 점 ["pt", x, y, k]
-const shapeKind = (s) => (s[0] === "poly" ? "poly" : s[0] === "pt" ? "pt" : "box");
+// · 원 ["circle", 가운데 x, 가운데 y, 반지름, k] (반지름은 그림 너비 비율 → 세로 반지름 = r × 너비/높이, 늘 진짜 원)
+const shapeKind = (s) => (s[0] === "poly" || s[0] === "pt" || s[0] === "circle" ? s[0] : "box");
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
+function circleR(cx, cy, qx, qy, aspect = 1) {          // 가운데→마우스 거리 (너비 비율). aspect = 너비/높이
+  return Math.min(1, Math.hypot(qx - cx, (qy - cy) / aspect));
+}
 function moveShape(s, dx, dy) {                         // 통째로 옮기기 (그림 밖으로 나가지 않게)
   const k = shapeKind(s);
   if (k === "poly") {
@@ -58,6 +62,7 @@ function moveShape(s, dx, dy) {                         // 통째로 옮기기 (
     return ["poly", s[1].map(([x, y]) => [x + mx, y + my]), s[2]];
   }
   if (k === "pt") return ["pt", clamp01(s[1] + dx), clamp01(s[2] + dy), s[3]];
+  if (k === "circle") return ["circle", clamp01(s[1] + dx), clamp01(s[2] + dy), s[3], s[4]];
   const [x, y, w, h, c] = s;
   return [Math.min(1 - w, Math.max(0, x + dx)), Math.min(1 - h, Math.max(0, y + dy)), w, h, c];
 }
@@ -72,7 +77,7 @@ function progressText(c) {
     (c.model ? ` · 모델 ${c.model}` : "") + `) · ` +
     `확인 안 함 ${c.unconfirmed} · 정답 없음 ${c.unlabeled}` + (c.error ? ` · 읽기 오류 ${c.error}` : "");
 }
-const API = { rangeSelect, keyAction, progressText, nextAfter, pxToRows, normBox, isDrag, shapeKind, moveShape, closePoly };
+const API = { rangeSelect, keyAction, progressText, nextAfter, pxToRows, normBox, isDrag, shapeKind, moveShape, closePoly, circleR };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof document === "undefined") return;           // node: 화면 없음
 
@@ -376,7 +381,8 @@ async function loadDetail(n) {
     renderDetail();
   } catch (e) { showError(e); }
 }
-const SHAPE_NAME = { box: "상자", poly: "다각형", pt: "점" };
+const SHAPE_NAME = { box: "상자", poly: "다각형", pt: "점", circle: "원" };
+const aspect = () => (S.detail && S.detail.width && S.detail.height ? S.detail.width / S.detail.height : 1);   // 너비/높이
 function dotR(px = 6) {                                  // 화면에서 px 크기 원 → viewBox(1000×1000, 늘려 그림) 반지름 [rx, ry]
   const svg = $("lab-boxsvg"), r = svg ? svg.getBoundingClientRect() : null;
   return r && r.width ? [(px * 1000) / r.width, (px * 1000) / r.height] : [px * 2, px * 2];
@@ -398,6 +404,14 @@ function boxOverlay() {                                  // 그림 위 도형 (0
         }).join("") + pts.map(([x, y], j) => `<ellipse cx="${V(x)}" cy="${V(y)}" rx="${rx}" ry="${ry}" class="shape-vertex" stroke="${c}"/>` +
           hit(`data-v="${j}"`, x, y, "끌어 옮기기 · Alt+누르기 지우기")).join("") : "") + `</g>`;
     }
+    if (kind === "circle") {                                // 원: 가운데 + 테두리 오른쪽 ● 로 반지름
+      const [, x, y, r] = sh, ry = r * aspect();
+      return `<g class="shape${sel ? " sel" : ""}"><ellipse data-i="${i}" cx="${V(x)}" cy="${V(y)}" rx="${V(r)}" ry="${V(ry)}" fill="${c}" fill-opacity="${sel ? 0.25 : 0.12}" stroke="${c}" stroke-width="${sel ? 3 : 2}" vector-effect="non-scaling-stroke"/>` +
+        label(x - r * 0.72, y - ry * 0.72, k, c) +
+        (sel ? `<ellipse cx="${V(x)}" cy="${V(y)}" rx="${hx}" ry="${hy}" fill="${c}" style="pointer-events:none"/>` +
+          `<ellipse cx="${V(Math.min(1, x + r))}" cy="${V(y)}" rx="${rx}" ry="${ry}" class="shape-vertex" stroke="${c}"/>` +
+          hit(`data-h="r"`, Math.min(1, x + r), y, "끌어 반지름 바꾸기").replace("shape-hit", "shape-hit shape-radius") : "") + `</g>`;
+    }
     if (kind === "pt") {
       const [, x, y] = sh;
       return `<g class="shape${sel ? " sel" : ""}">${sel ? `<ellipse cx="${V(x)}" cy="${V(y)}" rx="${rx * 2}" ry="${ry * 2}" fill="none" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/>` : ""}` +
@@ -410,6 +424,11 @@ function boxOverlay() {                                  // 그림 위 도형 (0
       (sel ? `<rect x="${(x + w) * 1000 - 14}" y="${(y + h) * 1000 - 14}" width="28" height="28" fill="#fff" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke" class="shape-handle-look"/>` +
         hit(`data-h="br"`, x + w, y + h, "끌어 크기 바꾸기").replace("shape-hit", "shape-hit shape-handle") : "") + `</g>`;
   }).join("");
+  if (S.circleDraft) {                                     // 그리는 중인 원: 점선 + 가운데 점
+    const [x, y, r] = S.circleDraft, c = brushColor();
+    s += `<ellipse cx="${V(x)}" cy="${V(y)}" rx="${V(r)}" ry="${V(r * aspect())}" fill="${c}" fill-opacity=".08" stroke="${c}" stroke-dasharray="6 4" stroke-width="2" vector-effect="non-scaling-stroke" style="pointer-events:none"/>` +
+      `<ellipse cx="${V(x)}" cy="${V(y)}" rx="${hx}" ry="${hy}" fill="${c}" style="pointer-events:none"/>`;
+  }
   if (S.boxDraft) s += `<rect x="${V(S.boxDraft[0])}" y="${V(S.boxDraft[1])}" width="${V(S.boxDraft[2])}" height="${V(S.boxDraft[3])}" fill="none" stroke="#4f46e5" stroke-dasharray="6 4" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
   if (S.polyDraft && S.polyDraft.length) {                  // 그리는 중인 다각형: 찍은 점 + 마우스까지 고무줄 + 첫 점 (누르면 닫힘)
     const c = brushColor(), pts = S.polyDraft.concat(S.polyHover ? [S.polyHover] : []);
@@ -424,11 +443,13 @@ const TOOL_HELP = {
   box: "끌어서 상자 그리기",
   poly: "눌러 꼭짓점 찍기 → 첫 점을 누르거나 Enter·두 번 누르기로 닫기 · Backspace 마지막 점 지우기 · Esc 그리기 취소",
   pt: "눌러서 점 찍기",
+  circle: "가운데를 누르고 바깥으로 끌어 원 그리기 · 고른 원은 테두리 ●를 끌어 반지름 바꾸기",
 };
 function shapeTools() {
   const t = S.tool || "box";
   return `<div class="shape-tools" role="toolbar" aria-label="도형 도구">` +
     [["box", "상자", "B", '<rect x="4" y="6" width="16" height="12" rx="1.5"/>'], ["poly", "다각형", "P", '<path d="M12 3l8 6-3 11H7L4 9z"/>'],
+      ["circle", "원", "R", '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/>'],
       ["pt", "점", "O", '<circle cx="12" cy="12" r="3.2" fill="currentColor"/><circle cx="12" cy="12" r="7.5"/>']]
       .map(([id, name, key, d]) => `<button data-tool="${id}" class="tool${t === id ? " on" : ""}" title="${name} (${key})"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">${d}</svg>${name}<kbd>${key}</kbd></button>`).join("") +
     `<span class="tool-help">${esc(TOOL_HELP[t])}</span></div>`;
@@ -444,7 +465,7 @@ function bigView() {                                     // 데이터 종류마�
   const d = S.detail;
   if (d.image && isBox()) return shapeTools() + `<div class="lab-boxwrap tool-${S.tool || "box"}"><img class="lab-boximg${(d.width || 0) < 256 ? " px" : ""}" ${imgSrc(d.name)} alt="${esc(d.name)}" draggable="false">` +
     `<svg id="lab-boxsvg" viewBox="0 0 1000 1000" preserveAspectRatio="none">${boxOverlay()}</svg></div>` +
-    `<div class="muted lab-help">도형을 누르면 고름 → 끌어 옮기기 · 상자는 오른쪽 아래 □로 크기 · 다각형은 꼭짓점을 끌고, 변 가운데 ◦를 끌면 꼭짓점 추가, Alt+꼭짓점 누르면 지우기 · 숫자키 클래스 · Delete 지우기 · C 이전 그림 도형 복사 · ${d.width}×${d.height}</div>`;
+    `<div class="muted lab-help">도형을 누르면 고름 → 끌어 옮기기 · 상자는 오른쪽 아래 □로 크기 · 원은 테두리 ●로 반지름 · 다각형은 꼭짓점을 끌고, 변 가운데 ◦를 끌면 꼭짓점 추가, Alt+꼭짓점 누르면 지우기 · 숫자키 클래스 · Delete 지우기 · C 이전 그림 도형 복사 · ${d.width}×${d.height}</div>`;
   if (d.image) return `<img class="lab-bigimg${(d.width || 0) < 256 ? " px" : ""}" ${imgSrc(d.name)} alt="${esc(d.name)}">` +
     `<div class="muted">${d.width}×${d.height} 픽셀</div>`;
   if (d.row) return `<div class="kv lab-row">` + Object.entries(d.row).map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join("") +
@@ -496,7 +517,7 @@ function renderDetail() {
         return `<button class="lab-chip${on ? " on" : ""}" data-brush="${i}" style="--c:${colorOf(k.name)}"><span class="key">${i + 1}</span>${esc(k.name)}</button>`;
       }).join("")}</div>` +
       `<div class="shape-list">${(S.boxes || []).map((sh, i) => `<button class="shape-item${S.boxSel === i ? " sel" : ""}" data-shape="${i}" style="--c:${colorOf(sh[sh.length - 1])}">` +
-        `<span class="dot"></span>${i + 1}. ${esc(sh[sh.length - 1])}<span class="muted">${SHAPE_NAME[shapeKind(sh)]}${shapeKind(sh) === "poly" ? ` · 꼭짓점 ${sh[1].length}` : ""}</span>` +
+        `<span class="dot"></span>${i + 1}. ${esc(sh[sh.length - 1])}<span class="muted">${SHAPE_NAME[shapeKind(sh)]}${shapeKind(sh) === "poly" ? ` · 꼭짓점 ${sh[1].length}` : shapeKind(sh) === "circle" && d.width ? ` · 반지름 ${Math.round(sh[3] * d.width)}px` : ""}</span>` +
         `<span class="x" data-del-shape="${i}" title="지우기" aria-label="지우기">×</span></button>`).join("") || '<span class="muted">도형 없음 — 위에서 도구를 고르고 그림 위에 그리세요</span>'}</div>`
     : isSeg() ? `<div class="lab-dlabels"><span class="muted">붓:</span>${S.state.classes.map((k, i) => `<button class="lab-chip${S.brush === i ? " on" : ""}" data-brush="${i}" style="--c:${colorOf(k.name)}"><span class="key">${i + 1}</span>${esc(k.name)}</button>`).join("")}` +
       `<button class="lab-chip${S.brush == null ? " on" : ""}" data-brush="">0 지우개</button>` + (has && !d.confirmed ? `<button id="lab-d-confirm" class="lab-chip">Enter 확인</button>` : "") + `</div>` +
@@ -575,7 +596,7 @@ function finishPoly() {                                   // 그리던 다각형
   S.boxSel = S.boxes.length - 1;
   saveBoxes().then(renderDetail);
 }
-function bindBoxes() {                                   // 도형 그리기·고르기·옮기기·크기·꼭짓점 (상자·다각형·점)
+function bindBoxes() {                                   // 도형 그리기·고르기·옮기기·크기·꼭짓점 (상자·다각형·원·점)
   const svg = $("lab-boxsvg");
   if (!svg) return;
   const pt = (e) => { const r = svg.getBoundingClientRect(); return [clamp01((e.clientX - r.left) / r.width), clamp01((e.clientY - r.top) / r.height)]; };
@@ -609,6 +630,7 @@ function bindBoxes() {                                   // 도형 그리기·�
     } else if (t.h && sel) { mode = "resize"; orig = JSON.parse(JSON.stringify(sel)); }
     else if (t.i !== undefined) { S.boxSel = Number(t.i); mode = "move"; orig = JSON.parse(JSON.stringify(S.boxes[S.boxSel])); }
     else if (tool() === "poly") { S.boxSel = null; S.polyDraft = [[px, py]]; S.polyHover = null; return renderDetail(); }
+    else if (tool() === "circle") { S.boxSel = null; mode = "circle"; }
     else if (tool() === "pt") {
       const k = S.state.classes[S.brush == null ? 0 : S.brush];
       if (!k) return showMessage("그릴 클래스가 없습니다", "클래스를 먼저 더하세요");
@@ -623,9 +645,13 @@ function bindBoxes() {                                   // 도형 그리기·�
       moved = moved || isDrag(e.clientX, e.clientY, ev.clientX, ev.clientY);
       if (!moved) return;
       if (mode === "draw") S.boxDraft = normBox(px, py, qx, qy) || [Math.min(px, qx), Math.min(py, qy), 0, 0];
+      else if (mode === "circle") S.circleDraft = [px, py, circleR(px, py, qx, qy, aspect())];
       else if (mode === "move") S.boxes[S.boxSel] = moveShape(orig, qx - px, qy - py);
       else if (mode === "vertex") S.boxes[S.boxSel][1][j] = [qx, qy];
-      else {
+      else if (shapeKind(orig) === "circle") {               // 원 반지름: 가운데에서 마우스까지
+        const r = circleR(orig[1], orig[2], qx, qy, aspect());
+        if (r >= 0.005) S.boxes[S.boxSel] = ["circle", orig[1], orig[2], r, orig[4]];
+      } else {
         const [x, y, , , k] = orig, nb = normBox(x, y, qx, qy);
         if (nb) S.boxes[S.boxSel] = [...nb, k];
       }
@@ -639,6 +665,13 @@ function bindBoxes() {                                   // 도형 그리기·�
         const k = S.state.classes[S.brush == null ? 0 : S.brush];
         if (nb && k) { S.boxes = (S.boxes || []).concat([[...nb, k.name]]); S.boxSel = S.boxes.length - 1; await saveBoxes(); }
         renderDetail();
+      } else if (mode === "circle") {
+        const [qx, qy] = pt(ev), r = moved ? circleR(px, py, qx, qy, aspect()) : 0;
+        S.circleDraft = null;
+        const k = S.state.classes[S.brush == null ? 0 : S.brush];
+        if (!k) showMessage("그릴 클래스가 없습니다", "클래스를 먼저 더하세요");
+        else if (r >= 0.005) { S.boxes = (S.boxes || []).concat([["circle", +px.toFixed(5), +py.toFixed(5), +r.toFixed(5), k.name]]); S.boxSel = S.boxes.length - 1; await saveBoxes(); }
+        renderDetail();
       } else if (moved || mode === "vertex") { await saveBoxes(); renderDetail(); }
       else renderDetail();
     };
@@ -646,11 +679,11 @@ function bindBoxes() {                                   // 도형 그리기·�
     document.addEventListener("mouseup", up);
   };
 }
-document.addEventListener("keydown", (e) => {            // 도형 작업 단축키: B 상자 · P 다각형 · O 점 · Backspace 마지막 꼭짓점 지우기
+document.addEventListener("keydown", (e) => {            // 도형 작업 단축키: B 상자 · P 다각형 · R 원 · O 점 · Backspace 마지막 꼭짓점 지우기
   if ($("lab-work").hidden || !isBox() || !S.detail) return;
   const tag = ((e.target && e.target.tagName) || "").toUpperCase();
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
-  const k = e.key.toLowerCase(), tools = { b: "box", p: "poly", o: "pt" };
+  const k = e.key.toLowerCase(), tools = { b: "box", p: "poly", r: "circle", o: "pt" };
   if (tools[k]) { e.preventDefault(); setTool(tools[k]); }
   else if (e.key === "Backspace" && S.polyDraft) {
     e.preventDefault();

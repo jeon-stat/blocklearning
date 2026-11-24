@@ -696,5 +696,6 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .shape-item.sel { border-color: var(--c); background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
 #lab-boxsvg .shape-hit { fill: transparent; stroke: none; cursor: grab; }
 #lab-boxsvg .shape-hit.shape-handle { cursor: nwse-resize; }
+#lab-boxsvg .shape-hit.shape-radius { cursor: ew-resize; }
 #lab-boxsvg .shape-hit.draft-first { cursor: pointer; }
 #lab-boxsvg .shape-vertex, #lab-boxsvg .shape-mid, #lab-boxsvg .shape-handle-look { pointer-events: none; }
