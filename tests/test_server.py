@@ -560,3 +560,26 @@ def test_relaxed_graph_flow(server, tmp_path):
 def test_removed_he_endpoints_are_gone(server):
     for path in ("/api/remote/check", "/api/remote/run", "/api/mode"):
         assert _call(server, path, {})[0] == 404
+
+
+def test_code_api_and_save(server, tmp_path):
+    """[코드로 보기]: 두 framework 코드, 학습한 모델이면 PyTorch 저장에 가중치도. 화면용 값(pos)은 모델 비교에서 뺌."""
+    _call(server, "/api/data/load", {"example": True})
+    g = from_blocks(CNN)
+    code, r = _call(server, "/api/code", {"graph": g, "framework": "pytorch"})
+    assert code == 200 and "class StudioModel" in r["code"] and r["trained"] is False and r["filename"].endswith(".py")
+    code, r = _call(server, "/api/code", {"graph": g, "framework": "tensorflow"})
+    assert code == 200 and "def build_model" in r["code"]
+    assert _call(server, "/api/code", {"graph": g, "framework": "jax"})[0] == 400
+    bad = {"version": 2, "nodes": [{"id": "input", "type": "input"}]}
+    assert _call(server, "/api/code", {"graph": bad, "framework": "pytorch"})[0] == 400
+    _, j = _call(server, "/api/train", {"graph": g, "settings": {"epochs": 1, "lr": 0.01}})
+    assert _wait(server, j["id"])["state"] == "done"
+    moved = json.loads(json.dumps(g))
+    moved["nodes"][1]["pos"] = [10, 20]
+    code, r = _call(server, "/api/code/save", {"graph": moved, "framework": "pytorch", "path": str(tmp_path / "m.py")})
+    assert code == 200 and r["trained"] and len(r["files"]) == 2
+    assert (tmp_path / "m_weights.pt").exists() and 'torch.load("m_weights.pt")' in (tmp_path / "m.py").read_text(encoding="utf-8")
+    code, r = _call(server, "/api/code/save", {"graph": g, "framework": "tensorflow", "path": str(tmp_path / "k.py")})
+    assert code == 200 and r["files"] == [str(tmp_path / "k.py")]
+    assert _call(server, "/api/code/save", {"graph": g, "framework": "pytorch", "path": str(tmp_path / "m.txt")})[0] == 400

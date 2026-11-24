@@ -203,3 +203,12 @@ def test_no_he_words_on_screen():
         for w in ("암호문", "동형암호", "Poly2", "poly2", "heml", "/api/remote", "/api/mode\""):
             assert w not in text, (f, w)
         assert not _re.search(r"HE", text), f
+
+
+def test_code_dialog_exists():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    for i in ('id="btn-code"', 'id="btn-code-train"', 'id="code-dialog"', 'data-fw="pytorch"', 'data-fw="tensorflow"',
+              'id="code-copy"', 'id="code-save"'):
+        assert i in html, i
+    assert '"/api/code"' in js and '"/api/code/save"' in js

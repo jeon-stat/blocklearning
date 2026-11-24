@@ -50,6 +50,18 @@ scores = m(torch.tensor(rows, dtype=torch.float32))      # rows: (샘플 수, �
 pred = [info["classes"][i] for i in scores.argmax(1)]    # 분류. 회귀면 scores[:, 0]이 예측값 (원래 단위)
 ```
 
+## 코드로 보기 (PyTorch · TensorFlow)
+
+③ 모델·④ 학습의 [코드로 보기]: 지금 모델을 사람이 읽고 고칠 수 있는 파이썬 코드로 바꿉니다. 층 하나가 코드 한 줄이고, 줄마다 화면 이름과 출력 모양이 주석으로 달립니다. Repeat 묶음은 펼쳐서 `층이름_r0`, `층이름_r1`처럼 씁니다.
+
+| | PyTorch | TensorFlow (Keras) |
+|---|---|---|
+| 만드는 코드 | `StudioModel(nn.Module)` + `train()` + 실행 예 | `build_model()` (함수형 API) + `train()` + 실행 예 |
+| 입력 모양 | 채널 먼저 `(샘플 수, 1, 길이)` · 이미지 `(샘플 수, 1, 높이, 너비)` · 순환 층 `(샘플 수, 길이, 1)` | 채널 마지막 `(샘플 수, 길이, 1)` · 이미지 `(샘플 수, 높이, 너비, 1)` |
+| 학습한 가중치 | 학습한 모델이면 [파일로 저장] 때 `<이름>_weights.pt`도 저장, 코드가 불러옴 (studio와 출력이 같음, 시험으로 확인) | 들어 있지 않음 → `train()`으로 새로 학습 |
+
+TensorFlow 코드는 문법과 구조(층 이름·모양 계산)를 시험으로 확인했지만, 이 PC에서 TensorFlow를 실행해 보지는 못했습니다 (`tests/test_codegen.py`의 Keras 시험은 TensorFlow가 설치된 환경에서만 돎).
+
 ## 라벨링 작업실
 
 상단 [라벨링 작업실] (새 탭 `/label`): 정답이 없는 데이터에 정답을 붙입니다. 데이터 파일은 바꾸지 않고 작업 파일(`.dllabel`)에 바로바로 저장합니다.
@@ -71,6 +83,7 @@ python -m pytest            # 화면 그래프 편집기 시험은 node가 있�
 | `data.py` | CSV·폴더·이미지 읽기, 과제 판단, 정규화, 학습/시험 나누기, 예시 데이터 |
 | `jobs.py` | 학습 루프(`fit`)와 작업 스레드(진행·멈추기) |
 | `project.py` | 프로젝트 저장·열기, `.pt` 내보내기 |
+| `codegen.py` | 그래프 → PyTorch·TensorFlow Keras 코드, 가중치 이름 옮기기 |
 | `tasks.py` | 과제·대표 모델 목록 |
 | `labeling*.py` | 라벨링 작업실 |
 | `server.py` · `cli.py` | 로컬 HTTP 서버(표준 라이브러리만)와 실행 명령 |

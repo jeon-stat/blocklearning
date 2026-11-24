@@ -604,6 +604,49 @@ $("btn-export").onclick = async () => {                // torch만 있으면 읽
 };
 $("btn-export-pt").onclick = () => $("btn-export").onclick();
 
+// ------------------------------------------------------------ 코드로 보기 (PyTorch · TensorFlow)
+const CODE_NOTE = {
+  pytorch: (trained) => trained
+    ? "학습한 모델과 같은 코드입니다. [파일로 저장]하면 학습한 가중치(이름_weights.pt)도 함께 저장되고, 코드가 그 가중치를 불러옵니다."
+    : "아직 학습하지 않았거나 학습한 뒤 고친 모델입니다. 코드 안의 train()으로 학습할 수 있습니다.",
+  tensorflow: () => "같은 구조의 TensorFlow Keras 코드입니다. 학습한 가중치는 들어 있지 않아 train()으로 새로 학습합니다. 입력은 채널이 마지막인 모양입니다.",
+};
+let codeFw = "pytorch", codeFile = "";
+async function showCode(fw) {
+  if (!st.summary) return showMessage("데이터가 없음", "② 데이터 단계에서 먼저 불러오세요");
+  ensureEditor();
+  codeFw = fw || codeFw;
+  document.querySelectorAll("#code-dialog .tab").forEach((b) => b.classList.toggle("active", b.dataset.fw === codeFw));
+  $("code-dialog").hidden = false;
+  $("code-note").textContent = "";
+  $("code-text").textContent = "만드는 중…";
+  try {
+    const r = await api("/api/code", { graph: st.graph, framework: codeFw, settings: trainSettings() });
+    codeFile = r.filename;
+    $("code-text").textContent = r.code;
+    $("code-note").textContent = CODE_NOTE[codeFw](r.trained);
+  } catch (e) { $("code-dialog").hidden = true; showError(e); }
+}
+const closeCode = () => ($("code-dialog").hidden = true);
+$("btn-code").onclick = () => showCode();
+$("btn-code-train").onclick = () => showCode();
+document.querySelectorAll("#code-dialog .tab").forEach((b) => (b.onclick = () => showCode(b.dataset.fw)));
+$("code-close").onclick = closeCode;
+$("code-dialog").onclick = (e) => { if (e.target === $("code-dialog")) closeCode(); };   // 바깥을 누르면 닫음
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("code-dialog").hidden) closeCode(); });
+$("code-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("code-text").textContent); showMessage("코드를 복사했음", "", "", true); }
+  catch (e) { showMessage("복사하지 못함", "코드를 직접 끌어 골라 Ctrl+C 하세요"); }
+};
+$("code-save").onclick = async () => {
+  const path = prompt("저장할 파이썬 파일 경로 (.py)", codeFile || "model.py");
+  if (!path) return;
+  try {
+    const r = await api("/api/code/save", { graph: st.graph, framework: codeFw, settings: trainSettings(), path });
+    showMessage(`저장했음: ${r.files.join(", ")}`, r.files.length > 1 ? "가중치 파일(.pt)을 코드와 같은 폴더에 두세요" : "", "", true);
+  } catch (e) { showError(e); }
+};
+
 // 화면을 새로 고쳐도 서버에 남은 상태(데이터, 블록, 학습된 모델)를 이어서 씀
 (async () => {
   go("task");

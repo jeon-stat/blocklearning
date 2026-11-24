@@ -336,6 +336,50 @@ class StudioServer(ThreadingHTTPServer):
         m = self.need_model()                            # torch만으로 읽는 TorchScript (.pt)
         return {"ok": True, "info": export_torch(m, self.data, b["path"])}
 
+    def _code(self, b: dict, weights_file: Optional[str] = None) -> tuple:
+        """요청의 그래프 → (코드, 학습한 모델과 같은 그래프인지, framework)."""
+        from dlstudio import codegen
+        d = self.need_data()
+        graph = _graph_from(b)
+        fw = b.get("framework", "pytorch")
+        if fw not in codegen.FRAMEWORKS:
+            raise UserError(f"코드 종류를 모름: {fw!r}", "pytorch 또는 tensorflow")
+        c = check_graph(graph, d.length, d.n_out, image=d.image)
+        if not c.ok:
+            i = c.issues[0]
+            raise UserError(i.message, i.hint or "③ 모델의 문제를 먼저 고치세요", [x.to_dict() for x in c.issues])
+        trained = self.model is not None and _same_model(graph, self.model_graph)
+        info = {"task": d.task, "classes": list(d.classes) if d.task == "classification" else []}
+        settings = b.get("settings") or self.train_settings or {}
+        train = {k: settings[k] for k in ("epochs", "lr", "batch_size") if k in settings}
+        code = codegen.generate(fw, graph, d.length, d.n_out, d.image, info, train,
+                                weights_file=weights_file if trained and fw == "pytorch" else None)
+        return code, trained, fw, graph
+
+    def api_code(self, b: dict) -> dict:
+        """③·④ [코드로 보기]: PyTorch 또는 TensorFlow Keras 코드."""
+        code, trained, fw, _ = self._code(b)
+        return {"code": code, "framework": fw, "trained": trained,
+                "filename": "model_pytorch.py" if fw == "pytorch" else "model_tensorflow.py"}
+
+    def api_code_save(self, b: dict) -> dict:
+        """코드를 .py로 저장. PyTorch이고 학습한 모델이면 가중치(<이름>_weights.pt)도 같은 폴더에."""
+        from dlstudio import codegen
+        path = Path(_path(b.get("path")))
+        if path.suffix.lower() != ".py":
+            raise UserError("파이썬 파일(.py) 경로를 넣으세요", "예: model_pytorch.py (폴더까지 넣은 전체 경로)")
+        weights = path.with_name(path.stem + "_weights.pt")
+        code, trained, fw, graph = self._code(b, weights_file=weights.name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        files = [str(path)]
+        if trained and fw == "pytorch":
+            import torch
+            d = self.data
+            torch.save(codegen.torch_state_dict(self.model, graph, d.length, d.n_out, d.image), str(weights))
+            files.append(str(weights))
+        path.write_text(code, encoding="utf-8")
+        return {"files": files, "trained": trained}
+
     def api_state(self) -> dict:
         """화면을 새로 고쳐도 이어서 쓰도록 지금 상태 (데이터 요약, 블록, 학습 여부·결과)."""
         return {"summary": None if self.data is None else self.data.summary(),
@@ -355,7 +399,7 @@ ROUTES = {
     "/api/activations": "api_activations",
     "/api/project/save": "api_project_save", "/api/project/open": "api_project_open",
     "/api/project/export": "api_project_export", "/api/task/select": "api_task_select",
-    "/api/data/scan_folder": "api_data_scan_folder",
+    "/api/data/scan_folder": "api_data_scan_folder", "/api/code": "api_code", "/api/code/save": "api_code_save",
 }
 
 
@@ -469,6 +513,23 @@ class Handler(BaseHTTPRequestHandler):
             self._error(400, f"입력이 맞지 않음: {e}", "값을 확인하세요", traceback.format_exc()[-1500:])
         except Exception as e:                                 # 화면에는 한 줄, 자세히는 detail
             self._error(500, f"처리 중 오류: {type(e).__name__}: {str(e)[:200]}", "", traceback.format_exc()[-3000:])
+
+
+VIEW_KEYS = ("pos", "size", "brk")      # 화면용 값 (모델에는 영향 없음)
+
+
+def _same_model(a, b) -> bool:
+    """두 그래프가 같은 모델인지 (화면용 값은 빼고 비교)."""
+    def strip(g):
+        if not isinstance(g, dict):
+            return g
+        def node(n):
+            n = {k: v for k, v in n.items() if k not in VIEW_KEYS}
+            if isinstance(n.get("body"), dict):
+                n["body"] = dict(n["body"], nodes=[node(x) for x in n["body"].get("nodes", [])])
+            return n
+        return dict(g, nodes=[node(n) for n in g.get("nodes", [])])
+    return strip(a) == strip(b)
 
 
 def _graph_from(b: dict):
