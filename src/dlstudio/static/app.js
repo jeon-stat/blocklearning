@@ -33,6 +33,27 @@ async function api(path, body) {
 }
 
 let msgTimer = null;
+// 데이터가 없을 때 ③·④·⑤는 내용 대신 안내 화면. 사이드바에는 아직 못 쓰는 단계를 흐리게
+function renderEmpty() {
+  const none = !st.summary;
+  for (const s of ["model", "train", "predict"]) {
+    const sec = $("step-" + s);
+    if (sec) sec.classList.toggle("is-empty", none);
+  }
+  const lock = { model: none, train: none, predict: none || !st.trained };
+  document.querySelectorAll(".step[data-step]").forEach((b) => {
+    const why = lock[b.dataset.step];
+    b.classList.toggle("locked", !!why);
+    if (b.dataset.step in lock) b.title = !why ? "" : none ? "먼저 ② 데이터를 넣으세요" : "먼저 ④에서 학습하세요";
+  });
+}
+document.addEventListener("click", (e) => {               // 안내 화면의 단추
+  const b = e.target.closest(".empty-step [data-go], .empty-step [data-quick]");
+  if (!b) return;
+  if (b.dataset.go) return go(b.dataset.go);
+  go("task");
+  $("btn-quick").click();
+});
 function hideMessage() { clearTimeout(msgTimer); $("message").hidden = true; }
 function showMessage(msg, hint = "", detail = "", ok = false) {
   $("message").hidden = false;
@@ -107,7 +128,8 @@ function go(step) {
   st.step = step;
   document.querySelectorAll("main > .panel").forEach((el) => (el.hidden = el.id !== "step-" + step));
   document.querySelectorAll(".step").forEach((b) => b.classList.toggle("active", b.dataset.step === step));
-  if (step === "model") ensureEditor();
+  renderEmpty();
+  if (step === "model" && st.summary) ensureEditor();       // 데이터가 없으면 편집기 대신 안내 (모양을 정할 수 없음)
   if (step === "predict") renderPredictStep();
   window.scrollTo(0, 0);
   const mainEl = document.querySelector("main");          // 사이드바 틀에서는 main이 스크롤됨
@@ -124,6 +146,7 @@ function markSteps() {
   mark("model", st.checked && st.checked.ok);
   mark("train", st.trained, st.trained && st.trainedJson !== st.graphJson);
   if (st.step === "predict") renderPredictStep();
+  renderEmpty();
   for (const id of ["btn-export", "btn-export-pt"]) {        // 학습 전에는 내려받을 모델이 없음
     $(id).disabled = !st.trained;
     if (!st.trained) $(id).title = "④ 학습을 마치면 쓸 수 있습니다";

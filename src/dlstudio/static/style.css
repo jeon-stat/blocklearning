@@ -577,6 +577,17 @@ main > #step-home { background: transparent; border: none; box-shadow: none; pad
   border: 1.5px dashed #d5d9e0; border-radius: var(--r-md); background: #fff; color: var(--muted); }
 .empty b { color: var(--text); font-size: 15px; }
 .use-note { font-size: 12.5px; }
+.panel:not(.is-empty) > .empty-step { display: none; }
+.panel.is-empty > :not(h2):not(.empty-step) { display: none !important; }
+.empty-step { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 56px 24px 64px;
+  border: 1.5px dashed #d5d9e0; border-radius: var(--r-lg); background: #fafbfc; color: var(--muted); }
+.empty-step b { font-size: 18px; color: var(--text); }
+.empty-step > span { max-width: 520px; line-height: 1.6; }
+.es-icon { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 14px;
+  background: var(--accent-bg); color: var(--accent); margin-bottom: 4px; }
+.es-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+.step.locked:not(.active) { opacity: .5; }
+.step.locked:not(.active) .n { background: #f1f5f9; color: var(--muted-2); }
 
 /* 좁은 창: 사이드바 → 위쪽 막대 */
 @media (max-width: 1000px) {
@@ -597,3 +608,4 @@ main > #step-home { background: transparent; border: none; box-shadow: none; pad
 .proj-card .pa { display: flex; flex-wrap: nowrap; }
 button.icon { min-height: 30px; width: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 button.icon svg { width: 16px; height: 16px; }
+body.app #step-model.is-empty:not([hidden]) { height: auto; display: block; }

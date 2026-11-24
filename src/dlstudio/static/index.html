@@ -112,6 +112,12 @@
   <!-- ③ 모델 -->
   <section id="step-model" class="panel" hidden>
     <h2>③ 모델 만들기</h2>
+    <div class="empty-step" data-empty="model">
+      <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
+      <b>먼저 데이터를 넣어 주세요</b>
+      <span>모델의 입력 모양은 데이터에 맞춰 정해집니다. 데이터를 넣으면 그 데이터에 맞는 추천 모델이 준비되고, 여기서 블록으로 고칠 수 있습니다.</span>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
+    </div>
     <p class="lead">왼쪽 층을 끌어 <b>선 위</b>(끼워 넣기)나 빈 곳에 놓고, 상자 아래 <b>동그라미</b>를 끌어 선을 잇습니다. 상자 아래 숫자는 지난 데이터 모양입니다. 자세한 조작은 오른쪽 [조작 방법].</p>
     <div class="row toolbar">
       <span class="muted">대표 모델:</span>
@@ -160,6 +166,12 @@
   <!-- ④ 학습 -->
   <section id="step-train" class="panel" hidden>
     <h2>④ 학습</h2>
+    <div class="empty-step" data-empty="train">
+      <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
+      <b>학습할 데이터가 없습니다</b>
+      <span>② 데이터를 넣고 ③ 모델을 확인한 뒤 여기서 학습합니다. 처음이면 예시 데이터로 한 번 해 보세요.</span>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
+    </div>
     <p class="lead">이 PC에서 학습합니다 (GPU가 있으면 GPU). 끝나면 학습한 모델을 파일로 내보내 다른 곳에서 쓸 수 있습니다.</p>
     <div id="train-guard" class="guard" hidden></div>
     <div class="row">
@@ -204,6 +216,12 @@
   <!-- ⑤ 예측 -->
   <section id="step-predict" class="panel" hidden>
     <h2>⑤ 새 데이터로 예측</h2>
+    <div class="empty-step" data-empty="predict">
+      <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
+      <b>아직 학습한 모델이 없습니다</b>
+      <span>② 데이터를 넣고 ④에서 학습하면, 여기서 정답을 모르는 새 데이터를 예측할 수 있습니다.</span>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
+    </div>
     <p class="lead">학습한 모델로 정답을 모르는 새 데이터를 예측합니다. 학습 때와 같은 모양의 데이터를 넣으세요. 정답이 함께 있으면 맞았는지도 보여 줍니다.</p>
     <div id="predict-guard" class="guard" hidden></div>
     <div id="predict-inputs">
