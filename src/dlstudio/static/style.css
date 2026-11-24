@@ -320,3 +320,8 @@ label.inline { display: inline-flex; align-items: center; gap: 4px; font-size: 1
 pre.code { margin: 0; flex: 1; min-height: 200px; overflow: auto; background: #f6f8fa; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
   font: 12.5px/1.5 Consolas, "D2Coding", "Malgun Gothic", "Apple SD Gothic Neo", monospace; white-space: pre; tab-size: 4; }
 #code-note { margin: 0; }
+
+/* 웹 버전: 준비 중 알림 */
+.web-boot { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); z-index: 60; background: var(--accent-bg);
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 16px; max-width: calc(100% - 32px); }
+body.web input[readonly] { background: #f6f7f9; }

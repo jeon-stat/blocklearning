@@ -342,7 +342,7 @@ class Studio:
         if not c.ok:
             i = c.issues[0]
             raise UserError(i.message, i.hint or "③ 모델의 문제를 먼저 고치세요", [x.to_dict() for x in c.issues])
-        trained = self.model is not None and _same_model(graph, self.model_graph)
+        trained = (self.model is not None or self.web) and self.model_graph is not None and _same_model(graph, self.model_graph)
         info = {"task": d.task, "classes": list(d.classes) if d.task == "classification" else []}
         settings = b.get("settings") or self.train_settings or {}
         train = {k: settings[k] for k in ("epochs", "lr", "batch_size") if k in settings}
@@ -352,7 +352,7 @@ class Studio:
 
     def api_code(self, b: dict) -> dict:
         """③·④ [코드로 보기]: PyTorch 또는 TensorFlow Keras 코드."""
-        code, trained, fw, _ = self._code(b)
+        code, trained, fw, _ = self._code(b, weights_file=b.get("weights_file"))
         return {"code": code, "framework": fw, "trained": trained,
                 "filename": "model_pytorch.py" if fw == "pytorch" else "model_tensorflow.py"}
 

@@ -12,19 +12,20 @@ from typing import Optional
 FORMAT, VERSION = "dlstudio", 1
 
 
-def save_project(path: str, graph: dict, data_source: dict, train_settings: dict, model, results: dict,
+def save_project(path, graph: dict, data_source: dict, train_settings: dict, model, results: dict,
                  selection: dict = None) -> None:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    """path: 파일 경로 또는 쓸 수 있는 파일(BytesIO). model: torch 모델, 또는 가중치 dict(이름 → 배열, 웹 버전)."""
+    if isinstance(path, (str, Path)):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
     meta = {"format": FORMAT, "version": VERSION, "graph": graph, "data_source": data_source,
             "train_settings": train_settings, "results": results, "selection": selection}
-    with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(meta, ensure_ascii=False, indent=1))
-        if model is not None:
-            import torch
+        if model is not None:                        # 가중치: PyTorch state_dict 이름 그대로 .npz (torch 없이도 읽음)
+            from dlstudio.codegen import save_npz
             buf = io.BytesIO()
-            torch.save(model.state_dict(), buf)
-            z.writestr("model.pt", buf.getvalue())
+            save_npz(model if isinstance(model, dict) else model.state_dict(), buf)
+            z.writestr("model.npz", buf.getvalue())
 
 
 def open_project(path: str) -> dict:
@@ -35,9 +36,10 @@ def open_project(path: str) -> dict:
             if meta.get("format") != FORMAT or meta.get("version") != VERSION:
                 raise ValueError("DL studio 프로젝트 파일이 아님")
             state: Optional[dict] = None
-            if "model.pt" in names:
-                import torch
-                state = torch.load(io.BytesIO(z.read("model.pt")), weights_only=True)
+            if "model.npz" in names:
+                import numpy as np
+                with np.load(io.BytesIO(z.read("model.npz"))) as npz:
+                    state = {k: npz[k] for k in npz.files}
     except zipfile.BadZipFile:
         raise ValueError("DL studio 프로젝트 파일이 아님 (zip이 아님)") from None
     return {"graph": meta["graph"], "data_source": meta["data_source"], "train_settings": meta["train_settings"],

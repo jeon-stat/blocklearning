@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DL studio</title>
+<meta name="description" content="블록을 이어 딥러닝 모델을 만들고 학습하는 웹 도구. 설치 없이 브라우저에서, 데이터는 내 PC 밖으로 나가지 않음">
+<link rel="stylesheet" href="src/dlstudio/static/style.css">
+</head>
+<!-- DL studio 웹 버전 (GitHub Pages). 화면은 로컬 실행과 같은 src/dlstudio/static/index.html을 불러 쓰고,
+     계산은 브라우저 안에서: Python 코드는 Pyodide, 학습은 TensorFlow.js (static/web.js · engine.js). -->
+<body class="app">
+<p id="boot" style="padding: 24px">DL studio를 여는 중…</p>
+<script>
+(async () => {
+  const STATIC = "src/dlstudio/static/";
+  const html = await (await fetch(STATIC + "index.html", { cache: "no-cache" })).text();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.body.querySelectorAll("script").forEach((s) => s.remove());
+  document.body.className = doc.body.className;
+  document.body.innerHTML = doc.body.innerHTML;
+  const load = (src) => new Promise((ok, no) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = ok;
+    s.onerror = () => no(new Error("불러오지 못함: " + src));
+    document.body.appendChild(s);
+  });
+  await load("https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js");
+  await load("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js");
+  const v = "?v=" + Date.now();                              // 새 버전을 바로 쓰게 (브라우저 캐시 피함)
+  for (const f of ["engine.js", "web.js", "graph.js", "app.js"]) await load(STATIC + f + v);
+  window.DLS_WEB.afterApp();
+})().catch((e) => {
+  document.body.innerHTML = "";
+  const p = document.createElement("p");
+  p.style.padding = "24px";
+  p.textContent = "DL studio를 열 수 없음: " + e.message + " — 인터넷 연결을 확인하고 새로 고치세요.";
+  document.body.appendChild(p);
+});
+</script>
+</body>
+</html>

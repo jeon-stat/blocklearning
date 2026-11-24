@@ -3,6 +3,8 @@
 
 const $ = (id) => document.getElementById(id);
 const F = StudioGraph;
+const WEB = !!window.DLS_WEB;
+const pathVal = (id) => (($(id).dataset.path || $(id).value) || "").trim();   // 웹: 칸에는 고른 이름, 실제 위치는 data-path                          // 웹 버전(GitHub Pages): 계산을 브라우저 안(web.js)에서
 const st = { step: "data", summary: null, ed: null, graph: null, checked: null, graphJson: "", trainedJson: "", defaults: [],
   trained: false, trainJob: null, checkTimer: null, checkSeq: 0,
   catalog: [], fam: null, sub: null, tpl: null };
@@ -22,6 +24,7 @@ function svgImage(vals, H, W, cell = 6) {
 
 // ------------------------------------------------------------ 공통
 async function api(path, body) {
+  if (WEB) return window.DLS_WEB.api(path, body);
   const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
   const r = await fetch(path, opt);
   const j = await r.json().catch(() => ({ error: { message: `응답을 읽을 수 없음 (${r.status})` } }));
@@ -216,7 +219,7 @@ function renderDataGuide() {
   const ts = sub && sub.input === "timeseries";              // 샘플마다 CSV 하나인 폴더: 시계열 과제에서만
   $("series-row").hidden = !ts;
   if (!ts) $("series-box").hidden = true;
-  $("csv-path").placeholder = img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
+  $("csv-path").placeholder = WEB ? "옆 단추로 CSV 파일을 고르세요 (브라우저 안에서만 읽음)" : img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
   const ex = sub ? sub.example_data : [["ecg", "심전도 정상·이상 (의료)"], ["vibration", "설비 진동 정상·결함 (제조)"]];
   $("example-btns").innerHTML = ex.map(([k, name]) => `<button class="primary" data-ex="${esc(k)}">예시: ${esc(name)}</button>`).join(" ");
   if (sub) $("task").value = sub.task;
@@ -273,17 +276,17 @@ function onData(s) {
   if (st.ed) { st.ed.redrawPalette(); st.ed.redraw(); scheduleCheck(); }   // 입력 형태가 바뀌면 왼쪽 목록도
 }
 $("btn-csv").onclick = () => {
-  if (!$("csv-path").value.trim()) return showMessage("CSV 파일 경로를 넣으세요", "예: C:\\data\\ecg.csv");
-  const o = Object.assign(dataOptions(), { path: $("csv-path").value.trim() });
+  if (!pathVal("csv-path")) return showMessage("CSV 파일 경로를 넣으세요", "예: C:\\data\\ecg.csv");
+  const o = Object.assign(dataOptions(), { path: pathVal("csv-path") });
   if (st.sub && st.sub.input === "image") o.image_width = Number($("image-width").value) || 0;   // 비우면 정사각형
   loadData(o);
 };
 // 샘플마다 CSV 하나인 폴더 (시계열): 살펴보기 → 값 열·길이·정답 표 고르기 → 불러오기
 const MODE_TEXT = { folders: "정답: 하위 폴더", file: "정답: 정답 표", none: "정답 없음" };
 async function scanSeries() {
-  const path = $("series-path").value.trim();
+  const path = pathVal("series-path");
   if (!path) return showMessage("폴더 경로를 넣으세요", "예: C:\\data\\사이클 (사이클·환자마다 CSV 하나)");
-  const label_file = $("series-label-file").value.trim();
+  const label_file = pathVal("series-label-file");
   $("data-issues").innerHTML = "";
   try {
     const s = await api("/api/data/scan_folder", label_file ? { path, label_file } : { path });
@@ -312,17 +315,18 @@ async function scanSeries() {
   }
 }
 $("btn-series-scan").onclick = scanSeries;
-$("btn-label").onclick = () => window.open("/label", "_blank");
+$("btn-label").onclick = () => (WEB ? showMessage("라벨링 작업실은 웹 버전에 아직 없음", "내 PC에서 python -m dlstudio로 실행하면 쓸 수 있습니다")
+  : window.open("/label", "_blank"));
 $("series-path").oninput = () => {                        // 폴더를 바꾸면 이전 살펴보기 결과는 버림
   st.seriesScan = null;
   $("series-box").hidden = true;
 };
-$("series-label-file").onchange = () => { if ($("series-path").value.trim()) scanSeries(); };
+$("series-label-file").onchange = () => { if (pathVal("series-path")) scanSeries(); };
 $("btn-series-load").onclick = async () => {
-  const o = Object.assign(dataOptions(), { series_folder: $("series-path").value.trim(), column: $("series-column").value,
+  const o = Object.assign(dataOptions(), { series_folder: pathVal("series-path"), column: $("series-column").value,
     length: Number($("series-length").value) || (st.seriesScan && st.seriesScan.default_length) || 64,
     resample: $("series-resample").value });
-  const lf = $("series-label-file").value.trim();
+  const lf = pathVal("series-label-file");
   if (lf) o.label_file = lf;
   delete o.label_col;                                      // 폴더 방식에는 '정답 열 번호'가 없음
   if (!(await loadData(o))) return;                      // 실패하면 이전 데이터 카드에 덧붙이지 않음
@@ -332,8 +336,8 @@ $("btn-series-load").onclick = async () => {
   }
 };
 $("btn-folder").onclick = () => {
-  if (!$("folder-path").value.trim()) return showMessage("이미지 폴더 경로를 넣으세요", "예: C:\\data\\사진 (안에 클래스별 하위 폴더)");
-  loadData(Object.assign(dataOptions(), { folder: $("folder-path").value.trim(), size: Number($("folder-size").value) }));
+  if (!pathVal("folder-path")) return showMessage("이미지 폴더 경로를 넣으세요", "예: C:\\data\\사진 (안에 클래스별 하위 폴더)");
+  loadData(Object.assign(dataOptions(), { folder: pathVal("folder-path"), size: Number($("folder-size").value) }));
 };
 
 // ------------------------------------------------------------ ② 모델
@@ -576,7 +580,7 @@ $("btn-save").onclick = async () => {
   try { await api("/api/project/save", { path }); showMessage(`저장했음: ${path}`, "", "", true); } catch (e) { showError(e); }
 };
 $("btn-open").onclick = async () => {
-  const path = prompt("열 프로젝트 파일 경로 (.dlstudio)");
+  const path = WEB ? await window.DLS_WEB.pickProject() : prompt("열 프로젝트 파일 경로 (.dlstudio)");
   if (!path) return;
   try {
     const r = await api("/api/project/open", { path });
@@ -590,10 +594,17 @@ $("btn-open").onclick = async () => {
     if (r.trained && r.results && r.results.metric_name) { renderTrainResult(r.results); $("sample-box").hidden = false; }
     scheduleCheck();
     go("model");
-    showMessage(`열었음: ${path}`, "", "", true);
+    showMessage(`열었음: ${WEB ? path.split("/").pop() : path}`, "", "", true);
   } catch (e) { showError(e); }
 };
 $("btn-export").onclick = async () => {                // torch만 있으면 읽는 파일 (정규화·모양 맞추기 포함)
+  if (WEB) {                                             // 웹: PyTorch 코드 + 학습한 가중치를 내려받기
+    try {
+      const r = await api("/api/project/export", {});
+      showMessage(`내려받았음: ${r.files.join(", ")}`, "두 파일을 같은 폴더에 두고 python model_pytorch.py로 실행하면 학습한 가중치를 불러옵니다", "", true);
+    } catch (e) { showError(e); }
+    return;
+  }
   const path = prompt("내보낼 모델 파일 경로 (.pt)", "model.pt");
   if (!path) return;
   try {

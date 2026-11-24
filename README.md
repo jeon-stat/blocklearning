@@ -2,9 +2,30 @@
 
 파이썬·딥러닝 코드를 몰라도 브라우저에서 **층(블록)을 선으로 이어** 모델을 만들고, 학습하고, 학습한 모델을 파일로 내보내 쓰는 도구입니다.
 제조(센서·설비)·의료(심전도 등) 시계열·표 데이터와 흑백 이미지를 대상으로 합니다.
-모든 계산은 내 PC 안에서 하고, 화면은 `127.0.0.1`에만 열립니다.
 
-## 실행
+**웹 버전:** https://jeon-stat.github.io/dl-studio/ — 설치 없이 브라우저에서 바로 씁니다. 계산은 모두 그 브라우저 안에서 하고, 고른 데이터 파일은 PC 밖으로 나가지 않습니다.
+**로컬 실행:** 아래처럼 내 PC에서 띄우면 `127.0.0.1`에만 열리고, 학습은 PyTorch로 합니다.
+
+## 웹 버전 (GitHub Pages)
+
+저장소 맨 위의 `index.html`이 화면(`src/dlstudio/static/index.html`)을 불러 쓰고, 서버 대신 브라우저 안에서 계산합니다.
+
+| 하는 일 | 로컬 실행 | 웹 버전 |
+|---|---|---|
+| 검사·데이터 읽기·대표 모델·코드 생성·프로젝트 파일 | Python (PyTorch) | **같은 Python 코드**를 [Pyodide](https://pyodide.org)로 브라우저에서 |
+| 학습·샘플 따라가기·모델 정보 | PyTorch | [TensorFlow.js](https://www.tensorflow.org/js) (`static/engine.js`, 그래픽카드가 있으면 WebGL로 빠르게) |
+| 데이터 넣기 | 경로 입력 | 파일·폴더 고르기 (브라우저 안에만 둠) |
+| 내보내기 | TorchScript `.pt` | PyTorch 코드 + 가중치 `.npz` 내려받기 |
+| 저장·열기 | `.dlstudio` 파일 | `.dlstudio` 내려받기·고르기 (예시 데이터가 아니면 데이터를 먼저 다시 고름) |
+| 라벨링 작업실 | 있음 | 아직 없음 |
+
+- 엔진은 PyTorch 식을 TF.js 연산으로 그대로 옮겨서, 같은 가중치면 출력·기울기·BatchNorm 갱신이 PyTorch와 같습니다 (`tests/test_engine.py`, 46개 경우).
+  그래서 웹에서 학습한 가중치를 PyTorch 코드로 그대로 내보냅니다.
+- 처음 열 때 Pyodide·TF.js를 받느라 5–10초쯤 걸립니다 (그다음은 브라우저가 기억).
+- 배포: 저장소 Settings → Pages → Source를 **Deploy from a branch**, 가지 `main`, 폴더 `/ (root)`로. 무료 계정은 공개 저장소에서만 Pages를 쓸 수 있습니다.
+- 내 PC에서 웹 버전을 미리 보려면 저장소 맨 위에서 `python -m http.server 8000` → http://127.0.0.1:8000/
+
+## 실행 (로컬)
 
 ```bash
 pip install -e .            # 처음 한 번 (torch가 이미 있으면 그대로 씀). 이미지 폴더를 쓰려면 pip install -e ".[image]"
@@ -74,7 +95,8 @@ TensorFlow 코드는 문법과 구조(층 이름·모양 계산)를 시험으로
 
 ```bash
 pip install -e . pytest
-python -m pytest            # 화면 그래프 편집기 시험은 node가 있으면 함께 돎
+npm install --prefix tests/js   # 웹 엔진 시험용 TF.js (node가 있으면)
+python -m pytest                # 화면 그래프 편집기·웹 엔진 시험은 node가 있으면 함께 돎
 ```
 
 | 파일 (`src/dlstudio/`) | 하는 일 |
@@ -86,7 +108,9 @@ python -m pytest            # 화면 그래프 편집기 시험은 node가 있�
 | `codegen.py` | 그래프 → PyTorch·TensorFlow Keras 코드, 가중치 이름 옮기기 |
 | `tasks.py` | 과제·대표 모델 목록 |
 | `labeling*.py` | 라벨링 작업실 |
+| `core.py` | 상태와 API (HTTP와 상관없음: 로컬 서버와 웹 버전이 함께 씀) |
 | `server.py` · `cli.py` | 로컬 HTTP 서버(표준 라이브러리만)와 실행 명령 |
+| `web.py` · `static/web.js` · `static/engine.js` | 웹 버전: Pyodide 쪽 함수, 화면과 잇는 다리, TF.js 학습 엔진 |
 | `static/` | 화면 (외부 라이브러리 없음) |
 
 ## 출처

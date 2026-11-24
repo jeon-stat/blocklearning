@@ -212,3 +212,20 @@ def test_code_dialog_exists():
               'id="code-copy"', 'id="code-save"'):
         assert i in html, i
     assert '"/api/code"' in js and '"/api/code/save"' in js
+
+
+def test_web_version_files():
+    """웹 버전(GitHub Pages): 저장소 맨 위 index.html이 화면을 불러 Pyodide·TF.js·엔진·다리·화면 순서로 부름."""
+    root = STATIC.parents[2]
+    html = (root / "index.html").read_text(encoding="utf-8")
+    assert (root / ".nojekyll").exists()
+    assert 'src/dlstudio/static/index.html' in html and "pyodide" in html and "tfjs@" in html
+    order = [html.find(f'"{f}"') for f in ("engine.js", "web.js", "graph.js", "app.js")]
+    assert all(i >= 0 for i in order) and order == sorted(order)
+    web = (STATIC / "web.js").read_text(encoding="utf-8")
+    for f in ("core.py", "web.py", "codegen.py", "data.py", "graph.py", "blocks.py", "tasks.py"):
+        assert f'"{f}"' in web, f
+    src = STATIC.parent
+    listed = set(re.findall(r'"(\w+\.py)"', web))
+    assert {p.name for p in src.glob("*.py")} - {"server.py", "cli.py", "__main__.py"} <= listed   # 웹에서 쓰는 모듈은 모두 불러옴
+    assert "window.DLS_WEB" in (STATIC / "app.js").read_text(encoding="utf-8")

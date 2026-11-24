@@ -526,6 +526,7 @@ def model_from_saved(project: dict, length: int, n_out: int, image: tuple = None
     state = project.get("state_dict")
     if state is None:
         return None
+    import torch
     net = build_graph_model(project["graph"], length, n_out, image=image)
-    net.load_state_dict(state)
+    net.load_state_dict({k: torch.as_tensor(v) for k, v in state.items()})
     return net

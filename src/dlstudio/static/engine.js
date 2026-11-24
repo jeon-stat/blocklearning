@@ -12,6 +12,11 @@ function rng(seed) {
   return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
 }
 const prod = (a) => a.reduce((x, y) => x * y, 1);
+// 잠깐 양보 (화면 그리기·단추가 돌게). tf.nextFrame은 창이 숨겨지면 멈춰서 학습도 멈춤 → MessageChannel·setImmediate
+const yieldNow = () => new Promise((r) => {
+  if (typeof MessageChannel !== "undefined") { const c = new MessageChannel(); c.port1.onmessage = () => { c.port1.close(); r(); }; c.port2.postMessage(0); }
+  else setImmediate(r);
+});
 
 // ------------------------------------------------------------ 가중치 만들기 (PyTorch 기본 초기화와 같은 분포)
 function initParam(step, name, shape, kind, rand) {
@@ -335,13 +340,13 @@ async function train(plan, d, s, onEpoch, isCancelled) {
         lossSum += (await loss.data())[0];
         loss.dispose();
         nb++;
-        if (nb % 8 === 0) await tf.nextFrame();               // 화면이 멈추지 않게
+        if (nb % 8 === 0) await yieldNow();                   // 화면이 멈추지 않게
       }
       const out = net.predict(Xte).map((v) => (reg ? v * sd + mu : v));
       done = epoch;
       const stop = onEpoch && onEpoch({ epoch, loss: lossSum / Math.max(1, nb), test_metric: metric(out, d.y_test, d.task, d.n_out) });
       if (stop || (isCancelled && isCancelled())) break;
-      await tf.nextFrame();
+      await yieldNow();
     }
     if (reg) {                                              // 정규화한 정답으로 배운 출력층에 되돌림을 접어 넣음 (원래 단위로 냄)
       const last = plan.steps.find((st) => st.name === plan.out);
