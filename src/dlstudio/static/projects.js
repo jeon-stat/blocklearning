@@ -23,7 +23,8 @@ const defaultName = () => "제목 없는 프로젝트 " + new Date().toLocaleStr
 function autoName() {                                    // 데이터와 과제로 이름 짓기 (예: "심전도 정상·이상 · 시계열 분류 (11. 24.)")
   try {
     let data = "";
-    if (st.dataSrc && st.examples) {
+    if (st.dataName) data = st.dataName;
+    else if (st.dataSrc && st.examples) {
       const e = st.examples.find((x) => x[0] === st.dataSrc);
       data = e ? e[1].split(" · ")[0].replace(/\s*\([^)]*\)\s*$/, "") : st.dataSrc;   // "이름 (분야) · 과제" → 이름
     } else {
@@ -80,25 +81,28 @@ function onChange(kind) {
 async function saveNow() {
   if (saving) { await saving; }
   if (!dirty) return;
+  let wantData = false;
   saving = (async () => {
     try {
       if (!WEBB().hasData()) { status(""); dirty = false; return; }     // 데이터가 없으면 저장할 것이 없음
-      if (!cur) {
-        const kind = S().drive.available() && S().drive.signedIn() ? "drive" : "local";
-        const p = await store(kind).create(await uniqueName(kind, autoName()));
+      wantData = dataDirty || !cur;
+      dirty = false;
+      const kind = cur ? cur.kind : S().drive.available() && S().drive.signedIn() ? "drive" : "local";
+      const name = cur ? cur.name : await uniqueName(kind, autoName());
+      const rec = WEBB().recordBytes(name, { dataCopy: wantData });
+      if (!rec) { status(""); return; }                // 아직 모델이 없음: 데이터 사본은 다음 저장 때 (표시를 지우지 않음)
+      status("저장 중…");
+      if (!cur) {                                      // 처음 저장할 수 있을 때 프로젝트를 만듦 (빈 프로젝트가 생기지 않게)
+        const p = await store(kind).create(name);
         cur = { kind, id: p.id, name: p.name };
-        dataDirty = true;
         remember(); showCurrent();
       }
-      const wantData = dataDirty;
-      dirty = false; dataDirty = false;
-      status("저장 중…");
-      const rec = WEBB().recordBytes(cur.name, { dataCopy: wantData });
-      if (!rec) { status(""); return; }
       await store(cur.kind).save(cur.id, Object.assign(wantData ? rec : { project: rec.project }, { meta: metaText() }));
+      if (wantData) dataDirty = false;
       status("자동 저장됨 " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
       dirty = true;
+      if (wantData) dataDirty = true;
       if (e && /데이터/.test(String(e.message)) && !cur) { status(""); return; }
       status(e.needLogin ? "저장 안 됨: 구글 로그인 필요" : "저장 안 됨: " + (e.message || e), true);
     }
@@ -348,6 +352,15 @@ async function init() {
   let then = "";
   try { then = sessionStorage.getItem(START) || ""; sessionStorage.removeItem(START); } catch (e) { /* 없음 */ }
   if (then) { await WEBB().ready; afterStart(then); return; }
+  const job = new URLSearchParams(location.search).get("label");   // 라벨링 페이지 [studio에서 쓰기]: 새 프로젝트로 그 정답을 불러옴
+  if (job) {
+    history.replaceState(null, "", location.pathname);
+    await WEBB().ready;
+    for (let i = 0; i < 80 && !(st.catalog && st.catalog.length); i++) await new Promise((r) => setTimeout(r, 250));
+    go("data");
+    await loadData(Object.assign(dataOptions(), { label_job: job }));
+    return;
+  }
   const last = recall();
   tab = last ? last.kind : "local";
   home();

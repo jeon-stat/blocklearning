@@ -1,4 +1,5 @@
 // DL studio 라벨링 작업실: 격자(카드) + 옆 크게 보기 + 단축키 + 규칙·가져오기·내보내기. 계산·저장은 서버(/api/label/*).
+// 웹 버전(GitHub Pages)에서는 같은 요청을 브라우저 안(web.js → Pyodide)에서 처리하고, 작업 목록·저장은 labels.js가 맡는다.
 (function () {
 "use strict";
 
@@ -58,7 +59,10 @@ if (typeof document === "undefined") return;           // node: 화면 없음
 // ------------------------------------------------------------ 공통
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const WEB = !!window.DLS_WEB;
+const pathOf = (id) => (($(id).dataset.path || $(id).value) || "").trim();   // 웹: 칸에는 고른 이름, 실제 위치는 data-path
 async function api(path, body) {
+  if (WEB) return window.DLS_WEB.api(path, body || {});
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({ error: { message: `응답을 읽을 수 없음 (${r.status})` } }));
   if (!r.ok) throw j.error || { message: `오류 ${r.status}` };
@@ -158,8 +162,8 @@ $("lab-purpose").onchange = () => {                       // 이상 탐지: 클�
   if ($("lab-purpose").value === "anomaly") { $("lab-classes-input").value = "정상, 이상"; if ($("lab-schema").value === "number") $("lab-schema").value = "class"; }
 };
 async function scan(column) {
-  const path = $("lab-folder").value.trim();
-  if (!path) return showMessage("경로를 넣으세요", "데이터 폴더(또는 표 CSV)의 전체 경로");
+  const path = pathOf("lab-folder");
+  if (!path) return showMessage(WEB ? "데이터를 먼저 고르세요" : "경로를 넣으세요", WEB ? "[데이터 고르기]로 폴더(또는 표 CSV)를 고르세요" : "데이터 폴더(또는 표 CSV)의 전체 경로");
   if ($("lab-kind").value !== "series_folder") {         // 그림·표는 만들 때 읽음 (살펴보기는 작업 파일 경로만 채움)
     $("lab-new-box").hidden = false;
     $("lab-scan-info").textContent = $("lab-kind").value === "table" ? "표 CSV: 숫자 열이 요약값이 됩니다" : "그림 폴더: 하위 폴더가 2개 이상이면 그 이름을 처음 정답으로 가져옵니다";
@@ -180,11 +184,11 @@ async function scan(column) {
   } catch (e) { showError(e); }
 }
 $("lab-scan").onclick = () => scan();
-$("lab-folder").oninput = () => { $("lab-new-box").hidden = true; $("lab-file").value = ""; };
+$("lab-folder").oninput = () => { $("lab-new-box").hidden = true; $("lab-file").value = ""; delete $("lab-folder").dataset.path; };
 $("lab-new").onclick = async () => {
   const classes = $("lab-classes-input").value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
   try {
-    const st = await L("new", { path: $("lab-folder").value.trim(), column: $("lab-column").value, classes, file: $("lab-file").value.trim(),
+    const st = await L("new", { path: pathOf("lab-folder"), column: $("lab-column").value, classes, file: $("lab-file").value.trim(),
       kind: $("lab-kind").value, schema: $("lab-schema").value, id_col: $("lab-idcol").value.trim() || null, purpose: $("lab-purpose").value });
     start(st);
   } catch (e) { showError(e); }
@@ -332,12 +336,19 @@ function boxOverlay() {                                  // 그림 위 상자 (0
       (sel ? `<rect data-h="br" x="${(x + w) * 1000 - 14}" y="${(y + h) * 1000 - 14}" width="28" height="28" fill="#fff" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/>` : "") + `</g>`;
   }).join("") + (S.boxDraft ? `<rect x="${S.boxDraft[0] * 1000}" y="${S.boxDraft[1] * 1000}" width="${S.boxDraft[2] * 1000}" height="${S.boxDraft[3] * 1000}" fill="none" stroke="#2f6fde" stroke-dasharray="6 4" stroke-width="2" vector-effect="non-scaling-stroke"/>` : "");
 }
+const imgSrc = (name) => (WEB ? `data-lname="${esc(name)}"` : `src="/api/label/file?name=${encodeURIComponent(name)}"`);
+function fillImages() {                                  // 웹: 그림 원본을 브라우저 안에서 읽어 넣음
+  if (!WEB) return;
+  document.querySelectorAll("img[data-lname]").forEach((im) => {
+    window.DLS_WEB.labelFileUrl(im.dataset.lname).then((u) => { im.src = u; }).catch(() => {});
+  });
+}
 function bigView() {                                     // 데이터 종류마다 크게 보기
   const d = S.detail;
-  if (d.image && isBox()) return `<div class="lab-boxwrap"><img class="lab-boximg${(d.width || 0) < 256 ? " px" : ""}" src="/api/label/file?name=${encodeURIComponent(d.name)}" alt="${esc(d.name)}" draggable="false">` +
+  if (d.image && isBox()) return `<div class="lab-boxwrap"><img class="lab-boximg${(d.width || 0) < 256 ? " px" : ""}" ${imgSrc(d.name)} alt="${esc(d.name)}" draggable="false">` +
     `<svg id="lab-boxsvg" viewBox="0 0 1000 1000" preserveAspectRatio="none">${boxOverlay()}</svg></div>` +
     `<div class="muted lab-help">끌어서 상자 그리기 (붓 = 숫자키) · 상자 눌러 고르기 → 끌어 옮기기·오른쪽 아래 끌어 크기 · 숫자키로 클래스 바꾸기 · Delete 지우기 · C 이전 그림 상자 복사 · ${d.width}×${d.height}</div>`;
-  if (d.image) return `<img class="lab-bigimg${(d.width || 0) < 256 ? " px" : ""}" src="/api/label/file?name=${encodeURIComponent(d.name)}" alt="${esc(d.name)}">` +
+  if (d.image) return `<img class="lab-bigimg${(d.width || 0) < 256 ? " px" : ""}" ${imgSrc(d.name)} alt="${esc(d.name)}">` +
     `<div class="muted">${d.width}×${d.height} 픽셀</div>`;
   if (d.row) return `<div class="kv lab-row">` + Object.entries(d.row).map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join("") +
     `</div><div class="muted">원본 ${d.line}행</div>`;
@@ -413,6 +424,7 @@ function renderDetail() {
   }
   bindChart();
   bindBoxes();
+  fillImages();
 }
 function redrawBoxes() { const s = $("lab-boxsvg"); if (s) s.innerHTML = boxOverlay(); }
 async function saveBoxes() {
@@ -651,7 +663,7 @@ $("lab-split-go").onclick = async () => {
 };
 $("lab-merge-go").onclick = async () => {
   try {
-    const st = await L("merge", { file: $("lab-merge-file").value.trim() });
+    const st = await L("merge", { file: pathOf("lab-merge-file") });
     showMessage(`합쳤음: 새로 ${st.added}개 · 같음 ${st.agreed}개 · 충돌 ${st.conflicts}개` + (st.agreement != null ? ` (일치율 ${Math.round(st.agreement * 100)}%)` : ""),
       st.conflicts ? "'충돌만'으로 걸러 보며 하나씩 정하세요 (내 것 유지 / 그쪽 것으로 / 숫자키로 새로)" : "", "", true);
     await after(st, false);
@@ -742,7 +754,7 @@ $("lab-rule-apply").onclick = async () => {
 };
 $("lab-import-go").onclick = async () => {
   try {
-    const st = await L("import", { label_file: $("lab-import-file").value.trim() });
+    const st = await L("import", { label_file: pathOf("lab-import-file") });
     showMessage(`${st.applied}개를 가져왔음` + (st.unknown ? ` · 표에만 있고 폴더에 없는 이름 ${st.unknown}개는 건너뜀` : "") +
       (st.kept_manual ? ` · 사람이 붙인 정답 ${st.kept_manual}개는 그대로 둠` : ""), "가져온 정답은 '확인 안 함'으로 걸러 보며 확인하세요", "", true);
     await after(st, false);
@@ -780,10 +792,12 @@ function showStart() {
   if (S.state) $("lab-back-name").textContent = S.state.file || "";
 }
 $("lab-switch").onclick = showStart;
+window.DLLabel = { start, showStart, setState, after, loadItems, showMessage, showError, scan, state: () => S.state };
 $("lab-back").onclick = () => { if (S.state) start(S.state); };
 
 // 새로 고쳐도 서버에 남은 작업을 이어서 (studio에서 ?folder= 로 넘어왔으면 시작 화면에 머묾)
 (async () => {
+  if (WEB) return;                                       // 웹: 작업 목록에서 고름 (labels.js)
   let st = null;
   try { st = await L("state", {}); } catch (e) { return; /* 작업 없음: 처음 화면 */ }
   if (new URLSearchParams(location.search).get("folder")) { S.state = st; showStart(); return; }

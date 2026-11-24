@@ -18,7 +18,7 @@
     <button data-step="predict" class="step"><span class="n">5</span><span class="sl">예측<small>새 데이터에 쓰기</small></span></button>
   </nav>
   <div class="files">
-    <button id="btn-label" title="정답이 없는 데이터에 정답 붙이기 (새 탭)">라벨링 작업실</button>
+    <button id="btn-label" title="정답이 없는 데이터에 정답 붙이기 (새 탭). 붙인 정답은 ② 데이터의 라벨링한 데이터에서 불러 씀">라벨링 ↗</button>
     <button id="btn-open">열기</button>
     <button id="btn-save">저장</button>
     <button id="btn-export">내보내기</button>
@@ -74,6 +74,12 @@
         <div class="src-row"><input id="folder-path" class="path" placeholder="C:\data\사진 (안에 클래스별 하위 폴더)"></div>
         <div class="src-row"><label class="inline">크기 <select id="folder-size"><option value="8">8×8</option><option value="16">16×16</option><option value="28" selected>28×28</option><option value="32">32×32</option></select></label>
           <span class="grow"></span><button id="btn-folder">폴더 불러오기</button></div>
+      </div>
+      <div class="src-card" id="label-card" hidden>
+        <div class="src-head"><b>라벨링한 데이터</b><span>라벨링 페이지에서 정답을 붙인 작업 (이 브라우저)</span></div>
+        <div id="label-jobs" class="label-jobs"></div>
+        <div class="src-row"><label class="check"><input id="label-confirmed" type="checkbox"> 확인된 정답만</label>
+          <span class="grow"></span><a class="btn-link" href="label.html" target="_blank" rel="noopener">라벨링 페이지 ↗</a></div>
       </div>
       <div class="src-card" id="series-row" hidden>
         <div class="src-head"><b>시계열 폴더</b><span>샘플(사이클·환자)마다 CSV 하나</span></div>

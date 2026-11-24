@@ -316,11 +316,29 @@ function renderDataGuide() {
   $("csv-path").placeholder = WEB ? "단추로 CSV 파일 고르기" : img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
   st.examples = sub && !st.autoTask ? sub.example_data : allExamples();
   renderExamples();
+  renderLabelJobs();
   $("csv-format-body").innerHTML = csvFormat(any ? null : sub);
   if (sub && !st.autoTask) $("task").value = sub.task;
   $("normalize-text").textContent = img ? "정규화 (픽셀 전체 평균 0, 표준편차 1)"
     : inputKind() === "tabular" ? "정규화 (열마다 평균 0, 표준편차 1)" : "정규화 (시점별 평균 0, 표준편차 1)";
 }
+async function renderLabelJobs() {                      // 웹: 라벨링 페이지에서 만든 작업 (이 브라우저 보관함)
+  if (!WEB || !window.DLStore || !DLStore.labels) return;
+  $("label-card").hidden = false;
+  let items = [];
+  try { items = await DLStore.labels.list(); } catch (e) { /* 보관함을 못 열면 빈 목록 */ }
+  const kind = { series_folder: "시계열", image_folder: "이미지", table: "표" };
+  const schema = { class: "클래스", number: "숫자", segments: "구간", boxes: "상자" };
+  $("label-jobs").innerHTML = items.length ? items.map((p) => {
+    const m = p.meta || {}, ok = m.schema === "class" || m.schema === "number";
+    return `<div class="label-job"><div><b>${esc(p.name)}</b><span class="muted">${esc(`${kind[m.kind] || ""} · ${schema[m.schema] || ""} 정답 · ${m.labeled || 0}/${m.total || 0}개`)}</span></div>` +
+      (ok ? `<button data-job="${esc(p.id)}">불러오기</button>` : `<span class="muted" title="구간·상자 정답 과제는 준비 중">학습 과제 준비 중</span>`) + `</div>`;
+  }).join("") : `<p class="muted">아직 없습니다. 라벨링 페이지에서 정답을 붙이면 여기서 불러올 수 있습니다.</p>`;
+}
+$("label-jobs").onclick = (e) => {
+  const b = e.target.closest("[data-job]");
+  if (b) loadData(Object.assign(dataOptions(), { label_job: b.dataset.job, confirmed_only: $("label-confirmed").checked }));
+};
 function allExamples() {                                 // 과제 없이: 쓸 수 있는 모든 예시 (과제 이름과 함께)
   const out = [], seen = new Set();
   for (const f of st.catalog) for (const s of f.subtasks) {
@@ -403,6 +421,7 @@ async function loadData(body) {                       // 성공하면 true
   $("data-issues").innerHTML = "";
   try {
     const r = await api("/api/data/load", body);
+    st.dataName = r.label_name || null;                     // 라벨링한 작업이면 그 이름 (프로젝트 이름에)
     if (!st.sub && st.catalog.length) st.autoTask = true;    // 과제 없이 넣은 데이터: 데이터를 보고 과제를 정함
     if (st.autoTask) { st.summary = r.summary; await autoPick(r.summary); }
     onData(r.summary);
@@ -475,16 +494,16 @@ async function scanSeries() {
     if (none) $("series-guide").innerHTML = `<b>정답(클래스)이 없어 학습할 수 없습니다.</b> 아래 중 하나로 정답을 알려 주세요.<ol>` +
       `<li>클래스마다 하위 폴더로 나누기: <code>폴더/정상/*.csv</code>, <code>폴더/이상/*.csv</code></li>` +
       `<li>정답 표 CSV를 만들어 위 '정답 표 CSV' 칸에 넣기: 첫 열 = 파일 이름, 둘째 열 = 정답 (예: <code>Cycle_10,정상</code>)</li>` +
-      `<li><a href="/label?folder=${encodeURIComponent(path)}&column=${encodeURIComponent($("series-column").value)}" target="_blank">` +
-      `라벨링 작업실에서 정답 붙이기</a> (새 탭): 격자로 훑고, 규칙으로 한꺼번에, 하나씩 크게 보며</li></ol>`;
+      (WEB ? `<li><a href="label.html" target="_blank" rel="noopener">라벨링 페이지에서 정답 붙이기</a> (새 탭): 같은 폴더를 고르고 정답을 붙인 뒤, 여기 '라벨링한 데이터'에서 불러오기</li></ol>`
+        : `<li><a href="/label?folder=${encodeURIComponent(path)}&column=${encodeURIComponent($("series-column").value)}" target="_blank">` +
+          `라벨링 작업실에서 정답 붙이기</a> (새 탭): 격자로 훑고, 규칙으로 한꺼번에, 하나씩 크게 보며</li></ol>`);
   } catch (e) {
     showError(e);
     $("data-issues").innerHTML = (e.issues || []).map((i) => `<li>${esc(i.message)}<span class="hint">→ ${esc(i.hint)}</span></li>`).join("");
   }
 }
 $("btn-series-scan").onclick = scanSeries;
-$("btn-label").onclick = () => (WEB ? showMessage("라벨링 작업실은 웹 버전에 아직 없음", "내 PC에서 python -m dlstudio로 실행하면 쓸 수 있습니다")
-  : window.open("/label", "_blank"));
+$("btn-label").onclick = () => window.open(WEB ? "label.html" : "/label", "_blank");   // 라벨링은 따로 페이지 (새 탭)
 $("series-path").oninput = () => {                        // 폴더를 바꾸면 이전 살펴보기 결과는 버림
   st.seriesScan = null;
   $("series-box").hidden = true;

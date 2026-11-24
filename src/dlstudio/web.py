@@ -234,7 +234,7 @@ _MARK = "@data/"
 
 
 def _root_re():
-    return re.compile("^" + re.escape(DATA_DIR) + r"/(u\d+)(/|$)")
+    return re.compile("^" + re.escape(DATA_DIR) + r"/([uL]\d+)(/|$)")      # u: 고른 파일, L: 다시 푼 라벨링 작업
 
 
 def _walk_strings(obj, fn):

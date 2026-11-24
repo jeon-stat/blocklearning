@@ -6,7 +6,8 @@
     ["https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js", "sha384-90so5tCKvl0xs9agU29IMKlAVzhfzFX7QO//YxQkRhJG58bBZrFN+2ZTRB026X5X"],
     ["https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js", "sha384-vE8hbVJ4lezako5rlvE7bY0BVzWlFhZncPlckrqNwcUQpVtgbENTgZ8TBbnPjZre"],
   ];
-  const html = await (await fetch(STATIC + "index.html", { cache: "no-cache" })).text();
+  const LABEL = document.body.dataset.page === "label";        // 라벨링 페이지 (label.html): 학습 엔진(TF.js)은 필요 없음
+  const html = await (await fetch(STATIC + (LABEL ? "label.html" : "index.html"), { cache: "no-cache" })).text();
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.body.querySelectorAll("script").forEach((s) => s.remove());
   document.body.className = doc.body.className;
@@ -19,11 +20,14 @@
     s.onerror = () => no(new Error("불러오지 못함: " + src));
     document.body.appendChild(s);
   });
-  for (const [src, sri] of CDN) await load(src, sri);
+  for (const [src, sri] of LABEL ? CDN.slice(0, 1) : CDN) await load(src, sri);
   const v = "?v=" + Date.now();                              // 새 버전을 바로 쓰게 (브라우저 캐시 피함)
   const css = document.querySelector('link[href$="style.css"]');
   if (css) css.href = STATIC + "style.css" + v;
-  for (const f of ["engine.js", "store.js", "web.js", "graph.js", "app.js", "projects.js"]) await load(STATIC + f + v);
+  const STUDIO = ["engine.js", "store.js", "web.js", "graph.js", "app.js", "projects.js"];
+  const LABELS = ["store.js", "web.js", "label.js", "labels.js"];         // 라벨링 페이지
+  for (const f of LABEL ? LABELS : STUDIO) await load(STATIC + f + v);
+  if (LABEL) return window.DLLabels.init();
   window.DLS_WEB.afterApp();
   window.DLProjects.init();
 })().catch((e) => {

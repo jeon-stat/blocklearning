@@ -7,14 +7,14 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="lab">
-<header class="top">
-  <div class="brand">DL studio <span class="sub">라벨링 작업실</span></div>
+<header class="top lab-top">
+  <div class="brand"><svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><defs><linearGradient id="lg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg2)"/><path d="M8 22l5-5 4 3 7-9" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="11" r="2.4" fill="#fff"/></svg><span class="bt">DL studio<span class="sub">라벨링</span></span></div>
   <div id="lab-progress" class="lab-progress"></div>
   <div class="files">
     <button id="lab-switch" hidden title="다른 데이터·다른 정답 종류로 새 작업을 만들거나 다른 작업 파일을 엽니다">새 작업 · 다른 작업 열기</button>
     <button id="lab-undo" title="Ctrl+Z" disabled>↶ 되돌리기</button>
     <button id="lab-redo" title="Ctrl+Y" disabled>↷ 다시 하기</button>
-    <a class="btn-link" href="/" target="_blank">studio 열기</a>
+    <a class="btn-link" href="/" target="_blank">studio 열기 ↗</a>
   </div>
 </header>
 
@@ -27,7 +27,7 @@
 <main>
   <!-- 처음: 작업 만들기·열기 -->
   <section id="lab-start" class="panel">
-    <h2>라벨링 작업실</h2>
+    <h2>라벨링</h2>
     <p class="lead">데이터에 정답을 붙입니다. 데이터는 <b>시계열</b>(샘플마다 CSV 하나인 폴더), <b>이미지</b>(그림 폴더), <b>표</b>(CSV 한 파일, 한 행 = 샘플) 중에서 고르고,
       정답은 클래스(분류)·숫자(회귀)·구간(시계열 시점별 단계)·상자(이미지 객체 탐지) 중에서 고릅니다.
       붙인 정답은 작업 파일에 바로바로 저장되고, 다 붙이면 studio 학습 데이터로 씁니다. 데이터 파일은 바꾸지 않습니다.</p>

@@ -7,7 +7,7 @@
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
 const PY_FILES = ["__init__.py", "analysis.py", "blocks.py", "codegen.py", "core.py", "data.py", "graph.py", "jobs.py",
-  "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py"];
+  "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
 const DATA_FILES = ["data/digits8.npz", "data/pneumonia28.npz"];
 const E = () => window.DLEngine;
 
@@ -36,6 +36,7 @@ async function boot() {
   py.FS.mkdirTree("/data");
   py.runPython("import sys; sys.path.insert(0, '/app')");
   W.mod = py.pyimport("dlstudio.web");
+  W.lab = py.pyimport("dlstudio.weblabel");
   W.studio = W.mod.WebStudio();
   W.py = py;
   bootMessage("");
@@ -225,6 +226,64 @@ function preview(body) {                               // ③ 블록 미리보�
   } finally { x.dispose(); if (!trained) net.dispose(); }
 }
 
+// ------------------------------------------------------------ 라벨링 (라벨링 페이지 · studio ② 라벨링한 데이터)
+// 계산은 core.api_label 그대로 (numpy만 씀). 파일 경로가 필요한 동작만 여기서: 새로 만들기·합치기·내보내기(내려받기)·그림 보기
+const LABEL_READ = new Set(["state", "items", "item", "rule_preview", "cluster", "normal_candidates", "columns"]);
+const LABEL_OUT = new Set(["export", "export_yolo", "export_coco", "export_normals", "split", "bundle"]);
+let labelUrls = {};                                      // 그림 이름 → blob URL (크게 보기)
+function resetLabelUrls() { Object.values(labelUrls).forEach((u) => URL.revokeObjectURL(u)); labelUrls = {}; }
+function labelCall(op, body) {
+  let r;
+  if (op === "new") { resetLabelUrls(); r = wrapped(W.lab.new_job(W.studio, JSON.stringify(body))); }
+  else if (op === "merge") r = wrapped(W.lab.merge_file(W.studio, body.file || ""));
+  else if (op === "use" || op === "open") throw { message: "웹 버전은 라벨링 페이지의 작업 목록으로 엽니다", hint: "" };
+  else if (LABEL_OUT.has(op)) {                          // 내보내기: Pyodide 안에 쓴 파일을 내려받기
+    r = wrapped(W.lab.export_file(W.studio, op, JSON.stringify(body)));
+    for (const [name, p] of r.files) download(name, W.py.FS.readFile(p));
+    return r;
+  } else r = pyCall("POST", "/api/label/" + op, body);
+  if (!LABEL_READ.has(op)) changed("label");
+  return r;
+}
+async function labelFileUrl(name) {                     // 그림 원본 → blob URL
+  if (labelUrls[name]) return labelUrls[name];
+  const p = String(W.lab.file_path(W.studio, name));
+  const ext = (p.split(".").pop() || "").toLowerCase();
+  const type = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", bmp: "image/bmp" }[ext] || "application/octet-stream";
+  labelUrls[name] = URL.createObjectURL(new Blob([W.py.FS.readFile(p)], { type }));
+  return labelUrls[name];
+}
+function labelWork() {                                   // 지금 작업 → {work: 정답 JSON 글자, meta: 목록 요약}
+  return { work: String(W.lab.work_text(W.studio)), meta: JSON.parse(String(W.lab.summary(W.studio))) };
+}
+const labelData = () => bytesOf(W.lab.data_bytes(W.studio));
+async function labelOpen(work, data) {                   // 보관함의 작업 → 라벨링 페이지에서 엶
+  await ready;
+  resetLabelUrls();
+  W.py.FS.mkdirTree("/work");
+  const p = `/work/label_${++W.n}.zip`;
+  if (data && data.length) W.py.FS.writeFile(p, data);
+  return wrapped(W.lab.open_job(W.studio, data && data.length ? p : "", work));
+}
+async function labelOpenBundle(path) {                  // 작업 묶음(.dllabel.zip) 가져오기
+  await ready;
+  resetLabelUrls();
+  return wrapped(W.lab.open_bundle(W.studio, path));
+}
+async function useLabelJob(body) {                      // studio ②: 라벨링한 작업 → 학습 데이터
+  const rec = await window.DLStore.labels.load(body.label_job);
+  if (!rec || !rec.work) throw { message: "라벨링 작업을 찾을 수 없음", hint: "라벨링 페이지에서 작업을 다시 열어 저장하세요" };
+  clearTrained();
+  W.py.FS.mkdirTree("/work");
+  const p = `/work/label_${++W.n}.zip`;
+  if (rec.data && rec.data.length) W.py.FS.writeFile(p, rec.data);
+  const r = wrapped(W.lab.use_job(W.studio, rec.data && rec.data.length ? p : "", rec.work, !!body.confirmed_only));
+  const item = (await window.DLStore.labels.list()).find((x) => x.id === body.label_job);
+  r.label_name = item ? item.name : "";
+  changed("data");
+  return r;
+}
+
 // ------------------------------------------------------------ 바뀜 알림 (자동 저장이 듣는 곳)
 const listeners = [];
 function changed(kind) { for (const f of listeners) { try { f(kind); } catch (e) { console.error(e); } } }
@@ -268,7 +327,8 @@ async function api(path, body) {
     if (path === "/api/runs/restore") return runRestore(body);
     if (path === "/api/predict") return await predictNew(body);
     if (path === "/api/preview") return preview(body);
-    if (path.startsWith("/api/label/")) throw { message: "라벨링 작업실은 웹 버전에 아직 없음", hint: "내 PC에서 python -m dlstudio로 실행하면 쓸 수 있습니다" };
+    if (path.startsWith("/api/label/")) return labelCall(path.slice("/api/label/".length), body || {});
+    if (path === "/api/data/load" && body && body.label_job) return await useLabelJob(body);
     if (path === "/api/data/load") clearTrained();
     const r = pyCall(method, path, body);
     if (method === "POST") {
@@ -368,8 +428,6 @@ function afterApp() {
   if (lead) lead.textContent = "이 브라우저 안에서 학습합니다 (데이터는 밖으로 나가지 않음). 데이터·모델이 크면 몇 분 걸릴 수 있습니다. 끝나면 PyTorch 코드와 가중치로 내려받을 수 있습니다.";
   const dev = $("device");
   if (dev && dev.closest("label")) dev.closest("label").hidden = true;      // 웹은 브라우저가 알아서 (GPU가 있으면 WebGL)
-  const lb = $("btn-label");
-  if (lb) lb.hidden = true;                                 // 라벨링 작업실은 내 PC 실행에만
   const ex = $("btn-export-pt");
   if (ex) ex.textContent = "학습한 모델 내려받기 (PyTorch 코드 + 가중치)";
   const be = $("btn-export");
@@ -377,7 +435,8 @@ function afterApp() {
   document.body.classList.add("web");
 }
 
-window.DLS_WEB = { api, afterApp, ready, writeFiles, recordBytes, openRecord,
+window.DLS_WEB = { api, afterApp, ready, writeFiles, recordBytes, openRecord, pick, pickInto,
+  labelFileUrl, labelWork, labelData, labelOpen, labelOpenBundle,
   onChange: (f) => listeners.push(f), hasData: () => !!(W.studio && W.studio.data), openedName: () => W.openedName || "",
   download,
   pickProject: async () => { const f = await pick({ accept: ".dlstudio,.zip" }); return f.length ? writeFiles(f) : null; } };

@@ -250,3 +250,17 @@ def test_web_storage_and_security():
     for f in ("engine.js", "store.js", "web.js", "graph.js", "app.js", "projects.js"):
         assert f'"{f}"' in boot, f
     assert (root / "privacy.html").exists() and "drive.file" in (root / "privacy.html").read_text(encoding="utf-8")
+
+
+def test_web_label_page_and_python_files():
+    """웹 라벨링 페이지: 첫 페이지와 같은 보안 정책, 라벨링 스크립트, 그리고 Pyodide가 받는 파이썬 파일이 패키지와 맞음."""
+    root = STATIC.parents[2]
+    index, label = (root / "index.html").read_text(encoding="utf-8"), (root / "label.html").read_text(encoding="utf-8")
+    csp = lambda h: re.search(r'Content-Security-Policy" content="([^"]+)"', h).group(1)
+    assert csp(index) == csp(label) and 'data-page="label"' in label and "<script>" not in label
+    boot = (STATIC / "boot.js").read_text(encoding="utf-8")
+    assert '"labels.js"' in boot and '"label.js"' in boot
+    web = (STATIC / "web.js").read_text(encoding="utf-8")
+    listed = set(re.findall(r'"(\w+\.py)"', web[web.index("PY_FILES"):web.index("];", web.index("PY_FILES"))]))
+    have = {p.name for p in STATIC.parent.glob("*.py")} - {"__main__.py", "cli.py", "server.py"}
+    assert listed == have, (have - listed, listed - have)

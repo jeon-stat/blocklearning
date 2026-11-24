@@ -636,3 +636,37 @@ main > #step-home { background: transparent; border: none; box-shadow: none; pad
 button.icon { min-height: 30px; width: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 button.icon svg { width: 16px; height: 16px; }
 body.app #step-model.is-empty:not([hidden]) { height: auto; display: block; }
+
+/* 라벨링 페이지 (body.lab): 위쪽 막대 + 넓은 내용 */
+body.lab { min-height: 100vh; }
+body.lab > .top { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px; padding: 10px 24px; background: #fff;
+  border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+body.lab .brand { display: flex; align-items: center; gap: 10px; }
+body.lab .brand svg { border-radius: 9px; box-shadow: 0 4px 10px -2px rgba(99, 102, 241, .45); }
+body.lab .brand .bt { display: flex; flex-direction: column; font-size: 16px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.2; }
+body.lab .brand .sub { margin: 0; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+body.lab .files { display: flex; flex-direction: row; gap: 8px; margin-left: auto; align-items: center; }
+body.lab .btn-link { min-height: 36px; display: inline-flex; align-items: center; border-radius: var(--r-sm); border-color: var(--line-2); font-weight: 500; }
+body.lab > main { padding: 24px 28px 40px; }
+body.lab main > .panel { max-width: 1480px; }
+body.lab > .message { position: fixed; top: auto; left: auto; right: 24px; bottom: 24px; transform: none; z-index: 60; margin: 0;
+  width: max-content; max-width: min(480px, calc(100vw - 32px)); background: #fff; color: var(--text); border: 1px solid var(--line);
+  border-left: 4px solid var(--bad); border-radius: var(--r-md); padding: 14px 42px 14px 16px; box-shadow: var(--shadow-lg); }
+body.lab > .message.ok { border-left-color: var(--ok); }
+.lab-job { display: flex; flex-direction: column; min-width: 0; max-width: 280px; }
+.lab-job-name { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lab-progress { flex: 1; min-width: 220px; }
+.lab-tools { gap: 8px; }
+.lab-icon { background: linear-gradient(135deg, #10b981, #0ea5e9); }
+.job-bar { height: 6px; border-radius: 999px; background: #eef0f4; overflow: hidden; margin-top: 4px; }
+.job-bar span { display: block; height: 100%; background: linear-gradient(90deg, #10b981, #0ea5e9); }
+.lab-chip { min-height: 32px; box-shadow: none; }
+/* studio ② 라벨링한 데이터 */
+.label-jobs { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }
+.label-job { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid #eef0f4; border-radius: 10px; background: #fafbfc; }
+.label-job > div { display: flex; flex-direction: column; min-width: 0; }
+.label-job b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label-job .muted { font-size: 12px; }
+.label-job button { min-height: 30px; padding: 3px 10px; font-size: 13px; flex: none; }
+body.lab .files button, body.lab .btn-link { white-space: nowrap; }
+.proj-card .pa button { white-space: nowrap; }

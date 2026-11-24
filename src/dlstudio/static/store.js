@@ -17,8 +17,13 @@ const FOLDER = "application/vnd.google-apps.folder";
 // ------------------------------------------------------------ 이 브라우저 (IndexedDB)
 function idb() {
   return new Promise((ok, no) => {
-    const r = indexedDB.open("dlstudio", 1);
-    r.onupgradeneeded = () => { r.result.createObjectStore("projects", { keyPath: "id" }); r.result.createObjectStore("blobs"); };
+    const r = indexedDB.open("dlstudio", 2);                  // 2: 라벨링 작업(labels) 더함
+    r.onupgradeneeded = () => {
+      const db = r.result, has = (n) => db.objectStoreNames.contains(n);
+      if (!has("projects")) db.createObjectStore("projects", { keyPath: "id" });
+      if (!has("blobs")) db.createObjectStore("blobs");
+      if (!has("labels")) db.createObjectStore("labels", { keyPath: "id" });
+    };
     r.onsuccess = () => ok(r.result);
     r.onerror = () => no(r.error || new Error("브라우저 보관함을 열 수 없음"));
   });
@@ -78,6 +83,53 @@ const local = {
       t.objectStore("projects").delete(id);
       t.objectStore("blobs").delete(id + "/project");
       t.objectStore("blobs").delete(id + "/data");
+    });
+  },
+};
+
+// ------------------------------------------------------------ 라벨링 작업 (이 브라우저): 목록(labels) + 정답 JSON·데이터 사본(blobs의 L<id>/work·data)
+// 모양: list() → [{id, name, updated, meta}] · create(name) · save(id, {work, data?, meta}) · load(id) → {work, data} · rename · remove
+const labels = {
+  kind: "local",
+  label: "이 브라우저",
+  async list() {
+    const all = await tx(["labels"], "readonly", (t) => req(t.objectStore("labels").getAll()));
+    return all.sort((a, b) => b.updated - a.updated);
+  },
+  async create(name) {
+    const p = { id: "l" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, updated: Date.now(), meta: null };
+    await tx(["labels"], "readwrite", (t) => t.objectStore("labels").put(p));
+    return p;
+  },
+  async save(id, { work, data, meta }) {
+    await tx(["labels", "blobs"], "readwrite", async (t) => {
+      const ls = t.objectStore("labels");
+      const p = await req(ls.get(id));
+      if (!p) throw new Error("라벨링 작업이 없음");
+      p.updated = Date.now();
+      if (meta !== undefined) p.meta = meta;
+      ls.put(p);
+      if (work !== undefined) t.objectStore("blobs").put(work, "L" + id + "/work");
+      if (data !== undefined) t.objectStore("blobs").put(data, "L" + id + "/data");
+    });
+  },
+  async load(id) {
+    return tx(["blobs"], "readonly", async (t) => {
+      const b = t.objectStore("blobs");
+      return { work: await req(b.get("L" + id + "/work")), data: await req(b.get("L" + id + "/data")) };
+    });
+  },
+  async rename(id, name) {
+    await tx(["labels"], "readwrite", async (t) => {
+      const ls = t.objectStore("labels"), p = await req(ls.get(id));
+      if (p) { p.name = name; p.updated = Date.now(); ls.put(p); }
+    });
+  },
+  async remove(id) {
+    await tx(["labels", "blobs"], "readwrite", (t) => {
+      t.objectStore("labels").delete(id);
+      t.objectStore("blobs").delete("L" + id + "/work");
+      t.objectStore("blobs").delete("L" + id + "/data");
     });
   },
 };
@@ -192,5 +244,5 @@ const drive = {
   },
 };
 
-window.DLStore = { local, drive, GOOGLE_CLIENT_ID, DRIVE_SCOPE };
+window.DLStore = { local, drive, labels, GOOGLE_CLIENT_ID, DRIVE_SCOPE };
 })();
