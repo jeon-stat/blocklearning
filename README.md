@@ -16,12 +16,15 @@
 | 학습·샘플 따라가기·모델 정보 | PyTorch | [TensorFlow.js](https://www.tensorflow.org/js) (`static/engine.js`, 그래픽카드가 있으면 WebGL로 빠르게) |
 | 데이터 넣기 | 경로 입력 | 파일·폴더 고르기 (브라우저 안에만 둠) |
 | 내보내기 | TorchScript `.pt` | PyTorch 코드 + 가중치 `.npz` 내려받기 |
-| 저장·열기 | `.dlstudio` 파일 | `.dlstudio` 내려받기·고르기 (예시 데이터가 아니면 데이터를 먼저 다시 고름) |
+| 저장·열기 | `.dlstudio` 파일 | **내 프로젝트**: 바뀌면 자동 저장, 다시 열면 데이터·학습 결과째 이어서. 저장 위치는 이 브라우저(IndexedDB) 또는 **구글 드라이브**(내 드라이브/DL studio/<프로젝트>/). `.dlstudio`(데이터 포함) 내려받기·가져오기 |
 | 라벨링 작업실 | 있음 | 아직 없음 |
 
 - 엔진은 PyTorch 식을 TF.js 연산으로 그대로 옮겨서, 같은 가중치면 출력·기울기·BatchNorm 갱신이 PyTorch와 같습니다 (`tests/test_engine.py`, 46개 경우).
   그래서 웹에서 학습한 가중치를 PyTorch 코드로 그대로 내보냅니다.
 - 처음 열 때 Pyodide·TF.js를 받느라 5–10초쯤 걸립니다 (그다음은 브라우저가 기억).
+- 구글 드라이브: 권한은 `drive.file`(DL studio가 만든 파일만)뿐이고, 출입증은 메모리에만 둡니다 (새로 고치면 로그인 한 번).
+  OAuth 클라이언트 ID는 `static/store.js`의 `GOOGLE_CLIENT_ID` (공개 값). 개인정보처리방침: [privacy.html](privacy.html)
+- 보안: `index.html`의 CSP로 통신은 구글 API·jsDelivr만 허용(조작된 코드가 데이터를 낯선 서버로 못 보냄), CDN 스크립트는 SRI 해시로 확인 (`static/boot.js`)
 - 배포: 저장소 Settings → Pages → Source를 **Deploy from a branch**, 가지 `main`, 폴더 `/ (root)`로. 무료 계정은 공개 저장소에서만 Pages를 쓸 수 있습니다.
 - 내 PC에서 웹 버전을 미리 보려면 저장소 맨 위에서 `python -m http.server 8000` → http://127.0.0.1:8000/
 
@@ -111,6 +114,7 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 | `core.py` | 상태와 API (HTTP와 상관없음: 로컬 서버와 웹 버전이 함께 씀) |
 | `server.py` · `cli.py` | 로컬 HTTP 서버(표준 라이브러리만)와 실행 명령 |
 | `web.py` · `static/web.js` · `static/engine.js` | 웹 버전: Pyodide 쪽 함수, 화면과 잇는 다리, TF.js 학습 엔진 |
+| `static/store.js` · `static/projects.js` · `static/boot.js` | 웹 버전: 저장소(브라우저·구글 드라이브), 내 프로젝트·자동 저장, 시작 |
 | `static/` | 화면 (외부 라이브러리 없음) |
 
 ## 출처
