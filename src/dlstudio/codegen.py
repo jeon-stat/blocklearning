@@ -51,6 +51,20 @@ def _ident(nid: str, used: set) -> str:
     return n
 
 
+# 생성 코드의 변수 이름: 층 종류 + 번호 (conv1, relu1, pool1 …). 가중치 이름(key)과는 따로라 바꿔도 저장한 프로젝트와 상관없음
+PREFIX = {"conv": "conv", "conv2d": "conv", "pool": "pool", "pool2d": "pool", "global_avg": "gap", "global_avg2d": "gap",
+          "last_step": "last", "bn": "bn", "dropout": "drop", "flatten": "flat", "dense": "fc", "lstm": "lstm", "gru": "gru",
+          "simple_rnn": "rnn", "se": "se", "add": "add", "concat": "cat"}
+
+
+def _pretty(t: str, cfg: dict, counts: dict) -> str:
+    if t == "output":
+        return "out"
+    p = cfg.get("kind", "act") if t == "act" else PREFIX.get(t, t)
+    counts[p] = counts.get(p, 0) + 1
+    return f"{p}{counts[p]}"
+
+
 def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan:
     """그래프 → 펼친 층 목록. 검사를 통과하지 못하면 ValueError(첫 문제)."""
     from dlstudio.graph import check_graph
@@ -62,6 +76,7 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
     start = (1,) + tuple(image) if image else (1, length)
     plan = Plan(kind=checked.kind, in_shape=start, n_out=n_out)
     used: set = set()
+    counts: dict = {}
 
     def walk(scope, in_shape, in_name: str, suffix: str, key_prefix: str) -> str:
         c.shape_pass(scope, in_shape)
@@ -79,7 +94,7 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
                 names[k], shapes[k] = cur, s
                 plan.aliases[k] = cur
                 continue
-            nm = _ident(k + suffix, used)
+            nm = _ident(_pretty(t, n, counts), used)
             out = tuple(c.shapes[k])
             plan.steps.append(Step(nm, t, _config(n), [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k), k))
             names[k], shapes[k] = nm, out

@@ -118,6 +118,10 @@ function markSteps() {
   mark("data", st.summary);
   mark("model", st.checked && st.checked.ok);
   mark("train", st.trained, st.trained && st.trainedJson !== st.graphJson);
+  for (const id of ["btn-export", "btn-export-pt"]) {        // 학습 전에는 내려받을 모델이 없음
+    $(id).disabled = !st.trained;
+    if (!st.trained) $(id).title = "④ 학습을 마치면 쓸 수 있습니다";
+  }
   renderGuard();
 }
 // ④ 학습: 데이터가 없거나 모델에 문제가 있으면 학습 단추를 막고, 무엇을 하면 되는지 바로 보여 줌
@@ -171,15 +175,17 @@ async function loadCatalog() {                           // 과제 목록. 고�
 document.querySelectorAll(".go").forEach((b) => (b.onclick = () => go(b.dataset.go)));
 
 // ------------------------------------------------------------ ① 과제
+const readyFirst = (xs, ok) => xs.filter(ok).concat(xs.filter((x) => !ok(x)));   // '준비 중'은 뒤로
 function renderTask() {
-  $("families").innerHTML = st.catalog.map((f) => {
+  $("btn-quick").disabled = !st.catalog.length;
+  $("families").innerHTML = readyFirst(st.catalog, (f) => f.subtasks.some((s) => s.available)).map((f) => {
     const ready = f.subtasks.some((s) => s.available);
     return `<button class="tcard${st.fam === f ? " sel" : ""}${ready ? "" : " soon"}" data-f="${f.id}">` +
       `<div class="ti">${f.icon || ""}</div><div class="tn">${esc(f.name)}${ready ? "" : ` <span class="badge">준비 중</span>`}</div>` +
       `<div class="td">${esc(f.desc)}</div></button>`;
   }).join("");
   $("subtask-box").hidden = !st.fam;
-  if (st.fam) $("subtasks").innerHTML = st.fam.subtasks.map((s) =>
+  if (st.fam) $("subtasks").innerHTML = readyFirst(st.fam.subtasks, (s) => s.available).map((s) =>
     `<button class="tcard${st.sub === s ? " sel" : ""}${s.available ? "" : " soon"}" data-s="${s.id}">` +
     `<div class="tn">${esc(s.name)}${s.available ? "" : ` <span class="badge">준비 중</span>`}</div>` +
     `<div class="td">${esc(s.desc)}</div><div class="te">예: ${esc(s.examples_text)}</div></button>`).join("");
@@ -484,7 +490,7 @@ function renderWarnings(el, warns) {
 function renderConfusion(el, cm, recall, caption) {
   if (!cm) return ($(el).innerHTML = "");
   const names = st.summary.classes;
-  let h = `<table class="cm"><tr><th>정답 \ 예측</th>${names.map((n) => `<th>${esc(n)}</th>`).join("")}<th>재현율</th></tr>`;
+  let h = `<table class="cm"><tr><th>정답↓ 예측→</th>${names.map((n) => `<th>${esc(n)}</th>`).join("")}<th>재현율</th></tr>`;
   cm.forEach((row, i) => {
     h += `<tr><th>${esc(names[i])}</th>${row.map((v, j) => `<td class="${i === j ? "diag" : ""}">${v}</td>`).join("")}` +
       `<td>${recall[i] === null ? "-" : pct(recall[i])}</td></tr>`;
@@ -508,9 +514,10 @@ function orderItems(order, graph, depth = 0, out = []) {   // 위상 순서대�
 }
 const blockName = (b) => F.label(b, st.summary);
 function renderTemplateButtons() {                       // 고른 과제의 대표 모델들 (과제를 안 골랐으면 기본 예시)
-  const list = (st.sub ? st.sub.templates : st.defaults).map((t) => [t.id, t.name, t.graph]);
+  const src = st.sub ? st.sub.templates : st.defaults;
+  const list = src.map((t) => [t.id, t.name, t.graph]);
   st.tplList = list;
-  $("tpl-btns").innerHTML = list.map(([id, name]) => `<button data-tpl="${esc(id)}">${esc(name)}</button>`).join(" ");
+  $("tpl-btns").innerHTML = src.map((t) => `<button data-tpl="${esc(t.id)}" title="${esc(`${t.desc}\n언제: ${t.when}`)}">${esc(t.name)}</button>`).join(" ");
 }
 $("tpl-btns").onclick = (e) => {
   const b = e.target.closest("[data-tpl]");
@@ -554,20 +561,31 @@ async function pollJob(id, onTick) {
     await new Promise((r) => setTimeout(r, 700));
   }
 }
-function drawCurve(progress, metricName) {
-  const W = 560, H = 220, L = 40, B = 24;
-  const n = progress.length;
-  let s = `<line x1="${L}" y1="${H - B}" x2="${W - 8}" y2="${H - B}" stroke="#e3e6eb"/>`;
-  if (n) {
-    const xs = (i) => L + (n === 1 ? 0 : (i / (n - 1)) * (W - L - 10));
-    const loss = progress.map((p) => p.loss), lmax = Math.max(...loss) || 1;
-    const lp = loss.map((v, i) => `${xs(i).toFixed(1)},${(8 + (1 - v / lmax) * (H - B - 16)).toFixed(1)}`);   // 손실이 클수록 위
-    const mp = progress.map((p, i) => `${xs(i).toFixed(1)},${(8 + (1 - Math.max(0, Math.min(1, p.test_metric))) * (H - B - 16)).toFixed(1)}`);
-    s += `<polyline fill="none" stroke="#c0392b" stroke-width="2" points="${lp.join(" ")}"/>`;
-    s += `<polyline fill="none" stroke="#2f6fde" stroke-width="2" points="${mp.join(" ")}"/>`;
-    s += `<text x="${L}" y="${H - 6}" font-size="11" fill="#6b7280">epoch 1</text><text x="${W - 10}" y="${H - 6}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
+function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성적 (0~100% 또는 R² 0~1), 오른쪽 축 = loss (가장 큰 값 기준)
+  const W = 560, H = 220, L = 46, R = 46, T = 30, B = 26, pw = W - L - R, ph = H - T - B;
+  const n = progress.length, acc = metricName !== "r2";
+  const yv = (f) => T + (1 - f) * ph;
+  let s = "";
+  for (const f of [0, 0.5, 1]) {
+    s += `<line x1="${L}" y1="${yv(f)}" x2="${L + pw}" y2="${yv(f)}" stroke="#e3e6eb"/>` +
+      `<text x="${L - 6}" y="${yv(f) + 4}" font-size="11" text-anchor="end" fill="#2f6fde">${acc ? f * 100 + "%" : f}</text>`;
   }
-  s += `<text x="${L}" y="14" font-size="12" fill="#c0392b">loss</text><text x="${L + 44}" y="14" font-size="12" fill="#2f6fde">test ${metricName === "r2" ? "R²" : "accuracy"}</text>`;
+  const loss = progress.map((p) => p.loss), lmax = Math.max(0, ...loss) || 1;
+  s += `<text x="${L + pw + 6}" y="${yv(1) + 4}" font-size="11" fill="#c0392b">${Number(lmax.toPrecision(2))}</text>` +
+    `<text x="${L + pw + 6}" y="${yv(0) + 4}" font-size="11" fill="#c0392b">0</text>`;
+  if (n) {
+    const xs = (i) => L + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
+    const lp = loss.map((v, i) => `${xs(i).toFixed(1)},${yv(v / lmax).toFixed(1)}`);
+    const mp = progress.map((p, i) => `${xs(i).toFixed(1)},${yv(Math.max(0, Math.min(1, p.test_metric))).toFixed(1)}`);
+    s += `<polyline fill="none" stroke="#c0392b" stroke-width="2" points="${lp.join(" ")}"/>` +
+      `<polyline fill="none" stroke="#2f6fde" stroke-width="2" points="${mp.join(" ")}"/>` +
+      `<text x="${L}" y="${H - 8}" font-size="11" fill="#6b7280">epoch 1</text>` +
+      `<text x="${L + pw}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
+  }
+  s += `<line x1="${L}" y1="12" x2="${L + 18}" y2="12" stroke="#2f6fde" stroke-width="2"/>` +
+    `<text x="${L + 24}" y="16" font-size="12" fill="#2f6fde">시험 ${acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
+    `<line x1="${L + 300}" y1="12" x2="${L + 318}" y2="12" stroke="#c0392b" stroke-width="2"/>` +
+    `<text x="${L + 324}" y="16" font-size="12" fill="#c0392b">loss (오른쪽 축, 낮을수록 좋음)</text>`;
   $("curve").innerHTML = s;
 }
 $("btn-train").onclick = async () => {
@@ -775,6 +793,10 @@ $("code-save").onclick = async () => {
 // 화면을 새로 고쳐도 서버에 남은 상태(데이터, 블록, 학습된 모델)를 이어서 씀
 (async () => {
   go("task");
+  if (!st.catalog.length) {                                  // 첫 로딩: 빈 화면 대신 무엇을 기다리는지
+    $("btn-quick").disabled = true;
+    $("families").innerHTML = `<p class="muted loading">과제 목록을 불러오는 중…${WEB ? " 처음 열 때는 계산 프로그램(Pyodide·TensorFlow.js)을 받느라 10~20초 걸립니다." : ""}</p>`;
+  }
   try {
     const s = await api("/api/state");
     await loadCatalog();

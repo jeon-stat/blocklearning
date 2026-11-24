@@ -319,6 +319,12 @@ function afterApp() {
     b.onclick = async () => { if (await pickInto("series-label-file", { accept: ".csv,.tsv,.txt" })) lf.dispatchEvent(new Event("change")); };
     lf.after(b);
   }
+  const lead = $("step-train") && $("step-train").querySelector(".lead");
+  if (lead) lead.textContent = "이 브라우저 안에서 학습합니다 (데이터는 밖으로 나가지 않음). 데이터·모델이 크면 몇 분 걸릴 수 있습니다. 끝나면 PyTorch 코드와 가중치로 내려받을 수 있습니다.";
+  const dev = $("device");
+  if (dev && dev.closest("label")) dev.closest("label").hidden = true;      // 웹은 브라우저가 알아서 (GPU가 있으면 WebGL)
+  const lb = $("btn-label");
+  if (lb) lb.hidden = true;                                 // 라벨링 작업실은 내 PC 실행에만
   const ex = $("btn-export-pt");
   if (ex) ex.textContent = "학습한 모델 내려받기 (PyTorch 코드 + 가중치)";
   const be = $("btn-export");

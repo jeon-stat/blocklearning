@@ -64,6 +64,7 @@ button.ex-sel { border-color: var(--ok); color: var(--ok); background: var(--ok-
 .flow-svg .row-grip text { font-size: 12px; fill: #6b7280; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
 .pitem.off { opacity: .62; }
 .pitem .fit { display: block; font-style: normal; font-size: 11px; color: var(--warn); margin-top: 2px; }
+.loading { padding: 18px 4px; }
 .split-note { font-size: 13px; margin: 8px 0 0; }
 .verdict { grid-column: 1 / -1; margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
 .verdict div { color: var(--text); margin-top: 4px; }

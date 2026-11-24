@@ -31,42 +31,42 @@ def _drop(r):
 
 
 T_CNN = {"id": "cnn", "name": "1D CNN",
-         "desc": "짧은 구간의 모양(파형)을 찾는 필터를 겹겹이 쌓은 기본 모델",
-         "when": "처음 시작할 때. 대부분의 신호에서 무난함",
+         "desc": "신호에서 짧은 모양(봉우리·떨림 같은 파형)을 찾는 필터를 몇 겹 쌓은 기본 모델",
+         "when": "처음 시작할 때. 대부분의 신호에서 무난하고 빠름",
          "blocks": [_conv(16, 5), P2, {"type": "repeat", "times": 2, "body": [_res(_conv(16, 3), P2)]}, GAP, OUT]}
 
 T_RESNET = {"id": "resnet1d", "name": "ResNet1D",
-            "desc": "Residual block을 여러 번 쌓은 깊은 CNN. 시계열 분류에서 자주 쓰는 기준 모델",
-            "when": "1D CNN보다 더 복잡한 패턴이 있을 때",
+            "desc": "1D CNN을 더 깊게 쌓고, 입력을 출력에 바로 더해 주는 지름길(Residual)을 둬서 깊어도 잘 배우는 모델",
+            "when": "1D CNN으로 부족할 때. 배우는 값이 10배쯤 많아 학습이 더 오래 걸림",
             "blocks": [_conv(32, 7), BN, P2,
                        {"type": "repeat", "times": 3, "body": [_res(_conv(32, 3), BN, P2, _conv(32, 3), BN)]},
                        P2, GAP, OUT]}
 
 T_INCEPTION = {"id": "inception", "name": "InceptionTime",
-               "desc": "짧은 필터와 긴 필터를 나란히 두고 결과를 이어 붙임 (여러 길이의 패턴을 한 번에)",
-               "when": "짧은 패턴과 긴 패턴이 섞여 있을 때",
+               "desc": "짧은 필터와 긴 필터를 나란히 써서, 짧은 모양과 긴 모양을 한 번에 찾아 이어 붙이는 모델",
+               "when": "짧은 패턴과 긴 패턴이 섞여 있을 때. 크기는 1D CNN과 비슷",
                "blocks": [_conv(16, 1), {"type": "branch", "branches": [[_conv(8, 3)], [_conv(8, 9)], []]},
                           BN, P2, GAP, OUT]}
 
 T_TCN = {"id": "tcn", "name": "TCN",
-         "desc": "칸을 띄워 보는 Conv1D(dilation 2·4·8)로 먼 과거까지 보고 마지막 시점으로 판단",
-         "when": "긴 시계열에서 오래전 값이 중요할 때",
+         "desc": "칸을 띄엄띄엄 건너뛰며 보는 필터(dilation 2·4·8)를 겹쳐 먼 과거까지 보고, 마지막 시점에서 판단하는 모델",
+         "when": "긴 신호에서 오래전 값이 중요할 때. 크기는 1D CNN과 비슷",
          "blocks": [_conv(16, 3), P2, _res(_conv(16, 3, 2), P2), _res(_conv(16, 3, 4), P2),
                     _res(_conv(16, 3, 8), P2), {"type": "last_step"}, OUT]}
 
 T_LSTM = {"id": "lstm", "name": "LSTM",
-          "desc": "값을 하나씩 순서대로 읽으며 기억을 갱신하는 순환 모델",
-          "when": "순서·흐름 자체가 중요할 때. CNN보다 학습이 느림",
+          "desc": "값을 앞에서부터 하나씩 읽으며 기억을 고쳐 나가는 순환 모델 (순서를 그대로 따라감)",
+          "when": "순서·흐름 자체가 중요할 때. 하나씩 차례로 계산해 CNN보다 학습이 느림",
           "blocks": [{"type": "lstm", "hidden": 16, "layers": 1}, OUT]}
 
 T_MLP = {"id": "mlp", "name": "MLP",
-         "desc": "Dense 층 몇 개로 된 가장 기본 모델. 표(열마다 다른 값) 데이터에 씀",
+         "desc": "모든 열의 값을 섞어 판단하는 층(Dense)을 몇 개 쌓은 가장 기본 모델",
          "when": "처음 시작할 때. 열이 수십 개 이하일 때",
          "blocks": [_dense(32), P2, _dense(16), P2, OUT]}
 
 T_DEEP_MLP = {"id": "deep_mlp", "name": "깊은 MLP",
-              "desc": "Dense 층을 더 쌓고 BatchNorm·Dropout으로 학습을 안정시킨 모델",
-              "when": "데이터가 많고 MLP로 부족할 때",
+              "desc": "MLP를 더 깊게 쌓고, 값 크기를 고르게 맞추는 BatchNorm과 외우기(과적합)를 막는 Dropout을 더한 모델",
+              "when": "데이터가 많고 MLP로 부족할 때. 배우는 값이 4배쯤 많음",
               "blocks": [_dense(64), BN, P2, _drop(0.2), _dense(32), BN, P2, _drop(0.2), _dense(16), P2, OUT]}
 
 
@@ -78,18 +78,18 @@ P2D = {"type": "pool2d", "size": 2}
 GAP2 = {"type": "global_avg2d"}
 
 T_CNN2D = {"id": "cnn2d", "name": "작은 CNN",
-           "desc": "3×3 필터로 획·모서리를 찾고, 줄여 가며 모양을 모으는 기본 이미지 모델",
-           "when": "처음 시작할 때. 작은 흑백 이미지에서 무난함",
+           "desc": "3×3 필터로 획·모서리를 찾고, 그림을 줄여 가며 모양을 모으는 기본 이미지 모델",
+           "when": "처음 시작할 때. 작은 흑백 그림에서 무난하고 빠름",
            "blocks": [_c2(8), P2, P2D, _c2(16), P2, GAP2, OUT]}
 
 T_LENET = {"id": "lenet", "name": "LeNet식",
-           "desc": "Conv → Pool을 두 번 하고 Dense로 판단하는 고전 손글씨 모델 (LeNet-5를 작게)",
-           "when": "위치가 중요한 그림 (어디에 획이 있는지)",
+           "desc": "필터로 찾고 그림을 줄이기를 두 번 한 뒤 Dense로 판단하는 고전 손글씨 모델 (LeNet-5를 작게)",
+           "when": "어디에 획이 있는지(위치)가 중요한 그림. Dense 때문에 배우는 값이 많음",
            "blocks": [_c2(6), P2, P2D, _c2(16), P2, P2D, {"type": "flatten"}, _dense(32), P2, OUT]}
 
 T_RESNET2D = {"id": "resnet2d", "name": "작은 ResNet",
-              "desc": "Residual block을 쌓은 깊은 이미지 모델. 깊어도 학습이 잘 됨",
-              "when": "작은 CNN으로 부족할 때",
+              "desc": "지름길(Residual)을 둔 깊은 이미지 모델. 깊어도 잘 배움",
+              "when": "작은 CNN으로 부족할 때. 학습이 더 오래 걸림",
               "blocks": [_c2(16), BN, P2, {"type": "repeat", "times": 2, "body": [_res(_c2(16), BN, P2)]}, GAP2, OUT]}
 
 

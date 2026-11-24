@@ -17,11 +17,29 @@ function recall() { try { return JSON.parse(localStorage.getItem(KEY) || "null")
 const store = (kind) => (kind === "drive" ? S().drive : S().local);
 const when = (t) => { const d = new Date(t); return isNaN(d) ? "" : d.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); };
 const defaultName = () => "제목 없는 프로젝트 " + new Date().toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function autoName() {                                    // 데이터와 과제로 이름 짓기 (예: "심전도 정상·이상 · 시계열 분류 (11. 24.)")
+  try {
+    let data = "";
+    if (st.dataSrc && st.examples) {
+      const e = st.examples.find((x) => x[0] === st.dataSrc);
+      data = e ? e[1].replace(/\s*\([^)]*\)\s*$/, "") : st.dataSrc;
+    } else {
+      const v = ["csv-path", "folder-path", "series-path"].map((id) => ($(id) || {}).value || "").find((x) => x);
+      data = (v || "").replace(/\s*\(파일 \d+개\)$/, "").replace(/\.(csv|tsv|txt)$/i, "");
+    }
+    const base = [data, st.sub ? st.sub.name : ""].filter(Boolean).join(" · ");
+    return base ? `${base} (${new Date().toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })})` : defaultName();
+  } catch (e) { return defaultName(); }
+}
 
 // ------------------------------------------------------------ 머리의 "프로젝트" 단추와 저장 상태
 function status(text, bad = false) {
   const el = $("proj-status");
-  if (el) { el.textContent = text; el.classList.toggle("bad", bad); }
+  if (el) {
+    el.textContent = text;
+    el.classList.toggle("bad", bad);
+    el.title = cur ? `작업이 바뀌면 '${cur.name}'에 자동으로 저장합니다 (${store(cur.kind).label})` : "데이터를 불러오면 자동으로 저장을 시작합니다";
+  }
 }
 function showCurrent() {
   const b = $("btn-projects");
@@ -46,7 +64,7 @@ async function saveNow() {
       if (!WEBB().hasData()) { status(""); dirty = false; return; }     // 데이터가 없으면 저장할 것이 없음
       if (!cur) {
         const kind = S().drive.available() && S().drive.signedIn() ? "drive" : "local";
-        const p = await store(kind).create(defaultName());
+        const p = await store(kind).create(autoName());
         cur = { kind, id: p.id, name: p.name };
         dataDirty = true;
         remember(); showCurrent();
@@ -57,7 +75,7 @@ async function saveNow() {
       const rec = WEBB().recordBytes(cur.name, { dataCopy: wantData });
       if (!rec) { status(""); return; }
       await store(cur.kind).save(cur.id, wantData ? rec : { project: rec.project });
-      status("저장됨 " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
+      status("자동 저장됨 " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
       dirty = true;
       if (e && /데이터/.test(String(e.message)) && !cur) { status(""); return; }
@@ -86,7 +104,7 @@ async function openProject(kind, p) {
   } catch (e) { status("열지 못함", true); showError(e.message !== undefined ? e : { message: String(e) }); }
 }
 async function newProject() {
-  const name = prompt("새 프로젝트 이름", defaultName());
+  const name = prompt("새 프로젝트 이름", autoName());
   if (!name) return;
   await saveNow();
   const kind = tab === "drive" && S().drive.signedIn() ? "drive" : "local";
