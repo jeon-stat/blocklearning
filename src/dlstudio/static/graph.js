@@ -1014,9 +1014,10 @@ function mount(els, opts) {
         }).join("")}</ol></div>`;
     }
     const isOutput = b.type === "output";
-    const btns = isOutput ? "" : `<div class="acts"><button data-a="copy">복사</button><button data-a="dup">복제</button>` +
+    const look = opts.onPreview ? `<div class="acts"><button data-a="preview" title="학습 샘플 하나가 이 층을 지나면 어떤 값·모양이 되는지 오른쪽 아래에 보여 줌">미리보기: 샘플이 이 층을 지나면</button></div>` : "";
+    const btns = look + (isOutput ? "" : `<div class="acts"><button data-a="copy">복사</button><button data-a="dup">복제</button>`) + (isOutput ? "" :
       `<button data-a="del" class="danger">삭제</button>` + (b.type === "repeat" ? `<button data-a="unwrap">묶음 풀기</button>` : "") +
-      `<button data-a="wrap-res">Residual로 감싸기</button><button data-a="wrap-rep">Repeat로 감싸기</button><button data-a="split">갈래로 나누기</button></div>`;
+      `<button data-a="wrap-res">Residual로 감싸기</button><button data-a="wrap-rep">Repeat로 감싸기</button><button data-a="split">갈래로 나누기</button></div>`);
     const bad = issues[b.id] || [];
     els.settings.innerHTML = `<h4>${esc(label(b, summary))}</h4><p class="muted">${esc(T.desc || (b.type === "repeat" ? "안의 층을 여러 번 쌓음 (가중치는 따로)" : ""))}</p>${f}${btns}` +
       sizeFields(ids) +
@@ -1076,6 +1077,7 @@ function mount(els, opts) {
   }
   function act(a, extra) {
     const ids = selIds();
+    if (a === "preview") return opts.onPreview && opts.onPreview(ids[0]);
     if (a === "del-edge" || a === "del") return removeSel();
     if (a === "copy") return copySel(false);
     if (a === "dup") { const c = copyNodes(graph, ids); return c ? paste(c) : hint("입구 하나·출구 하나로 이어진 층들만 복제할 수 있습니다"); }

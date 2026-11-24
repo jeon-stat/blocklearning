@@ -364,7 +364,10 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       r.warnings.push({ message: "학습 중 이 브라우저의 GPU 계산이 불안정했습니다. 아래 결과는 CPU로 다시 계산한 값이지만, 학습이 덜 됐을 수 있습니다",
         hint: "페이지를 새로 고친 뒤 다시 학습해 보세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
     if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);
-    else [r.confusion, r.recall] = confusion(out, d.y_test, d.n_out);
+    else {
+      [r.confusion, r.recall] = confusion(out, d.y_test, d.n_out);
+      r.pred = Array.from({ length: d.n_test }, (_, i) => argmax(out, i, d.n_out));   // 시험 샘플마다 예측 (틀린 샘플 모아 보기)
+    }
     return { net, result: r };
   } finally {
     [Xtr, Xte, ytr].forEach((t) => t.dispose());
@@ -395,7 +398,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, toInput, metric, confusion, regressionView, thin, ACT, tf };
+const API = { Net, train, toInput, metric, confusion, regressionView, thin, onCpu, ACT, tf };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;
 })();

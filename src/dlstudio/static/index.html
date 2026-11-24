@@ -14,6 +14,7 @@
     <button data-step="data" class="step"><span class="n">2</span>데이터</button>
     <button data-step="model" class="step"><span class="n">3</span>모델</button>
     <button data-step="train" class="step"><span class="n">4</span>학습</button>
+    <button data-step="predict" class="step"><span class="n">5</span>예측</button>
   </nav>
   <div class="files">
     <button id="btn-label" title="정답이 없는 데이터에 정답 붙이기 (새 탭)">라벨링 작업실</button>
@@ -134,6 +135,10 @@
       <div id="canvas" class="canvas"></div>
       <aside class="side">
         <div class="box"><h3>설정</h3><div id="settings"></div></div>
+        <div class="box preview-box" id="preview-box" hidden>
+          <h3>미리보기 <span id="preview-name" class="muted"></span><button id="preview-close" class="x" aria-label="닫기">×</button></h3>
+          <div id="preview-body"></div>
+        </div>
         <div class="box">
           <h3>모델 정보</h3>
           <div id="panel" class="kv"><p class="muted">층을 쌓으면 계산됩니다</p></div>
@@ -171,7 +176,12 @@
     <div class="train-layout">
       <div class="box"><h3>학습 곡선</h3><svg id="curve" class="curve" viewBox="0 0 560 220"></svg></div>
       <div class="box"><h3>결과</h3><div id="train-result" class="kv"><p class="muted">학습이 끝나면 나옵니다</p></div>
-        <ul id="train-warnings" class="warns"></ul><div id="train-confusion"></div><div id="train-scatter"></div></div>
+        <ul id="train-warnings" class="warns"></ul><div id="train-confusion"></div><div id="cm-pick" class="cm-pick" hidden></div>
+        <div id="train-scatter"></div></div>
+    </div>
+    <div class="box" id="runs-box" hidden>
+      <h3>학습 기록 <span class="muted">— 학습할 때마다 자동으로 남습니다 (최근 20번). [이 모델로]를 누르면 그때 모델로 돌아갑니다</span></h3>
+      <div id="runs" class="table-wrap"></div>
     </div>
     <div class="box" id="sample-box" hidden>
       <h3>샘플 하나 따라가 보기</h3>
@@ -183,7 +193,31 @@
       </div>
       <div id="sample-flow" class="flow wide"></div>
     </div>
-    <div class="next"><button class="primary" id="btn-export-pt">학습한 모델 내보내기 (.pt)</button></div>
+    <div class="next"><button id="btn-export-pt">학습한 모델 내보내기 (.pt)</button>
+      <button class="primary go" data-go="predict">다음: 새 데이터로 예측 →</button></div>
+  </section>
+
+  <!-- ⑤ 예측 -->
+  <section id="step-predict" class="panel" hidden>
+    <h2>⑤ 새 데이터로 예측</h2>
+    <p class="lead">학습한 모델로 정답을 모르는 새 데이터를 예측합니다. 학습 때와 같은 모양의 데이터를 넣으세요. 정답이 함께 있으면 맞았는지도 보여 줍니다.</p>
+    <div id="predict-guard" class="guard" hidden></div>
+    <div id="predict-inputs">
+      <div class="row" data-kind="csv"><input id="predict-path" class="path" placeholder="C:\data\new.csv"><button id="btn-predict-csv" class="primary">CSV로 예측</button></div>
+      <div class="row" data-kind="folder"><input id="predict-folder" class="path" placeholder="C:\data\새 그림 폴더"><button id="btn-predict-folder" class="primary">그림 폴더로 예측</button></div>
+      <div class="row" data-kind="series"><input id="predict-series" class="path" placeholder="C:\data\새 사이클 (샘플마다 CSV 하나)"><button id="btn-predict-series" class="primary">폴더로 예측</button></div>
+      <details data-kind="rows" id="predict-manual" class="more"><summary>값을 직접 넣어 예측</summary>
+        <div id="predict-form" class="grid4"></div>
+        <div class="row"><button id="btn-predict-rows" class="primary">이 값으로 예측</button><span class="muted">처음 값은 학습 데이터의 평균입니다</span></div>
+      </details>
+      <p class="muted" id="predict-format"></p>
+    </div>
+    <ul id="predict-issues" class="issues"></ul>
+    <div id="predict-result" hidden>
+      <div class="cards" id="predict-cards"></div>
+      <div class="row"><button id="btn-predict-download">결과 CSV 내려받기</button><span id="predict-note" class="muted"></span></div>
+      <div class="table-wrap"><table class="tab predict-table" id="predict-table"></table></div>
+    </div>
   </section>
 
 </main>

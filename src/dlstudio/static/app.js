@@ -103,10 +103,13 @@ function renderScatter(el, sc, mae, caption) {
 
 // ------------------------------------------------------------ 단계 이동
 function go(step) {
+  if (!$("step-" + step)) step = "task";
   st.step = step;
-  for (const s of ["task", "data", "model", "train"]) $("step-" + s).hidden = s !== step;
+  document.querySelectorAll("main > .panel").forEach((el) => (el.hidden = el.id !== "step-" + step));
   document.querySelectorAll(".step").forEach((b) => b.classList.toggle("active", b.dataset.step === step));
   if (step === "model") ensureEditor();
+  if (step === "predict") renderPredictStep();
+  window.scrollTo(0, 0);
 }
 function markSteps() {
   const mark = (name, done, stale) => {
@@ -118,6 +121,7 @@ function markSteps() {
   mark("data", st.summary);
   mark("model", st.checked && st.checked.ok);
   mark("train", st.trained, st.trained && st.trainedJson !== st.graphJson);
+  if (st.step === "predict") renderPredictStep();
   for (const id of ["btn-export", "btn-export-pt"]) {        // 학습 전에는 내려받을 모델이 없음
     $(id).disabled = !st.trained;
     if (!st.trained) $(id).title = "④ 학습을 마치면 쓸 수 있습니다";
@@ -219,6 +223,7 @@ $("btn-quick").onclick = async () => {                   // 예시 과제·데�
   const fam = st.catalog.find((f) => f.subtasks.some((s) => s.available && (s.example_data || []).some((e) => e[0] === "ecg")));
   const sub = fam && fam.subtasks.find((s) => s.available && (s.example_data || []).some((e) => e[0] === "ecg"));
   if (!sub) return showMessage("예시를 찾지 못함", "아래에서 과제를 직접 고르세요");
+  if (WEB && window.DLProjects && DLProjects.current() && st.summary) return DLProjects.startNew("quick");   // 연 프로젝트는 두고 새 프로젝트로
   $("btn-quick").disabled = true;
   try {
     await chooseTemplate(fam, sub, sub.templates[0]);
@@ -422,7 +427,7 @@ function ensureEditor() {
   if (!st.ed) {
     st.ed = F.mount({ canvas: $("canvas"), palette: $("palette"), settings: $("settings") },
       { onChange: (g) => { st.graph = g; scheduleCheck(); }, getSummary: () => st.summary,
-        onHint: (msg) => showMessage(msg, "", "", true), getInput: inputKind,
+        onHint: (msg) => showMessage(msg, "", "", true), getInput: inputKind, onPreview: (id) => { st.previewNode = id; runPreview(); },
         onHistory: (u, r) => { $("btn-undo").disabled = !u; $("btn-redo").disabled = !r; } });
     let es = "ortho";
     try { es = localStorage.getItem("dlstudio-edge-style") || "ortho"; } catch (e) { /* 없음 */ }
@@ -470,6 +475,7 @@ async function runCheck() {
     $("check-status").textContent = c.ok ? "학습할 수 있음" : `문제 ${c.issues.length}개`;
     renderIssues(c);
     renderPanel(c.panel);
+    if (st.previewNode && !$("preview-box").hidden) runPreview();          // 미리보기를 켜 두었으면 고친 모델로 다시
   } catch (e) {
     if (seq === st.checkSeq) { $("check-status").textContent = ""; showError(e); }
   }
@@ -487,16 +493,41 @@ $("model-issues").onclick = (e) => {                     // 문제를 누르면 
 function renderWarnings(el, warns) {
   $(el).innerHTML = (warns || []).map((w) => `<li>⚠ ${esc(w.message)}<span class="hint">→ ${esc(w.hint)}</span></li>`).join("");
 }
-function renderConfusion(el, cm, recall, caption) {
+function renderConfusion(el, cm, recall, caption, pickable = false) {
+  $("cm-pick").hidden = true;
   if (!cm) return ($(el).innerHTML = "");
   const names = st.summary.classes;
-  let h = `<table class="cm"><tr><th>정답↓ 예측→</th>${names.map((n) => `<th>${esc(n)}</th>`).join("")}<th>재현율</th></tr>`;
+  let h = `<table class="cm${pickable ? " pick" : ""}"><tr><th>정답↓ 예측→</th>${names.map((n) => `<th>${esc(n)}</th>`).join("")}<th>재현율</th></tr>`;
   cm.forEach((row, i) => {
-    h += `<tr><th>${esc(names[i])}</th>${row.map((v, j) => `<td class="${i === j ? "diag" : ""}">${v}</td>`).join("")}` +
+    h += `<tr><th>${esc(names[i])}</th>${row.map((v, j) => `<td class="${i === j ? "diag" : ""}"${pickable && v ? ` data-cell="${i},${j}" title="이 칸의 샘플 보기"` : ""}>${v}</td>`).join("")}` +
       `<td>${recall[i] === null ? "-" : pct(recall[i])}</td></tr>`;
   });
-  $(el).innerHTML = h + `</table><div class="cm-cap">${esc(caption)} · 재현율 = 실제 그 클래스 중 맞힌 비율 (결함·이상을 놓치지 않는지)</div>`;
+  $(el).innerHTML = h + `</table><div class="cm-cap">${esc(caption)} · 재현율 = 실제 그 클래스 중 맞힌 비율 (결함·이상을 놓치지 않는지)` +
+    (pickable ? ` · <b>칸을 누르면 그 샘플들을 봅니다</b> (대각선 밖 = 틀린 샘플)` : "") + `</div>`;
 }
+$("train-confusion").onclick = async (e) => {            // 혼동 행렬 칸 → 그 칸의 시험 샘플들
+  const td = e.target.closest("[data-cell]");
+  if (!td) return;
+  const [i, j] = td.dataset.cell.split(",").map(Number), names = st.summary.classes;
+  try {
+    const r = await api("/api/samples", { cell: [i, j] });
+    const im = st.summary.image, tab = inputKind() === "tabular" && !im;
+    const pic = (v) => (im ? svgImage(v, im[0], im[1], Math.max(2, Math.round(40 / im[1]))) : tab ? "" : svgLine(v, 120, 34));
+    $("cm-pick").hidden = false;
+    $("cm-pick").innerHTML = `<div class="cm-pick-head"><b>정답 '${esc(names[i])}' → 예측 '${esc(names[j])}'</b> ${i === j ? "(맞힌 샘플)" : "(틀린 샘플)"} ${r.indices.length}개` +
+      (r.indices.length > r.items.length ? ` · 처음 ${r.items.length}개` : "") + ` <button class="x" data-close="1" aria-label="닫기">×</button></div>` +
+      `<div class="cm-items">${r.items.map((it) => `<button data-idx="${it.index}" title="시험 샘플 ${it.index} 따라가 보기">${pic(it.input)}<span>#${it.index}</span></button>`).join("")}</div>` +
+      `<div class="muted">누르면 아래 '샘플 하나 따라가 보기'에서 그 샘플이 모델을 지나는 모습을 봅니다</div>`;
+  } catch (err) { showError(err); }
+};
+$("cm-pick").onclick = (e) => {
+  if (e.target.closest("[data-close]")) return ($("cm-pick").hidden = true);
+  const b = e.target.closest("[data-idx]");
+  if (!b) return;
+  $("sample-index").value = b.dataset.idx;
+  showSample();
+  $("sample-box").scrollIntoView({ behavior: "smooth", block: "start" });
+};
 function renderPanel(p) {
   renderWarnings("panel-warnings", p && p.warnings);
   if (!p) return ($("panel").innerHTML = `<p class="muted">블록 문제를 고치면 계산됩니다</p>`);
@@ -617,6 +648,7 @@ $("btn-train").onclick = async () => {
       $("sample-box").hidden = false;
       showSample();
       $("train-status").textContent = "끝남";
+      loadRuns();
       const r = j.result;
       showMessage(`학습 끝남: 시험 ${r.metric_name === "r2" ? "R² " + r.test_metric.toFixed(3) : "정확도 " + pct(r.test_metric)}`,
         "아래 결과와 '샘플 하나 따라가 보기'를 보세요", "", true);
@@ -640,7 +672,7 @@ function renderTrainResult(r) {
   const v = verdict(r, base);
   $("train-result").innerHTML = kv(rows) + (v ? `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>` : "");
   renderWarnings("train-warnings", r.warnings);
-  renderConfusion("train-confusion", r.confusion, r.recall, "시험 데이터");
+  renderConfusion("train-confusion", r.confusion, r.recall, "시험 데이터", Array.isArray(r.pred));
   renderScatter("train-scatter", r.scatter, r.mae, "시험 데이터");
 }
 function baselineOf(r) {                                // 분류: 시험 데이터에서 가장 많은 클래스만 답할 때 정확도
@@ -667,6 +699,181 @@ function verdict(r, base) {                              // 결과를 쉬운 말
     : `시험 데이터에서 R² ${t.toFixed(2)}입니다 (1이면 완벽, 0이면 평균값만 답하는 수준).`,
     "Epochs를 늘리거나, 다른 대표 모델이나 블록을 바꿔 시험 성적이 오르는지 보세요."];
 }
+function valuePic(v, b, w = 600) {                     // 층 하나의 값 그림: (C,H,W)는 채널마다 작은 그림, (C,L)은 줄, 나머지는 막대
+  if (Array.isArray(v[0]) && Array.isArray(v[0][0])) {
+    const n = Math.min(16, v.length), h = v[0].length, ww = v[0][0].length, cell = Math.max(2, Math.round(48 / ww));
+    return `<div class="chans">${v.slice(0, n).map((ch) => svgImage(ch, h, ww, cell)).join("")}</div>` +
+      (v.length > n ? `<div class="shape">… 채널 ${v.length - n}개 더</div>` : "");
+  }
+  if (Array.isArray(v[0])) return svgStrips(v, w);
+  if (b.type === "output" && st.summary.task === "classification") {
+    const m = Math.max(...v), ex = v.map((x) => Math.exp(x - m)), sum = ex.reduce((x, y) => x + y, 0);
+    return svgBars(ex.map((x) => x / sum), Math.max(120, v.length * 60), 60, st.summary.classes, "#2f6fde");
+  }
+  return svgBars(v, Math.min(w, v.length * 14 + 10));
+}
+const shapeOf = (v) => (Array.isArray(v) ? [v.length].concat(shapeOf(v[0]) || []) : null);
+
+// ------------------------------------------------------------ ③ 블록 미리보기 (누를 때만)
+async function runPreview() {
+  const id = st.previewNode, f = id && F.findNode(st.graph, id);
+  if (!f) { $("preview-box").hidden = true; return; }
+  $("preview-box").hidden = false;
+  $("preview-name").textContent = "· " + blockName(f.node);
+  if (!st.summary) { $("preview-body").innerHTML = `<p class="muted">② 데이터를 먼저 불러오세요</p>`; return; }
+  if (st.checked && !st.checked.ok) { $("preview-body").innerHTML = `<p class="muted">모델의 문제를 고치면 보입니다</p>`; return; }
+  $("preview-body").innerHTML = `<p class="muted">계산 중…</p>`;
+  try {
+    const r = await api("/api/preview", { graph: st.graph, node: id });
+    if (st.previewNode !== id) return;
+    const shape = shapeOf(r.value) || [];
+    $("preview-body").innerHTML = valuePic(r.value, f.node, 300) +
+      `<p class="muted">학습 샘플 하나(정답 ${esc(r.label)})가 이 층을 지난 값 · 모양 (${shape.join(", ")})</p>` +
+      `<p class="muted">${r.trained ? "학습한 모델의 값입니다." : "아직 학습 전이라 값은 무작위입니다. 값이 아니라 모양이 어떻게 바뀌는지 보세요."}</p>`;
+  } catch (e) { $("preview-body").innerHTML = `<p class="err">${esc(e.message || e)}</p>`; }
+}
+$("preview-close").onclick = () => { $("preview-box").hidden = true; st.previewNode = null; };
+
+// ------------------------------------------------------------ ④ 학습 기록
+async function loadRuns() {
+  try { st.runs = (await api("/api/runs")).runs; } catch (e) { st.runs = []; }
+  renderRuns();
+}
+function modelName(g) {                                  // 대표 모델과 같으면 그 이름, 아니면 '직접 만든 모델'
+  const s = sig(g);
+  for (const f of st.catalog) for (const sub of f.subtasks) for (const t of sub.templates || []) if (sig(t.graph) === s) return t.name;
+  for (const t of st.defaults) if (sig(t.graph) === s) return t.name;
+  const n = (g.nodes || []).filter((x) => x.type !== "input" && x.type !== "output").length;
+  return `직접 만든 모델 (블록 ${n}개)`;
+}
+function renderRuns() {
+  const runs = st.runs || [];
+  $("runs-box").hidden = !runs.length;
+  if (!runs.length) return;
+  const ok = runs.filter((r) => r.data_ok && r.results.test_metric !== null && r.results.test_metric !== undefined);
+  const best = ok.length ? ok.reduce((a, b) => (b.results.test_metric > a.results.test_metric ? b : a)) : null;
+  const when = (t) => {
+    const d = new Date(t), today = new Date().toDateString() === d.toDateString();
+    return isNaN(d) ? "" : d.toLocaleString("ko-KR", today ? { hour: "2-digit", minute: "2-digit" } : { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  const f = (r, v) => (v === null || v === undefined ? "-" : r.results.metric_name === "r2" ? "R² " + v.toFixed(3) : pct(v));
+  $("runs").innerHTML = `<table class="tab runs"><tr><th>#</th><th>언제</th><th>모델</th><th>Epochs</th><th>Learning rate</th><th>시험</th><th>학습</th><th></th></tr>` +
+    runs.slice().reverse().map((r) => `<tr class="${r.current ? "cur" : ""}${r.data_ok ? "" : " other"}">` +
+      `<td>${r.n}</td><td>${esc(when(r.time))}</td><td>${esc(modelName(r.graph))}</td>` +
+      `<td>${r.results.epochs_done ?? "-"}</td><td>${r.settings.lr ?? "-"}</td>` +
+      `<td><b>${f(r, r.results.test_metric)}</b>${best && best.n === r.n && ok.length > 1 ? ' <span class="best" title="시험 성적이 가장 좋음">★ 최고</span>' : ""}</td>` +
+      `<td>${f(r, r.results.train_metric)}</td><td class="acts-cell">` +
+      (r.current ? `<span class="badge rec">지금 모델</span>` : !r.data_ok ? `<span class="muted">다른 데이터</span>`
+        : r.weights ? `<button data-run="${r.n}">이 모델로</button>` : "") +
+      ` <button class="x-small" data-run-del="${r.n}" title="이 기록 지우기">×</button></td></tr>`).join("") + `</table>`;
+}
+$("runs").onclick = async (e) => {
+  const b = e.target.closest("[data-run], [data-run-del]");
+  if (!b) return;
+  try {
+    if (b.dataset.runDel) {
+      if (!confirm(`${b.dataset.runDel}번 학습 기록을 지울까요? 되살릴 수 없습니다.`)) return;
+      st.runs = (await api("/api/runs/delete", { n: Number(b.dataset.runDel) })).runs;
+      return renderRuns();
+    }
+    const r = await api("/api/runs/restore", { n: Number(b.dataset.run) });
+    applyTrained(r.graph, r.results, r.train_settings);
+    st.runs = r.runs;
+    renderRuns();
+    showMessage(`${b.dataset.run}번 학습의 모델로 돌아왔습니다`, "③ 모델·⑤ 예측·내려받기 모두 이 모델로 합니다", "", true);
+  } catch (err) { showError(err); }
+};
+function applySettings(s) {                              // 학습 설정 칸에 (연 프로젝트·되돌린 기록)
+  if (!s) return;
+  if (s.epochs) $("epochs").value = s.epochs;
+  if (s.lr) $("lr").value = s.lr;
+  if (s.batch_size) $("batch").value = s.batch_size;
+}
+function applyTrained(graph, results, settings) {        // 학습한 모델을 지금 모델로 (기록 되돌리기)
+  setGraph(graph);
+  st.graphJson = sig(graph);
+  st.trained = true;
+  st.trainedJson = st.graphJson;
+  st.trainedGraph = graph;
+  applySettings(settings);
+  drawCurve([], results && results.metric_name);
+  if (results && results.metric_name) renderTrainResult(results);
+  $("sample-box").hidden = false;
+  showSample();
+  markSteps();
+}
+
+// ------------------------------------------------------------ ⑤ 새 데이터로 예측
+const PREDICT_FORMAT = {
+  csv: (s) => `CSV: 한 행 = 샘플 하나, 값 열 ${s.image ? s.image[0] * s.image[1] + "개(픽셀)" : s.length + "개"} — 학습 CSV와 같은 순서. 정답 열이 더 있으면 맞았는지 표시합니다.`,
+  folder: (s) => `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백으로 바꾸고 ${s.image[0]}×${s.image[1]}로 맞춥니다. 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.`,
+  series: () => "시계열 폴더: 샘플마다 CSV 하나 (학습 때와 같은 값 열·길이 맞추기). 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.",
+};
+function renderPredictStep() {
+  const s = st.summary, kinds = (s && s.predict_kinds) || [];
+  const stale = st.trained && st.trainedJson !== st.graphJson;
+  const guard = !s ? ["데이터와 모델이 아직 없습니다.", "data", "② 데이터 넣으러 가기"]
+    : !st.trained ? ["학습한 모델이 없습니다. 먼저 학습하세요.", "train", "④ 학습하러 가기"] : null;
+  $("predict-guard").hidden = !guard && !stale;
+  $("predict-guard").innerHTML = guard ? `<span>⚠ ${esc(guard[0])}</span><button data-go="${guard[1]}">${esc(guard[2])}</button>`
+    : stale ? `<span>예측은 마지막으로 학습한 모델로 합니다. ③에서 고친 내용은 다시 학습해야 반영됩니다.</span><button data-go="train">④ 다시 학습하러 가기</button>` : "";
+  $("predict-inputs").hidden = !!guard;
+  document.querySelectorAll("#predict-inputs [data-kind]").forEach((el) => (el.hidden = !kinds.includes(el.dataset.kind)));
+  $("predict-format").textContent = s ? kinds.filter((k) => PREDICT_FORMAT[k]).map((k) => PREDICT_FORMAT[k](s)).join(" ") : "";
+  if (s && kinds.includes("rows") && st.predictFormFor !== s) {
+    st.predictFormFor = s;
+    const means = s.feature_means || [];
+    $("predict-form").innerHTML = s.features.map((f, i) => `<label>${esc(f)} <input type="number" step="any" data-f="${i}" value="${means[i] ?? 0}"></label>`).join("");
+  }
+}
+$("predict-guard").onclick = (e) => { const b = e.target.closest("[data-go]"); if (b) go(b.dataset.go); };
+async function runPredict(body) {
+  $("predict-issues").innerHTML = "";
+  $("predict-note").textContent = "예측하는 중…";
+  try {
+    const r = await api("/api/predict", body);
+    st.predictCsv = r.csv;
+    renderPredict(r);
+  } catch (e) {
+    $("predict-note").textContent = "";
+    showError(e);
+    $("predict-issues").innerHTML = (e.issues || []).map((i) => `<li>${esc(i.message)}<span class="hint">→ ${esc(i.hint)}</span></li>`).join("");
+  }
+}
+function renderPredict(r) {
+  const s = r.summary, cls = s.task === "classification", num = (v) => Number(Number(v).toPrecision(4));
+  const cards = [["샘플", s.n]];
+  if (cls) {
+    for (const [c, n] of Object.entries(s.counts)) cards.push([`예측: ${c}`, n]);
+    if (s.accuracy !== undefined) cards.push(["정확도 (정답과 비교)", pct(s.accuracy)]);
+    if (s.low_conf) cards.push(["확신 60% 미만", s.low_conf]);
+  } else {
+    cards.push(["예측 평균", num(s.mean)], ["예측 범위", `${num(s.range[0])} ~ ${num(s.range[1])}`]);
+    if (s.mae !== undefined) cards.push(["평균 오차 MAE", num(s.mae)]);
+  }
+  $("predict-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+  const head = cls ? ["샘플", "예측", "확신도"].concat(r.has_label ? ["정답", ""] : []) : ["샘플", "예측"].concat(r.has_label ? ["정답", "오차"] : []);
+  $("predict-table").innerHTML = `<tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr>` + r.rows.map((x) => cls
+    ? `<tr class="${x.ok === false ? "bad" : ""}"><td>${esc(x.name)}</td><td><b>${esc(x.pred)}</b></td><td>${pct(x.conf)}</td>` +
+      (r.has_label ? `<td>${esc(x.label)}</td><td>${x.ok ? "✓" : "✗"}</td>` : "") + `</tr>`
+    : `<tr><td>${esc(x.name)}</td><td><b>${num(x.pred)}</b></td>` + (r.has_label ? `<td>${num(x.label)}</td><td>${num(x.err)}</td>` : "") + `</tr>`).join("");
+  $("predict-note").textContent = r.shown < s.n ? `표에는 처음 ${r.shown}개만 보입니다. 전부는 CSV로 내려받으세요.` : "";
+  $("predict-result").hidden = false;
+}
+$("btn-predict-csv").onclick = () => (pathVal("predict-path") ? runPredict({ path: pathVal("predict-path") }) : showMessage("CSV 파일 경로를 넣으세요", "예: C:\\data\\new.csv"));
+$("btn-predict-folder").onclick = () => (pathVal("predict-folder") ? runPredict({ folder: pathVal("predict-folder") }) : showMessage("그림 폴더 경로를 넣으세요"));
+$("btn-predict-series").onclick = () => (pathVal("predict-series") ? runPredict({ series_folder: pathVal("predict-series") }) : showMessage("폴더 경로를 넣으세요"));
+$("btn-predict-rows").onclick = () => runPredict({ rows: [[...document.querySelectorAll("#predict-form [data-f]")].map((el) => Number(el.value))] });
+$("btn-predict-download").onclick = () => {
+  if (!st.predictCsv) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([st.predictCsv], { type: "text/csv;charset=utf-8" }));
+  a.download = "predictions.csv";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+};
+
 async function showSample() {
   const i = Number($("sample-index").value) || 0;
   try {
@@ -683,18 +890,7 @@ async function showSample() {
     for (const [id, b, depth] of orderItems(a.order, graph)) {
       const v = a.values[id];
       if (!v || b.type === "input") continue;
-      const pad = depth * 12;
-      let pic;
-      if (Array.isArray(v[0]) && Array.isArray(v[0][0])) {       // (C, H, W): 채널마다 작은 그림
-        const n = Math.min(16, v.length), h = v[0].length, w = v[0][0].length, cell = Math.max(2, Math.round(48 / w));
-        pic = `<div class="chans">${v.slice(0, n).map((ch) => svgImage(ch, h, w, cell)).join("")}</div>` +
-          (v.length > n ? `<div class="shape">… 채널 ${v.length - n}개 더</div>` : "");
-      } else if (Array.isArray(v[0])) pic = svgStrips(v, 600);
-      else if (b.type === "output" && st.summary.task === "classification") {
-        const m = Math.max(...v), ex = v.map((x) => Math.exp(x - m)), sum = ex.reduce((x, y) => x + y, 0);
-        pic = svgBars(ex.map((x) => x / sum), Math.max(120, v.length * 60), 60, st.summary.classes, "#2f6fde");
-      } else pic = svgBars(v, Math.min(600, v.length * 14 + 10));
-      html += `<div class="fs" style="margin-left:${pad}px"><div class="name">${esc(blockName(b))}</div>${pic}</div>`;
+      html += `<div class="fs" style="margin-left:${depth * 12}px"><div class="name">${esc(blockName(b))}</div>${valuePic(v, b)}</div>`;
     }
     $("sample-flow").innerHTML = html;
   } catch (e) { showError(e); }
@@ -718,8 +914,11 @@ function applyOpened(r) {                                // 연 프로젝트를 
   st.trainedJson = r.trained ? st.graphJson : "";
   st.trainedGraph = r.trained ? r.graph : null;
   if (r.trained && r.results && r.results.metric_name) { renderTrainResult(r.results); $("sample-box").hidden = false; showSample(); }
+  applySettings(r.train_settings);
+  st.runs = r.runs || [];
+  renderRuns();
   scheduleCheck();
-  go("model");
+  go(r.trained ? "train" : "model");
 }
 $("btn-open").onclick = async () => {
   const path = WEB ? await window.DLS_WEB.pickProject() : prompt("열 프로젝트 파일 경로 (.dlstudio)");
@@ -811,6 +1010,9 @@ $("code-save").onclick = async () => {
       $("sample-box").hidden = false;
       showSample();
     }
+    applySettings(s.train_settings);
+    st.runs = s.runs || [];
+    renderRuns();
     if (s.summary) showMessage("이전 작업을 이어서 불러왔음", "", "", true);
     markSteps();
   } catch (e) { /* 처음 실행 */ }

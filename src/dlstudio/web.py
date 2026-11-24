@@ -87,11 +87,76 @@ def data_payload(studio: Studio) -> dict:
                                 "classes": [str(c) for c in d.classes] if d.task == "classification" else []})}
 
 
-def set_trained(studio: Studio, graph_json: str, settings_json: str, results_json: str) -> None:
-    """화면에서 학습이 끝났음을 기록 (코드·프로젝트 저장이 학습한 그래프를 알게)."""
+def set_trained(studio: Studio, graph_json: str, settings_json: str, results_json: str, state=None) -> None:
+    """화면에서 학습이 끝났음을 기록 (코드·프로젝트 저장이 학습한 그래프를 알게). state가 있으면 학습 기록에도 더함."""
     studio.model_graph = json.loads(graph_json)
     studio.train_settings = json.loads(settings_json)
     studio.results = json.loads(results_json)
+    if state is not None:
+        studio.add_run(studio.model_graph, studio.train_settings, studio.results, _arrays(state))
+
+
+def _state_lists(sd: dict) -> dict:
+    """가중치 dict(이름 → 배열) → 화면 엔진이 읽는 {이름: {shape, data(list), int}}."""
+    return {k: {"shape": list(np.shape(v)), "data": np.asarray(v).ravel().tolist(),
+                "int": bool(np.issubdtype(np.asarray(v).dtype, np.integer))} for k, v in sd.items()}
+
+
+def _opened(studio: Studio, pr: dict) -> dict:
+    """열린 프로젝트 → 상태에 반영하고 화면용 응답 + 가중치 + 엔진용 계획."""
+    d = studio.data
+    studio.graph = pr["graph"]
+    studio.train_settings, studio.results, studio.selection = pr["train_settings"], pr["results"], pr["selection"]
+    state, plan_ = None, None
+    if pr["state_dict"] is not None:
+        plan_ = codegen.plan_dict(pr["graph"], d.length, d.n_out, d.image)
+        want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"]}
+        if {k: list(v.shape) for k, v in pr["state_dict"].items()} != want:
+            raise UserError("프로젝트의 모델이 지금 데이터와 맞지 않음", "프로젝트를 저장할 때와 같은 데이터를 불러오세요")
+        state = _state_lists(pr["state_dict"])
+        studio.model_graph = pr["graph"]
+    else:
+        studio.model_graph = None
+    studio.set_runs(pr)
+    res = {"graph": pr["graph"], "summary": d.summary(), "train_settings": pr["train_settings"], "results": pr["results"],
+           "trained": state is not None, "selection": studio.selection, "runs": studio.runs_view(),
+           "predict_kinds": studio.predict_kinds()}
+    return {"response": _clean(res), "state": state, "plan": plan_}
+
+
+@_wrap
+def run_restore(studio: Studio, n: int) -> dict:
+    """학습 기록 n을 지금 모델로: 화면용 응답 + 가중치 + 엔진용 계획."""
+    run = studio.pick_run(n)
+    d = studio.data
+    plan_ = codegen.plan_dict(run["graph"], d.length, d.n_out, d.image)
+    return {"response": _clean(studio.restored()), "state": _state_lists(studio.run_weights[run["n"]]), "plan": plan_}
+
+
+@_wrap
+def predict_prepare(studio: Studio, body_json: str) -> dict:
+    """새 데이터로 예측 1단계: 읽고 정규화해 둠 (엔진이 predict_x로 가져감)."""
+    from dlstudio.core import _paths
+    from dlstudio.predict import read_new
+    d = studio.need_data()
+    if studio.model_graph is None:
+        raise UserError("학습된 모델이 없음", "④ 학습 단계에서 먼저 학습하세요")
+    studio.pending = read_new(d, _paths(json.loads(body_json)))
+    return {"n": len(studio.pending["names"])}
+
+
+def predict_x(studio: Studio) -> bytes:
+    return np.ascontiguousarray(studio.pending["X"], dtype=np.float32).tobytes()
+
+
+@_wrap
+def predict_finish(studio: Studio, out_bytes) -> dict:
+    """새 데이터로 예측 2단계: 엔진의 출력 → 표·요약·CSV."""
+    from dlstudio.predict import table
+    raw = out_bytes.to_bytes() if hasattr(out_bytes, "to_bytes") else bytes(out_bytes)
+    p, studio.pending = studio.pending, None
+    out = np.frombuffer(raw, dtype=np.float32).reshape(len(p["names"]), -1)
+    return _clean(table(studio.data, p["names"], out, p["labels"]))
 
 
 @_wrap
@@ -137,7 +202,8 @@ def project_bytes(studio: Studio, state) -> bytes:
         raise UserError("저장할 모델이 없음", "③ 모델 단계에서 층을 놓으세요")
     buf = io.BytesIO()
     save_project(buf, graph, d.source, studio.train_settings, _arrays(state) if state is not None else None,
-                 studio.results, studio.selection)
+                 studio.results, studio.selection, runs=studio.runs, run_weights=studio.run_weights,
+                 current_run=studio.current_run)
     return buf.getvalue()
 
 
@@ -157,23 +223,7 @@ def open_project(studio: Studio, path: str) -> dict:
     elif studio.data is None:
         raise UserError("이 프로젝트의 데이터를 먼저 불러오세요",
                         "웹 버전은 PC의 파일 위치를 기억하지 못합니다. ② 데이터에서 같은 데이터를 고른 뒤 다시 여세요")
-    d = studio.data
-    studio.graph = pr["graph"]
-    studio.train_settings, studio.results, studio.selection = pr["train_settings"], pr["results"], pr["selection"]
-    state, plan_ = None, None
-    if pr["state_dict"] is not None:
-        plan_ = codegen.plan_dict(pr["graph"], d.length, d.n_out, d.image)
-        want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"]}
-        if {k: list(v.shape) for k, v in pr["state_dict"].items()} != want:
-            raise UserError("프로젝트의 모델이 지금 데이터와 맞지 않음", "프로젝트를 저장할 때와 같은 데이터를 불러오세요")
-        state = {k: {"shape": list(v.shape), "data": np.asarray(v).ravel().tolist(), "int": bool(np.issubdtype(v.dtype, np.integer))}
-                 for k, v in pr["state_dict"].items()}
-        studio.model_graph = pr["graph"]
-    else:
-        studio.model_graph = None
-    res = {"graph": pr["graph"], "summary": d.summary(), "train_settings": pr["train_settings"], "results": pr["results"],
-           "trained": state is not None, "selection": studio.selection}
-    return {"response": _clean(res), "state": state, "plan": plan_}
+    return _opened(studio, pr)
 
 
 # ------------------------------------------------------------ 프로젝트 기록 (브라우저 보관함·구글 드라이브)
@@ -239,7 +289,8 @@ def record_project(studio: Studio, state, name: str = "", with_data: bool = Fals
                 extra = {f"data/{n}": z.read(n) for n in z.namelist()}
     buf = io.BytesIO()
     save_project(buf, graph, _portable_source(d.source), studio.train_settings,
-                 _arrays(state) if state is not None else None, studio.results, studio.selection, extra, name)
+                 _arrays(state) if state is not None else None, studio.results, studio.selection, extra, name,
+                 runs=studio.runs, run_weights=studio.run_weights, current_run=studio.current_run)
     return buf.getvalue()
 
 
@@ -288,20 +339,4 @@ def record_open(studio: Studio, project_path: str, data_path: str = "") -> dict:
         studio.load_source(src)
     elif studio.data is None:
         raise UserError("이 프로젝트의 데이터를 먼저 불러오세요", "② 데이터에서 같은 데이터를 고른 뒤 다시 여세요")
-    d = studio.data
-    studio.graph = pr["graph"]
-    studio.train_settings, studio.results, studio.selection = pr["train_settings"], pr["results"], pr["selection"]
-    state, plan_ = None, None
-    if pr["state_dict"] is not None:
-        plan_ = codegen.plan_dict(pr["graph"], d.length, d.n_out, d.image)
-        want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"]}
-        if {k: list(v.shape) for k, v in pr["state_dict"].items()} != want:
-            raise UserError("프로젝트의 모델이 지금 데이터와 맞지 않음", "프로젝트를 저장할 때와 같은 데이터를 불러오세요")
-        state = {k: {"shape": list(v.shape), "data": np.asarray(v).ravel().tolist(), "int": bool(np.issubdtype(v.dtype, np.integer))}
-                 for k, v in pr["state_dict"].items()}
-        studio.model_graph = pr["graph"]
-    else:
-        studio.model_graph = None
-    res = {"graph": pr["graph"], "summary": d.summary(), "train_settings": pr["train_settings"], "results": pr["results"],
-           "trained": state is not None, "selection": studio.selection}
-    return {"response": _clean(res), "state": state, "plan": plan_, "name": pr.get("name", "")}
+    return dict(_opened(studio, pr), name=pr.get("name", ""))

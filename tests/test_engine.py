@@ -117,6 +117,7 @@ def test_engine_trains_classification_and_weights_run_in_torch(tmp_path):
     with torch.no_grad():
         pred = net(torch.as_tensor(to_model_input(net.kind, d.X_test), dtype=torch.float32)).argmax(1).numpy()
     assert abs(float(np.mean(pred == d.y_test)) - r["test_metric"]) < 1e-6
+    assert r["pred"] == pred.tolist()                                   # 시험 샘플마다 예측 (틀린 샘플 모아 보기)
     with torch.no_grad():
         pred_tr = net(torch.as_tensor(to_model_input(net.kind, d.X_train), dtype=torch.float32)).argmax(1).numpy()
     assert abs(float(np.mean(pred_tr == d.y_train)) - r["train_metric"]) < 1e-6, (float(np.mean(pred_tr == d.y_train)), r["train_metric"])

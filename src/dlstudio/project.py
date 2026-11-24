@@ -13,13 +13,16 @@ FORMAT, VERSION = "dlstudio", 1
 
 
 def save_project(path, graph: dict, data_source: dict, train_settings: dict, model, results: dict,
-                 selection: dict = None, extra_files: Optional[dict] = None, name: str = "") -> None:
+                 selection: dict = None, extra_files: Optional[dict] = None, name: str = "",
+                 runs: Optional[list] = None, run_weights: Optional[dict] = None, current_run=None) -> None:
     """path: 파일 경로 또는 쓸 수 있는 파일(BytesIO). model: torch 모델, 또는 가중치 dict(이름 → 배열, 웹 버전).
-    extra_files: zip에 함께 넣을 {이름: 바이트} (웹 버전의 데이터 사본 data/...). name: 프로젝트 이름."""
+    extra_files: zip에 함께 넣을 {이름: 바이트} (웹 버전의 데이터 사본 data/...). name: 프로젝트 이름.
+    runs: 학습 기록 목록, run_weights: 기록 번호 → 가중치 dict (runs/<번호>.npz)."""
     if isinstance(path, (str, Path)):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
     meta = {"format": FORMAT, "version": VERSION, "name": name, "graph": graph, "data_source": data_source,
-            "train_settings": train_settings, "results": results, "selection": selection}
+            "train_settings": train_settings, "results": results, "selection": selection,
+            "runs": runs or [], "current_run": current_run}
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(meta, ensure_ascii=False, indent=1))
         for arc, raw in (extra_files or {}).items():
@@ -29,6 +32,12 @@ def save_project(path, graph: dict, data_source: dict, train_settings: dict, mod
             buf = io.BytesIO()
             save_npz(model if isinstance(model, dict) else model.state_dict(), buf)
             z.writestr("model.npz", buf.getvalue())
+        from dlstudio.codegen import save_npz
+        for n, w in (run_weights or {}).items():
+            if any(r.get("n") == n for r in runs or []):
+                buf = io.BytesIO()
+                save_npz(w, buf)
+                z.writestr(f"runs/{int(n)}.npz", buf.getvalue())
 
 
 def open_project(path: str) -> dict:
@@ -43,11 +52,18 @@ def open_project(path: str) -> dict:
                 import numpy as np
                 with np.load(io.BytesIO(z.read("model.npz"))) as npz:
                     state = {k: npz[k] for k in npz.files}
+            run_weights = {}
+            for nm in names:
+                if nm.startswith("runs/") and nm.endswith(".npz") and nm[5:-4].isdigit():
+                    import numpy as np
+                    with np.load(io.BytesIO(z.read(nm))) as npz:
+                        run_weights[int(nm[5:-4])] = {k: npz[k] for k in npz.files}
     except zipfile.BadZipFile:
         raise ValueError("DL studio 프로젝트 파일이 아님 (zip이 아님)") from None
     return {"graph": meta["graph"], "data_source": meta["data_source"], "train_settings": meta["train_settings"],
             "name": meta.get("name", ""),
-            "results": meta.get("results", {}), "selection": meta.get("selection"), "state_dict": state}
+            "results": meta.get("results", {}), "selection": meta.get("selection"), "state_dict": state,
+            "runs": meta.get("runs") or [], "run_weights": run_weights, "current_run": meta.get("current_run")}
 
 
 def _export_module(model, data):

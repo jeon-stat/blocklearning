@@ -7,7 +7,7 @@
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
 const PY_FILES = ["__init__.py", "analysis.py", "blocks.py", "codegen.py", "core.py", "data.py", "graph.py", "jobs.py",
-  "labeling.py", "labeling_sources.py", "project.py", "tasks.py", "web.py"];
+  "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py"];
 const DATA_FILES = ["data/digits8.npz", "data/pneumonia28.npz"];
 const E = () => window.DLEngine;
 
@@ -111,7 +111,9 @@ function startTrain(body) {
     if (job.cancelled || W.data !== data) { net.dispose(); job.state = "cancelled"; return; }
     if (W.trained) W.trained.net.dispose();
     W.trained = { net, plan, graph: body.graph, settings: body.settings || {}, results: result };
-    W.mod.set_trained(W.studio, JSON.stringify(body.graph), JSON.stringify(body.settings || {}), JSON.stringify(result));
+    const st = stateForPython(net);
+    try { W.mod.set_trained(W.studio, JSON.stringify(body.graph), JSON.stringify(body.settings || {}), JSON.stringify(result), st); }
+    finally { st.destroy(); }
     job.result = result;
     job.state = "done";
     changed("train");
@@ -172,19 +174,55 @@ function projectSave(body) {
   finally { if (st) st.destroy(); }
   return { ok: true, file: name };
 }
+function loadTrained(r) {                              // {response, state, plan} → 엔진에 학습한 모델
+  if (W.trained) { W.trained.net.dispose(); W.trained = null; }
+  if (!r.state) return;
+  const net = new (E().Net)(r.plan, 0);
+  const st = {};
+  for (const [k, v] of Object.entries(r.state)) st[k] = { shape: v.shape, data: v.int ? Int32Array.from(v.data) : Float32Array.from(v.data) };
+  net.load(st);
+  W.trained = { net, plan: r.plan, graph: r.response.graph, settings: r.response.train_settings || {}, results: r.response.results || {} };
+}
 function projectOpen(body) {
   const r = wrapped(W.mod.record_open(W.studio, body.path, body.data_path || ""));
   W.openedName = r.name || "";
-  if (W.trained) { W.trained.net.dispose(); W.trained = null; }
   W.data = null;
-  if (r.state) {
-    const net = new (E().Net)(r.plan, 0);
-    const st = {};
-    for (const [k, v] of Object.entries(r.state)) st[k] = { shape: v.shape, data: v.int ? Int32Array.from(v.data) : Float32Array.from(v.data) };
-    net.load(st);
-    W.trained = { net, plan: r.plan, graph: r.response.graph, settings: r.response.train_settings || {}, results: r.response.results || {} };
-  }
+  loadTrained(r);
   return r.response;
+}
+function runRestore(body) {                            // 학습 기록의 모델로 돌아가기
+  const r = wrapped(W.mod.run_restore(W.studio, Number(body.n)));
+  loadTrained(r);
+  changed("train");
+  return r.response;
+}
+async function predictNew(body) {                      // 새 데이터로 예측: Python이 읽고 정규화 → 엔진(CPU) → Python이 표로
+  if (!W.trained) throw { message: "학습된 모델이 없음", hint: "④ 학습 단계에서 먼저 학습하세요" };
+  const n = wrapped(W.mod.predict_prepare(W.studio, JSON.stringify(body))).n;
+  const u8 = bytesOf(W.mod.predict_x(W.studio));
+  const X = new Float32Array(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
+  const d = getData(), net = W.trained.net;
+  const x = E().toInput(X, n, net.kind, d.length, d.image);
+  let out;
+  try { out = await E().onCpu(() => net.predict(x)); } finally { x.dispose(); }
+  return wrapped(W.mod.predict_finish(W.studio, new Uint8Array(out.buffer)));
+}
+const VIEW = ["pos", "size", "brk", "shift"];
+function bare(g) {                                     // 화면용 값을 뺀 그래프 (같은 모델인지 비교)
+  return JSON.stringify(g, (k, v) => (VIEW.includes(k) ? undefined : v));
+}
+function preview(body) {                               // ③ 블록 미리보기: 학습 샘플 하나가 그 블록을 지난 값
+  const plan = wrapped(W.mod.plan(W.studio, JSON.stringify(body.graph)));
+  const d = getData();
+  const trained = !!W.trained && bare(W.trained.graph) === bare(body.graph);
+  const net = trained ? W.trained.net : new (E().Net)(plan, 0);
+  const x = E().toInput(d.X_train.slice(0, d.n_features), 1, net.kind, d.length, d.image);
+  try {
+    const vals = net.trace(x);
+    if (!(body.node in vals)) throw { message: "이 블록의 값을 찾을 수 없음", hint: "블록을 다시 고르세요" };
+    const label = d.task === "classification" ? d.classes[d.y_train[0]] : d.y_train[0];
+    return { node: body.node, value: E().thin(vals[body.node]), trained, label };
+  } finally { x.dispose(); if (!trained) net.dispose(); }
 }
 
 // ------------------------------------------------------------ 바뀜 알림 (자동 저장이 듣는 곳)
@@ -227,6 +265,9 @@ async function api(path, body) {
     if (path === "/api/code/save") return codeSave(body);
     if (path === "/api/project/save") return projectSave(body);
     if (path === "/api/project/open") return projectOpen(body);
+    if (path === "/api/runs/restore") return runRestore(body);
+    if (path === "/api/predict") return await predictNew(body);
+    if (path === "/api/preview") return preview(body);
     if (path.startsWith("/api/label/")) throw { message: "라벨링 작업실은 웹 버전에 아직 없음", hint: "내 PC에서 python -m dlstudio로 실행하면 쓸 수 있습니다" };
     if (path === "/api/data/load") clearTrained();
     const r = pyCall(method, path, body);
@@ -235,6 +276,7 @@ async function api(path, body) {
       else if (path === "/api/model/check" || path === "/api/task/select") changed("model");
     }
     if (path === "/api/state" && W.trained) Object.assign(r, { trained: true, trained_graph: W.trained.graph, results: W.trained.results });
+    if (path === "/api/runs/delete") changed("train");
     return r;
   } catch (e) {
     if (e && e.message !== undefined && !(e instanceof Error)) throw e;                // 이미 화면 오류 모양
@@ -279,7 +321,7 @@ async function pickInto(inputId, opts) {
 // app.js를 불러온 뒤: 경로 칸을 '고르기'로, 열기는 파일 고르기로, 라벨링 단추는 안내로
 function afterApp() {
   const $ = (id) => document.getElementById(id);
-  for (const id of ["csv-path", "folder-path", "series-path", "series-label-file"]) {
+  for (const id of ["csv-path", "folder-path", "series-path", "series-label-file", "predict-path", "predict-folder", "predict-series"]) {
     const el = $(id);
     if (!el) continue;
     el.readOnly = true;
@@ -311,6 +353,9 @@ function afterApp() {
     });
   }
   wrapBtn("btn-folder", "folder-path", { dir: true }, "이미지 폴더 고르기");
+  wrapBtn("btn-predict-csv", "predict-path", { accept: ".csv,.tsv,.txt" }, "CSV 파일 고르고 예측");      // ⑤ 예측
+  wrapBtn("btn-predict-folder", "predict-folder", { dir: true }, "그림 폴더 고르고 예측");
+  wrapBtn("btn-predict-series", "predict-series", { dir: true }, "폴더 고르고 예측");
   wrapBtn("btn-series-scan", "series-path", { dir: true }, "폴더 고르기");
   const lf = $("series-label-file");
   if (lf) {

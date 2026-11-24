@@ -232,6 +232,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     result["train_metric"] = metric(out_tr, data.y_train, data.task)
     if data.task == "classification":
         result["confusion"], result["recall"] = confusion(out.argmax(1), data.y_test, len(data.classes))
+        result["pred"] = [int(v) for v in out.argmax(1)]          # 시험 샘플마다 예측 (틀린 샘플 모아 보기)
     else:
         result["mae"], result["scatter"] = regression_view(out, data.y_test)
     return result

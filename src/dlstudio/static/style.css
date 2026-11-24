@@ -377,3 +377,48 @@ body.web input[readonly] { background: #f6f7f9; }
 .proj-list .pt { color: var(--muted); font-size: 12px; }
 .proj-list .bad { color: var(--bad); }
 .proj-status.link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+
+/* 첫 화면 '내 프로젝트' (웹) */
+.home-start { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.home-tabs { margin: 0 0 8px; }
+.proj-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin: 10px 0 16px; }
+.proj-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fff; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.proj-card:hover { border-color: var(--accent); }
+.proj-card.cur { border-color: var(--accent); background: var(--accent-bg); }
+.proj-card .pn { font-weight: 600; }
+.proj-card .pm { font-size: 13px; }
+.proj-card .pt { font-size: 12px; color: var(--muted); }
+.proj-card .pa { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.proj-card .pa button { padding: 3px 10px; font-size: 13px; }
+.step.home-step .n { background: transparent; color: inherit; width: auto; margin-right: 4px; }
+
+/* ④ 학습 기록, 틀린 샘플 모아 보기 */
+.table-wrap { overflow-x: auto; }
+table.runs td:nth-child(3) { text-align: left; }
+table.runs tr.cur td { background: var(--accent-bg); }
+table.runs tr.other td { color: var(--muted); }
+table.runs .best { color: #b7791f; font-size: 12px; font-weight: 600; }
+table.runs .acts-cell { text-align: left; }
+table.runs .acts-cell button { padding: 2px 8px; font-size: 12px; }
+button.x-small { border: none; background: transparent; color: var(--muted); }
+#runs-box { margin-top: 14px; }
+table.cm.pick td[data-cell] { cursor: pointer; }
+table.cm.pick td[data-cell]:hover { outline: 2px solid var(--accent); }
+.cm-pick { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.cm-pick-head { display: flex; align-items: center; gap: 6px; }
+.cm-pick-head .x { margin-left: auto; border: none; background: transparent; font-size: 16px; padding: 0 4px; }
+.cm-items { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.cm-items button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; font-size: 11px; }
+
+/* ③ 블록 미리보기 */
+.preview-box h3 { display: flex; align-items: center; gap: 6px; }
+.preview-box .x { margin-left: auto; border: none; background: transparent; font-size: 16px; padding: 0 4px; }
+#preview-body svg { max-width: 100%; height: auto; }
+#preview-body p { font-size: 12px; margin: 6px 0 0; }
+
+/* ⑤ 예측 */
+.predict-table tr.bad td { background: var(--bad-bg); }
+.predict-table td:first-child { text-align: left; }
+#predict-result .table-wrap { max-height: 480px; overflow: auto; }
+
+h3 .muted { font-weight: 400; font-size: 13px; }

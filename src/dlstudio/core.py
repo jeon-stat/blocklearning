@@ -5,6 +5,7 @@ Studio().call(...)로 바로 부른다 (그때 torch가 필요한 일 — 학습
 """
 from __future__ import annotations
 
+import datetime
 import os
 import threading
 import traceback
@@ -45,6 +46,10 @@ class Studio:
         self.label = None                       # 라벨링 작업 (LabelProject)
         self.label_who = ""                     # 라벨링 작업자 이름 (화면에서 받음)
         self.label_lock = threading.Lock()      # 라벨링 요청은 하나씩 (작업 파일 저장이 겹치지 않게)
+        self.runs: list = []                    # 학습 기록 [{n, time, graph, settings, results, data_key}]
+        self.run_weights: dict = {}             # 기록 번호 → 가중치 {이름: 배열} (GraphNet 이름)
+        self.current_run: Optional[int] = None  # 지금 학습된 모델이 몇 번 기록인지
+        self.pending = None                     # 웹 예측: 엔진에 넘길 값을 잠시 둠
 
     # ------------------------------------------------------------ API
     def api_task_select(self, b: dict) -> dict:
@@ -99,7 +104,7 @@ class Studio:
             iw = b.get("image_width")
             d = load_csv(path, label_col=b.get("label_col"), task=b.get("task", "auto"),
                          image_width=None if iw is None or iw == "" else int(iw), **opts)
-        self.data, self.model, self.model_graph, self.results = d, None, None, {}
+        self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
         return {"summary": d.summary(), "source": d.source}
 
     # ------------------------------------------------------------ 라벨링 작업실
@@ -264,6 +269,8 @@ class Studio:
             if not job.cancelled and self.data is d:              # 그사이 데이터가 바뀌었으면 버림
                 self.model, self.model_graph, self.train_settings = r["model"], graph, dict(b.get("settings") or {})
                 self.results = {k: v for k, v in r.items() if k != "model"}
+                self.add_run(graph, self.train_settings, self.results,
+                             {k: v.detach().cpu().numpy() for k, v in r["model"].state_dict().items()})
             return r
 
         return {"id": self.jobs.start("train", run)}
@@ -284,6 +291,121 @@ class Studio:
         return {"index": i, "label": label, "prediction": pred, "input": np.round(d.raw(d.X_test[i]), 5).tolist(),
                 "values": activations(m, x), "order": order}
 
+    # ------------------------------------------------------------ 학습 기록
+    def data_key(self) -> str:
+        """같은 데이터인지 가리는 열쇠 (과제·클래스·모양·샘플 수). 다른 데이터의 기록은 되돌릴 수 없음."""
+        d = self.data
+        if d is None:
+            return ""
+        import json
+        return json.dumps([d.task, [str(c) for c in d.classes], int(d.length), int(len(d.y_train)), int(len(d.y_test)),
+                           list(d.image) if d.image else None], ensure_ascii=False)
+
+    def add_run(self, graph: dict, settings: dict, results: dict, weights: Optional[dict]) -> int:
+        n = max([r["n"] for r in self.runs], default=0) + 1
+        self.runs.append({"n": n, "time": datetime.datetime.now().isoformat(timespec="seconds"), "graph": graph,
+                          "settings": dict(settings or {}), "results": dict(results or {}), "data_key": self.data_key()})
+        if weights is not None:
+            self.run_weights[n] = weights
+        while len(self.runs) > MAX_RUNS:                    # 오래된 기록부터 지움 (프로젝트 파일이 너무 커지지 않게)
+            old = self.runs.pop(0)
+            self.run_weights.pop(old["n"], None)
+        self.current_run = n
+        return n
+
+    def runs_view(self) -> list:
+        key = self.data_key()
+        keep = ("metric_name", "test_metric", "train_metric", "epochs_done", "mae")
+        return [{"n": r["n"], "time": r["time"], "graph": r["graph"], "settings": r["settings"],
+                 "results": {k: r["results"].get(k) for k in keep}, "data_ok": r.get("data_key") == key,
+                 "weights": r["n"] in self.run_weights, "current": r["n"] == self.current_run} for r in self.runs]
+
+    def api_runs(self, b: Optional[dict] = None) -> dict:
+        return {"runs": self.runs_view()}
+
+    def pick_run(self, n) -> dict:
+        """기록 n을 지금 모델로 (그래프·설정·결과). 가중치는 돌려주고, 모델을 만드는 일은 부르는 쪽 (torch 또는 웹 엔진)."""
+        run = next((r for r in self.runs if r["n"] == int(n)), None)
+        if run is None:
+            raise UserError(f"{n}번 학습 기록이 없음", "학습 기록 표를 새로 고치세요")
+        self.need_data()
+        if run.get("data_key") != self.data_key():
+            raise UserError("다른 데이터로 학습한 기록임", "그 기록을 만들 때와 같은 데이터를 불러오세요")
+        if run["n"] not in self.run_weights:
+            raise UserError("이 기록에는 가중치가 없음", "같은 모델로 다시 학습하세요")
+        self.graph = run["graph"]
+        self.model_graph, self.train_settings, self.results = run["graph"], dict(run["settings"]), dict(run["results"])
+        self.current_run = run["n"]
+        return run
+
+    def api_runs_restore(self, b: dict) -> dict:
+        run = self.pick_run(b.get("n"))
+        import torch
+        d = self.data
+        m = build_graph_model(run["graph"], d.length, d.n_out, image=d.image)
+        m.load_state_dict({k: torch.as_tensor(v) for k, v in self.run_weights[run["n"]].items()})
+        self.model = m.eval()
+        return self.restored()
+
+    def restored(self) -> dict:
+        return {"graph": self.model_graph, "results": self.results, "train_settings": self.train_settings,
+                "trained": True, "runs": self.runs_view()}
+
+    def api_runs_delete(self, b: dict) -> dict:
+        n = int(b.get("n"))
+        self.runs = [r for r in self.runs if r["n"] != n]
+        self.run_weights.pop(n, None)
+        if self.current_run == n:
+            self.current_run = None
+        return {"runs": self.runs_view()}
+
+    # ------------------------------------------------------------ 새 데이터로 예측 · 틀린 샘플 · 블록 미리보기
+    def api_predict(self, b: dict) -> dict:
+        from dlstudio import predict
+        import torch
+        d, m = self.need_data(), self.need_model()
+        new = predict.read_new(d, _paths(b))
+        X = to_model_input(m.kind, new["X"], image=d.image)
+        outs = []
+        with torch.no_grad():
+            for i in range(0, len(X), 512):
+                outs.append(m.eval()(torch.as_tensor(X[i:i + 512], dtype=torch.float32)).numpy())
+        return predict.table(d, new["names"], np.concatenate(outs), new["labels"])
+
+    def api_samples(self, b: dict) -> dict:
+        """시험 샘플 여럿의 원래 값·정답 (틀린 샘플 모아 보기). cell=[정답, 예측]이면 그 칸의 샘플들."""
+        d = self.need_data()
+        if b.get("cell") is not None:
+            pred = (self.results or {}).get("pred")
+            if pred is None or len(pred) != len(d.y_test):
+                raise UserError("샘플마다의 예측이 없음", "다시 학습하면 볼 수 있습니다")
+            t, p = (int(v) for v in b["cell"])
+            idx = [int(i) for i in np.flatnonzero((np.asarray(d.y_test, dtype=int) == t) & (np.asarray(pred) == p))]
+        else:
+            idx = [int(i) for i in b.get("indices", [])]
+        idx = [i for i in idx if 0 <= i < len(d.y_test)]
+        show = idx[:MAX_SAMPLES]
+        lab = lambda i: d.classes[int(d.y_test[i])] if d.task == "classification" else float(d.y_test[i])
+        from dlstudio.analysis import _thin
+        raw = lambda i: np.round(d.raw(d.X_test[i]), 4).tolist() if d.image else _thin(d.raw(d.X_test[i])[None])[0]
+        return {"indices": idx, "items": [{"index": i, "label": lab(i), "input": raw(i)} for i in show]}
+
+    def api_preview(self, b: dict) -> dict:
+        """③ 블록 미리보기: 학습 샘플 하나가 그 블록을 지난 값. 학습한 모델과 같으면 학습한 가중치, 아니면 처음 값(무작위)."""
+        from dlstudio.analysis import activations
+        d = self.need_data()
+        graph, node = _graph_from(b), str(b.get("node", ""))
+        c = check_graph(graph, d.length, d.n_out, image=d.image)
+        if not c.ok:
+            i = c.issues[0]
+            raise UserError(i.message, i.hint or "③ 모델의 문제를 먼저 고치세요")
+        trained = self.model is not None and self.model_graph is not None and _same_model(graph, self.model_graph)
+        m = self.model if trained else build_graph_model(graph, d.length, d.n_out, image=d.image, seed=0)
+        vals = activations(m, to_model_input(m.kind, d.X_train[:1], image=d.image)[0])
+        if node not in vals:
+            raise UserError("이 블록의 값을 찾을 수 없음", "블록을 다시 고르세요")
+        return {"node": node, "value": vals[node], "trained": trained, "label": _label_of(d, 0)}
+
     def api_project_save(self, b: dict) -> dict:
         from dlstudio.project import save_project
         b = dict(b, path=_path(b.get("path")))
@@ -291,7 +413,8 @@ class Studio:
         graph = self.model_graph if self.model is not None else self.graph   # 학습한 모델이 있으면 가중치와 같은 그래프
         if not graph:
             raise UserError("저장할 모델이 없음", "③ 모델 단계에서 층을 놓으세요")
-        save_project(b["path"], graph, d.source, self.train_settings, self.model, self.results, self.selection)
+        save_project(b["path"], graph, d.source, self.train_settings, self.model, self.results, self.selection,
+                     runs=self.runs, run_weights=self.run_weights, current_run=self.current_run)
         return {"ok": True}
 
     def api_project_open(self, b: dict) -> dict:
@@ -308,8 +431,15 @@ class Studio:
         m = model_from_saved(pr, self.data.length, self.data.n_out, image=self.data.image)
         if m is not None:
             self.model, self.model_graph = m.eval(), pr["graph"]
+        self.set_runs(pr)
         return {"graph": pr["graph"], "summary": summary, "train_settings": pr["train_settings"],
-                "results": pr["results"], "trained": self.model is not None, "selection": self.selection}
+                "results": pr["results"], "trained": self.model is not None, "selection": self.selection,
+                "runs": self.runs_view(), "predict_kinds": self.predict_kinds()}
+
+    def set_runs(self, pr: dict) -> None:
+        """연 프로젝트의 학습 기록 (예전 파일은 없음)."""
+        self.runs, self.run_weights = list(pr.get("runs") or []), dict(pr.get("run_weights") or {})
+        self.current_run = pr.get("current_run")
 
     def load_source(self, source: dict) -> dict:
         """프로젝트에 적힌 데이터 출처(예시·CSV·이미지 폴더·시계열 폴더)를 다시 불러와 요약을 돌려줌."""
@@ -381,7 +511,12 @@ class Studio:
         return {"summary": None if self.data is None else self.data.summary(),
                 "graph": self.graph or self.model_graph, "trained_graph": self.model_graph,
                 "trained": self.model is not None,
-                "results": self.results, "train_settings": self.train_settings, "selection": self.selection}
+                "results": self.results, "train_settings": self.train_settings, "selection": self.selection,
+                "runs": self.runs_view(), "predict_kinds": self.predict_kinds()}
+
+    def predict_kinds(self) -> list:
+        from dlstudio.predict import new_data_kinds
+        return [] if self.data is None else new_data_kinds(self.data)
 
     def job_view(self, job_id: str) -> dict:
         st = self.jobs.get(job_id)
@@ -399,6 +534,8 @@ class Studio:
                     return 200, _clean(self.api_state())
                 if path == "/api/tasks":
                     return 200, tasks.catalog_view()
+                if path == "/api/runs":
+                    return 200, _clean(self.api_runs())
                 if path.startswith("/api/jobs/"):
                     try:
                         return 200, _clean(self.job_view(path.split("/")[3]))
@@ -435,7 +572,20 @@ ROUTES = {
     "/api/project/save": "api_project_save", "/api/project/open": "api_project_open",
     "/api/project/export": "api_project_export", "/api/task/select": "api_task_select",
     "/api/data/scan_folder": "api_data_scan_folder", "/api/code": "api_code", "/api/code/save": "api_code_save",
+    "/api/runs/restore": "api_runs_restore", "/api/runs/delete": "api_runs_delete", "/api/predict": "api_predict",
+    "/api/samples": "api_samples", "/api/preview": "api_preview",
 }
+MAX_RUNS = 20             # 학습 기록은 최근 이만큼 (가중치까지 프로젝트 파일에 들어감)
+MAX_SAMPLES = 24          # 틀린 샘플 모아 보기에서 한 번에 보이는 수
+
+
+def _label_of(d, i: int):
+    return d.classes[int(d.y_train[i])] if d.task == "classification" else float(d.y_train[i])
+
+
+def _paths(b: dict) -> dict:
+    """예측 요청의 경로들에서 따옴표·공백 빼기."""
+    return {k: (_path(v) if k in ("path", "folder", "series_folder") else v) for k, v in b.items()}
 
 
 VIEW_KEYS = ("pos", "size", "brk", "shift")      # 화면용 값 (모델에는 영향 없음)
