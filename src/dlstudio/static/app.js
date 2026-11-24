@@ -267,11 +267,33 @@ function renderDataGuide() {
   $("series-row").hidden = !ts;
   if (!ts) $("series-box").hidden = true;
   $("csv-path").placeholder = WEB ? "옆 단추로 CSV 파일을 고르세요 (브라우저 안에서만 읽음)" : img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
-  const ex = sub ? sub.example_data : [["ecg", "심전도 정상·이상 (의료)"], ["vibration", "설비 진동 정상·결함 (제조)"]];
-  $("example-btns").innerHTML = ex.map(([k, name]) => `<button class="primary" data-ex="${esc(k)}">예시: ${esc(name)}</button>`).join(" ");
+  st.examples = sub ? sub.example_data : [["ecg", "심전도 정상·이상 (의료)"], ["vibration", "설비 진동 정상·결함 (제조)"]];
+  renderExamples();
+  $("csv-format-body").innerHTML = csvFormat(sub);
   if (sub) $("task").value = sub.task;
   $("normalize-text").textContent = img ? "정규화 (픽셀 전체 평균 0, 표준편차 1)"
     : inputKind() === "tabular" ? "정규화 (열마다 평균 0, 표준편차 1)" : "정규화 (시점별 평균 0, 표준편차 1)";
+}
+function renderExamples() {                             // 불러온 예시는 ✓ 표시, 데이터가 없을 때만 눈에 띄게
+  $("example-btns").innerHTML = (st.examples || []).map(([k, name]) => {
+    const sel = st.summary && st.dataSrc === k;
+    return `<button class="${sel ? "ex-sel" : st.summary ? "" : "primary"}" data-ex="${esc(k)}">${sel ? "✓ " : ""}예시: ${esc(name)}</button>`;
+  }).join(" ");
+}
+function csvFormat(sub) {                                // CSV 모양 예시 (작은 표)
+  const kind = sub ? sub.input : "timeseries", reg = sub && sub.task === "regression";
+  const ex = {
+    timeseries: [["t1", "t2", "t3", "…", "t140", reg ? "남은수명" : "정답"],
+      ["0.12", "0.15", "0.11", "…", "0.09", reg ? "120" : "정상"], ["0.31", "0.29", "0.40", "…", "0.22", reg ? "35" : "이상"]],
+    tabular: [["온도", "압력", "속도", reg ? "수율" : "정답"], ["182.1", "3.4", "1200", reg ? "92.5" : "양품"], ["190.6", "2.9", "1350", reg ? "81.0" : "불량"]],
+    image: [["p1", "p2", "…", "p784", "정답"], ["0", "12", "…", "0", "숫자7"], ["0", "0", "…", "255", "숫자1"]],
+  }[kind] || [];
+  const table = `<table class="tab"><tr>${ex[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>` +
+    ex.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("") + `</table>`;
+  const what = { timeseries: "한 행 = 신호 한 구간, 열 = 시점마다의 값", tabular: "한 행 = 샘플 하나, 열 = 측정 항목",
+    image: "한 행 = 그림 하나, 열 = 픽셀 값 (28×28이면 784열). 그림 파일 폴더도 됩니다" }[kind];
+  return `<p>${esc(what)}, <b>마지막 열 = ${reg ? "맞힐 숫자" : "정답 이름"}</b>.</p>${table}` +
+    `<p class="muted">첫 줄(열 이름)은 있어도 없어도 됩니다. 정답 열이 마지막이 아니면 [더 보기]에서 정답 열 번호를 바꾸세요. 엑셀에서는 [다른 이름으로 저장 → CSV UTF-8].</p>`;
 }
 $("example-btns").onclick = (e) => {
   const b = e.target.closest("[data-ex]");
@@ -298,6 +320,7 @@ async function loadData(body) {                       // 성공하면 true
 }
 function onData(s) {
   st.summary = s;
+  st.dataSrc = s.example || null;
   st.trained = false;
   $("data-summary").hidden = false;
   const task = s.task === "classification" ? `분류 (${s.classes.length}클래스)` : "회귀";
@@ -319,6 +342,7 @@ function onData(s) {
   if (st.sub && st.sub.task !== s.task)
     showMessage(`불러온 데이터는 ${s.task === "classification" ? "분류" : "회귀"}용인데 고른 과제는 ${st.sub.name}입니다`, "① 과제를 데이터에 맞게 다시 고르거나, 맞는 데이터를 불러오세요");
   $("sample-index").max = s.n_test - 1;
+  renderExamples();
   markSteps();
   if (st.ed) { st.ed.redrawPalette(); st.ed.redraw(); scheduleCheck(); }   // 입력 형태가 바뀌면 왼쪽 목록도
 }
@@ -495,7 +519,12 @@ $("tpl-btns").onclick = (e) => {
   if (t) return chooseTemplate(st.fam, st.sub, t);
   setGraph(st.tplList.find((x) => x[0] === b.dataset.tpl)[2]);
 };
-$("btn-clear").onclick = () => { setGraph(EMPTY_GRAPH); showMessage("빈 모델로 새로 시작했습니다", "Ctrl+Z(되돌리기)로 이전 모델을 되살릴 수 있습니다", "", true); };
+$("btn-clear").onclick = () => { setGraph(EMPTY_GRAPH); showMessage("빈 모델로 새로 시작했습니다", "왼쪽 층을 끌어 Input과 Output 사이 선에 놓으세요. Ctrl+Z(되돌리기)로 이전 모델을 되살릴 수 있습니다", "", true); };
+document.addEventListener("click", (e) => {                // 보기 설정: 바깥을 누르면 닫음
+  const d = document.querySelector(".viewopt[open]");
+  if (d && !d.contains(e.target)) d.open = false;
+});
+document.addEventListener("keydown", (e) => { const d = document.querySelector(".viewopt[open]"); if (e.key === "Escape" && d) d.open = false; });
 $("btn-autolayout").onclick = () => st.ed && st.ed.autoLayout();
 $("auto-wrap").onchange = () => {                        // 자동 줄바꿈: 판 폭(세로면 높이)을 넘으면 다음 줄로
   try { localStorage.setItem("dlstudio-auto-wrap", $("auto-wrap").checked ? "1" : "0"); } catch (e) { /* 저장 안 돼도 됨 */ }

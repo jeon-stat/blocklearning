@@ -84,6 +84,7 @@ class Dataset:
                 "task": self.task, "classes": list(self.classes), "class_counts": counts, "target_range": y_range,
                 "features": [] if self.image else (list(self.features) or [f"열 {i}" for i in range(1, self.length + 1)]),
                 "image": list(self.image) if self.image else None,
+                "example": (self.source or {}).get("example"),            # 예시 데이터면 그 이름 (화면에서 ✓ 표시)
                 "preview": [{"label": label(i), "values": [round(float(v), 5) for v in raw[i]]} for i in picks]}
 
 

@@ -39,6 +39,28 @@ h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
 .guard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; margin: 0 0 12px; border-radius: 8px;
   background: var(--warn-bg); color: var(--warn); }
 .guard span { flex: 1 1 280px; }
+.toolbar { margin-bottom: 6px; }
+.toolbar .grow { flex: 1; }
+.viewopt { position: relative; }
+.viewopt summary { list-style: none; cursor: pointer; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.viewopt summary::-webkit-details-marker { display: none; }
+.viewopt summary::after { content: " ▾"; color: var(--muted); }
+.viewopt-box { position: absolute; z-index: 20; top: 38px; left: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px;
+  min-width: 260px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.viewopt-box label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+details.keys, details.adv { margin-top: 10px; }
+details.keys summary, details.adv summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details.adv[open] summary { margin-bottom: 6px; }
+.dropzone { margin: 8px 0; padding: 14px; border: 2px dashed var(--line); border-radius: 10px; color: var(--muted); text-align: center; }
+#step-data.drag .dropzone { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.fmt { margin: 6px 0 10px; }
+.fmt summary { cursor: pointer; color: var(--accent); }
+.fmt p { margin: 8px 0; }
+.fmt table.tab { font-size: 13px; }
+button.ex-sel { border-color: var(--ok); color: var(--ok); background: var(--ok-bg); font-weight: 600; }
+.pitem.off { opacity: .62; }
+.pitem .fit { display: block; font-style: normal; font-size: 11px; color: var(--warn); margin-top: 2px; }
+.split-note { font-size: 13px; margin: 8px 0 0; }
 .verdict { grid-column: 1 / -1; margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
 .verdict div { color: var(--text); margin-top: 4px; }
 .verdict.good { background: var(--ok-bg); color: var(--ok); }

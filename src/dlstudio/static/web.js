@@ -292,7 +292,24 @@ function afterApp() {
     if (label) b.textContent = label;
     b.onclick = async (ev) => { if (await pickInto(inputId, opts)) orig && orig.call(b, ev); };
   };
+  const csvLoad = $("btn-csv") && $("btn-csv").onclick;
   wrapBtn("btn-csv", "csv-path", { accept: ".csv,.tsv,.txt" }, "CSV 파일 고르기");
+  const panel = $("step-data"), dz = $("dropzone");      // CSV를 ② 데이터 화면에 끌어 놓기
+  if (panel && dz && csvLoad) {
+    dz.hidden = false;
+    panel.addEventListener("dragover", (e) => { e.preventDefault(); panel.classList.add("drag"); });
+    panel.addEventListener("dragleave", (e) => { if (!panel.contains(e.relatedTarget)) panel.classList.remove("drag"); });
+    panel.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      panel.classList.remove("drag");
+      const f = Array.from((e.dataTransfer && e.dataTransfer.files) || []).find((x) => /\.(csv|tsv|txt)$/i.test(x.name));
+      if (!f) return window.showMessage && window.showMessage("CSV 파일만 끌어 놓을 수 있습니다", "이미지 폴더는 [이미지 폴더 고르기]로 고르세요");
+      const el = $("csv-path");
+      el.dataset.path = await writeFiles([f]);
+      el.value = f.name;
+      csvLoad.call($("btn-csv"));
+    });
+  }
   wrapBtn("btn-folder", "folder-path", { dir: true }, "이미지 폴더 고르기");
   wrapBtn("btn-series-scan", "series-path", { dir: true }, "폴더 고르기");
   const lf = $("series-label-file");

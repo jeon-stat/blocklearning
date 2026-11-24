@@ -41,14 +41,19 @@ const ACT_NAMES = { relu: "ReLU", sigmoid: "Sigmoid", tanh: "Tanh", leaky_relu: 
 const RNN_NAMES = { lstm: "LSTM", gru: "GRU", simple_rnn: "SimpleRNN" };
 const ACTS = [["relu", "ReLU (추천)"], ["leaky_relu", "LeakyReLU"], ["gelu", "GELU"], ["silu", "SiLU / Swish"], ["elu", "ELU"],
   ["mish", "Mish"], ["softplus", "Softplus"], ["sigmoid", "Sigmoid"], ["tanh", "Tanh"]];
-const TABULAR_TYPES = ["dense", "act", "bn", "dropout", "add", "output"];     // 표 데이터: 시간 축이 없어 Conv·RNN을 못 씀
+const TABULAR_TYPES = ["dense", "act", "bn", "dropout", "add", "concat", "flatten", "se", "output"];   // 표 데이터에 흔히 쓰는 층
 const IMAGE_ONLY = ["conv2d", "pool2d", "global_avg2d"];
-const IMAGE_TYPES = IMAGE_ONLY.concat(["bn", "act", "dropout", "flatten", "dense", "add", "concat", "output"]);
+const IMAGE_TYPES = IMAGE_ONLY.concat(["bn", "act", "dropout", "flatten", "dense", "add", "concat", "se", "output"]);
+// 왼쪽 목록은 데이터 종류와 상관없이 모든 층 (직접 꾸밀 수 있게). 맞는 층이 먼저, 잘 안 맞는 층은 뒤에 한마디와 함께
+function fitNote(t, input) {
+  if (input === "image") return IMAGE_TYPES.includes(t) ? "" : "시계열·표 데이터용 (이미지에는 2D 층)";
+  if (IMAGE_ONLY.includes(t)) return "이미지 데이터 전용";
+  if (input === "tabular" && !TABULAR_TYPES.includes(t)) return "표 데이터엔 보통 안 씀 (열 순서를 시간처럼 다룸)";
+  return "";
+}
 function paletteTypes(input) {
   const all = Object.keys(TYPES).filter((t) => t !== "output");
-  if (input === "tabular") return all.filter((t) => TABULAR_TYPES.includes(t));
-  if (input === "image") return all.filter((t) => IMAGE_TYPES.includes(t));
-  return all.filter((t) => !IMAGE_ONLY.includes(t));
+  return all.filter((t) => !fitNote(t, input)).concat(all.filter((t) => fitNote(t, input)));
 }
 const CATS = [["cnn", "Convolution (CNN)"], ["act", "Activation"], ["merge", "합치기 (Merge)"], ["rnn", "Recurrent (RNN)"], ["struct", "Structure"]];
 
@@ -913,10 +918,12 @@ function mount(els, opts) {
   function selectInput(k, v, options) {
     return `<select data-k="${k}">${options.map(([val, txt]) => `<option value="${val}"${String(v) === String(val) ? " selected" : ""}>${esc(txt)}</option>`).join("")}</select>`;
   }
-  const KEYS = `<p class="muted keys"><b>마우스만으로:</b> 왼쪽 목록에서 끌어 판에 놓기 (선 근처면 그 사이로) · 상자를 끌어 옮기기 (선 근처면 그 사이로, 여러 개 고른 채 끌면 함께) · ` +
+  const KEYS = `<details class="keys"><summary>조작 방법</summary><p class="muted"><b>마우스만으로:</b> 왼쪽 목록에서 끌어 판에 놓기 (선 근처면 그 사이로) · 상자를 끌어 옮기기 (선 근처면 그 사이로, 여러 개 고른 채 끌면 함께) · ` +
     `상자 위·아래 동그라미를 끌어 다른 상자에 놓으면 선 (기존 선은 바뀜), 빈 곳에 놓으면 층을 골라 바로 이어서 만듦 · <b>오른쪽 클릭</b>: 복사·삭제·감싸기·정렬·줄바꿈·선 지우기·층 넣기<br>` +
     `키보드도 됨: ` +
-    `여러 개 고르기: 빈 곳에서 끌어서 네모, 또는 Shift+클릭 · Ctrl+C 복사 · Ctrl+X 잘라내기 · Ctrl+V 붙여넣기 · Ctrl+D 복제 · Delete 삭제 · Ctrl+Z 되돌리기 · Ctrl+Y 다시 하기 · Esc 선택 해제</p>`;
+    `여러 개 고르기: 빈 곳에서 끌어서 네모, 또는 Shift+클릭 · Ctrl+C 복사 · Ctrl+X 잘라내기 · Ctrl+V 붙여넣기 · Ctrl+D 복제 · Delete 삭제 · Ctrl+Z 되돌리기 · Ctrl+Y 다시 하기 · Esc 선택 해제</p></details>`;
+  // 처음 보는 사람에게 덜 중요한 칸은 접어 둠 (기본값이 아니면 펼침)
+  const adv = (inner, open) => (inner ? `<details class="adv"${open ? " open" : ""}><summary>고급 설정</summary>${inner}</details>` : "");
 
   function drawSettings() {
     const summary = opts.getSummary();
@@ -948,18 +955,20 @@ function mount(els, opts) {
     let f = "";
     if (b.type === "conv") f = field("Filters (채널 수: 많을수록 정확, 느림)", numberInput("channels", b.channels, 1, 256)) +
       field("Kernel size (한 번에 보는 칸 수)", selectInput("kernel", b.kernel, [1, 3, 5, 7, 9, 11, 15].map((v) => [v, v]))) +
-      field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (길이 절반)"]])) +
-      field("Dilation (칸 사이를 띄워 넓게 봄, TCN)", selectInput("dilation", b.dilation || 1, [1, 2, 4, 8, 16, 32].map((v) => [v, v]))) +
-      field("Padding", selectInput("padding", b.padding || "same", [["same", "same (길이 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]])) +
-      field("Groups (filters·들어오는 채널을 나누는 수, 같으면 depthwise)", numberInput("groups", b.groups || 1, 1, 256));
+      adv(field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (길이 절반)"]])) +
+        field("Dilation (칸 사이를 띄워 넓게 봄, TCN)", selectInput("dilation", b.dilation || 1, [1, 2, 4, 8, 16, 32].map((v) => [v, v]))) +
+        field("Padding", selectInput("padding", b.padding || "same", [["same", "same (길이 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]])) +
+        field("Groups (filters·들어오는 채널을 나누는 수, 같으면 depthwise)", numberInput("groups", b.groups || 1, 1, 256)),
+      (b.stride || 1) !== 1 || (b.dilation || 1) !== 1 || (b.padding || "same") !== "same" || (b.groups || 1) !== 1);
     if (b.type === "pool") f = field("Pool size", selectInput("size", b.size, [[2, "2"], [4, "4"]]));
     if (b.type === "conv2d") f = field("Filters (채널 수: 많을수록 정확, 느림)", numberInput("channels", b.channels, 1, 256)) +
       field("Kernel size (한 번에 보는 네모 크기)", selectInput("kernel", b.kernel, [1, 3, 5, 7].map((v) => [v, `${v}×${v}`]))) +
-      field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (크기 절반)"]])) +
-      field("Padding", selectInput("padding", b.padding || "same", [["same", "same (크기 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]]));
+      adv(field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (크기 절반)"]])) +
+        field("Padding", selectInput("padding", b.padding || "same", [["same", "same (크기 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]])),
+      (b.stride || 1) !== 1 || (b.padding || "same") !== "same");
     if (b.type === "act") f = field("Function", selectInput("kind", b.kind, ACTS));
     if (b.type === "se") f = field("Ratio (줄이는 비율: 채널 ÷ ratio)", selectInput("ratio", b.ratio, [2, 4, 8, 16].map((v) => [v, v]))) +
-      field("안쪽 activation", selectInput("act", b.act || "relu", [["relu", "ReLU"], ["sigmoid", "Sigmoid"], ["tanh", "Tanh"]]));
+      adv(field("안쪽 activation", selectInput("act", b.act || "relu", [["relu", "ReLU"], ["sigmoid", "Sigmoid"], ["tanh", "Tanh"]])), (b.act || "relu") !== "relu");
     if (b.type === "dropout") f = field("Rate (끄는 비율)", selectInput("rate", b.rate, [0.1, 0.2, 0.3, 0.5].map((v) => [v, v])));
     if (b.type === "dense") f = field("Units (출력 개수)", numberInput("units", b.units, 1, 1024));
     if (b.type === "lstm" || b.type === "gru" || b.type === "simple_rnn") f = field("Units (hidden size)", numberInput("hidden", b.hidden, 1, 256)) +
@@ -986,20 +995,23 @@ function mount(els, opts) {
   function sizeFields(ids) {                         // 상자 크기 (보기용): 고른 상자 모두에 한 번에
     const boxes = ids.map((id) => L.nodes.find((n) => n.id === id)).filter((n) => n && !L.groups.some((gr) => gr.id === n.id));
     if (!boxes.length) return "";
-    return `<div class="fld size-fld"><span>상자 크기 (보기용${boxes.length > 1 ? ` · ${boxes.length}개 모두` : ""})</span>` +
+    return `<details class="adv size-fld"><summary>상자 크기 (보기용${boxes.length > 1 ? ` · ${boxes.length}개 모두` : ""})</summary>` +
       `<div class="row"><label>가로 <input type="number" data-size="w" value="${esc(Math.round(boxes[0].w))}" min="${SIZE_MIN[0]}" max="${SIZE_MAX[0]}" step="10"></label>` +
       `<label>세로 <input type="number" data-size="h" value="${esc(Math.round(boxes[0].h))}" min="${SIZE_MIN[1]}" max="${SIZE_MAX[1]}" step="5"></label>` +
-      `<button data-a="size-reset">기본 크기로</button></div><span class="muted">고른 상자 오른쪽 아래 네모를 끌어도 됨</span></div>`;
+      `<button data-a="size-reset">기본 크기로</button></div><span class="muted">고른 상자 오른쪽 아래 네모를 끌어도 됨</span></details>`;
   }
   function drawPalette() {
-    const allowed = paletteTypes(input());
-    const groups = input() === "tabular" ? [[null, "Layers (표 데이터)"]] : CATS;
+    const kind = input(), all = paletteTypes(kind);
     let h = "";
-    for (const [cat, name] of groups) {
-      const items = Object.entries(TYPES).filter(([t, T]) => (cat === null || T.cat === cat) && allowed.includes(t));
+    for (const [cat, name] of CATS) {
+      const items = all.filter((t) => TYPES[t].cat === cat);
       if (!items.length) continue;
       h += `<div class="pcat">${name}</div>`;
-      for (const [t, T] of items) h += `<div class="pitem p-${T.cat}" data-t="${t}" title="끌어서 판 위에 놓기 (선 근처면 그 선 사이로)"><b>${esc(T.name)}</b><span>${esc(T.desc)}</span></div>`;
+      for (const t of items) {
+        const T = TYPES[t], note = fitNote(t, kind);
+        h += `<div class="pitem p-${T.cat}${note ? " off" : ""}" data-t="${t}" title="끌어서 판 위에 놓기 (선 근처면 그 선 사이로)">` +
+          `<b>${esc(T.name)}</b><span>${esc(T.desc)}</span>${note ? `<em class="fit">${esc(note)}</em>` : ""}</div>`;
+      }
     }
     els.palette.innerHTML = h;
   }
@@ -1306,12 +1318,12 @@ function mount(els, opts) {
   document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeMenu(); });
   els.canvas.addEventListener("scroll", closeMenu);
   function layerMenu(e, pick) {
-    const allowed = paletteTypes(input()), items = [];
+    const kind = input(), all = paletteTypes(kind), items = [];
     for (const [cat, name] of CATS) {
-      const ts = allowed.filter((t) => TYPES[t].cat === cat);
+      const ts = all.filter((t) => TYPES[t].cat === cat);
       if (!ts.length) continue;
       items.push({ title: name });
-      for (const t of ts) items.push({ label: TYPES[t].name, fn: () => pick(t) });
+      for (const t of ts) items.push({ label: TYPES[t].name + (fitNote(t, kind) ? " · 잘 안 맞음" : ""), fn: () => pick(t) });
     }
     openMenu(e, items, "layers");
   }
@@ -1419,7 +1431,7 @@ function mount(els, opts) {
   return { set, get, decorate, select, redraw: draw, redrawPalette: drawPalette, undo, redo, autoLayout, setEdgeStyle, setFlowDir, setWrap };
 }
 
-const API = { mount, fmtShape, forInput, labelLines, setBreak, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,
+const API = { mount, fmtShape, forInput, labelLines, setBreak, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, fitNote, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,
   singleEntryExit, wrapResidual, wrapRepeat, unwrap, splitBranch, copyNodes, pasteAfter, setParam, newId, findNode, history, clone };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.StudioGraph = API;
