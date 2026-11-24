@@ -473,6 +473,19 @@ def test_manual_break_horizontal_goes_to_next_row():
     assert r == [True, True, True, True, True, 0, None]
 
 
+def test_wrapped_row_can_move_along_flow():
+    """줄바꿈한 줄은 손잡이로 흐름 방향(가로면 좌우)으로 옮길 수 있음: 그 줄만 움직이고, 0이면 맨 앞, 겹치지 않음."""
+    r = _run(const_res3 + """const g = L.setBreak(res3(), "c2", true), opt = { dir: "h" };
+      const l0 = L.layoutGraph(g, undefined, opt), x0 = (id) => l0.nodes.find((x) => x.id === id).x;
+      const g1 = L.setShift(g, "c2", 120), l1 = L.layoutGraph(g1, undefined, opt), x1 = (id) => l1.nodes.find((x) => x.id === id).x;
+      const back = L.setShift(g1, "c2", -50);
+      return [l0.rows.length, l0.rows[1].anchor, Math.round(x1("c2") - x0("c2")), Math.round(x1("s3") - x0("s3")),
+        Math.round(x1("c1") - x0("c1")), l1.rows[1].shift, overlaps(l1).length, "shift" in L.byIdOf(back, "c2"),
+        "shift" in L.stripView(g1).nodes.find((n) => n.id === "c2"), "shift" in L.clearPos(g1).nodes.find((n) => n.id === "c2"),
+        Math.round(l1.rows[1].x - x1("c2"))];""".replace("L.byIdOf", "((g, id) => byId(g, id))"))
+    assert r == [2, "c2", 120, 120, 0, 120, 0, False, False, False, 0], r
+
+
 def test_manual_break_vertical_goes_to_next_column():
     r = _run(const_res3 + """const l = L.layoutGraph(L.setBreak(res3(), "c2", true)), n = (id) => l.nodes.find((x) => x.id === id);
       return [n("c2").x > n("c1").x + n("c1").w, Math.abs(n("c2").y - n("input").y) < 1, overlaps(l).length];""")

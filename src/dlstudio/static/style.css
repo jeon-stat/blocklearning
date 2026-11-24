@@ -58,6 +58,10 @@ details.adv[open] summary { margin-bottom: 6px; }
 .fmt p { margin: 8px 0; }
 .fmt table.tab { font-size: 13px; }
 button.ex-sel { border-color: var(--ok); color: var(--ok); background: var(--ok-bg); font-weight: 600; }
+.flow-svg .row-grip { cursor: grab; }
+.flow-svg .row-grip rect { fill: #fff; stroke: #9aa3af; stroke-dasharray: 3 2; }
+.flow-svg .row-grip:hover rect { stroke: var(--accent); fill: var(--accent-bg); stroke-dasharray: none; }
+.flow-svg .row-grip text { font-size: 12px; fill: #6b7280; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
 .pitem.off { opacity: .62; }
 .pitem .fit { display: block; font-style: normal; font-size: 11px; color: var(--warn); margin-top: 2px; }
 .split-note { font-size: 13px; margin: 8px 0 0; }

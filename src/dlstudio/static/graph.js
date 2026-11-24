@@ -269,10 +269,18 @@ function setPos(g0, id, pos) {
 }
 function clearPos(g0) {
   const g = clone(g0);
-  eachNode(nodesOf(g), (n) => { delete n.pos; });
+  eachNode(nodesOf(g), (n) => { delete n.pos; delete n.shift; });
   return g;
 }
 const stripPos = clearPos;
+// 줄바꿈한 줄 옮기기 (보기용): 그 줄의 상자 하나에 흐름 방향 거리(px, 0 이상)를 적음. 0이면 줄 첫머리 그대로
+function setShift(g0, id, v) {
+  const g = clone(g0), f = findNode(g, id);
+  if (!f) return g;
+  const s = Math.max(0, Math.round(Number(v) || 0));
+  if (s > 0) f.node.shift = s; else delete f.node.shift;
+  return g;
+}
 // 상자 크기 (보기용, 모델과 상관없음): 고른 상자들에 한 번에. null이면 기본 크기
 const SIZE_MIN = [60, 24], SIZE_MAX = [600, 400];
 function setSize(g0, ids, size) {
@@ -287,7 +295,7 @@ function setSize(g0, ids, size) {
 }
 function stripView(g0) {                                  // 모델 비교용: 화면용 값(위치·크기·줄바꿈)을 뺀 그래프
   const g = clone(g0);
-  eachNode(nodesOf(g), (n) => { delete n.pos; delete n.size; delete n.brk; });
+  eachNode(nodesOf(g), (n) => { delete n.pos; delete n.size; delete n.brk; delete n.shift; });
   return g;
 }
 // 줄바꿈 (보기용): 이 상자부터 다음 줄(가로면 아래, 세로면 오른쪽)로
@@ -655,7 +663,7 @@ function edgePath(pts, style) {
 
 // 줄바꿈: 흐름축(이 좌표계의 y)을 층 경계에서 끊어 다음 줄을 옆축(x)으로 옮김. 직접(brk) 또는 자동(wrap: 한 줄 최대 길이).
 // 줄 사이를 잇는 선은 '되돌아가는 선'(나가서 줄 사이 길로, 다음 줄 첫머리 앞에서 들어감)으로 다시 그림
-const WRAP_GAP = 44;
+const WRAP_GAP = 44, ROW_PAD = 30;                      // ROW_PAD: 줄 첫머리 앞 손잡이 자리
 function wrapRows(L, g, wrapLen) {
   const top = L.nodes.filter((n) => !n.anc.length);
   const range = new Map();
@@ -689,12 +697,23 @@ function wrapRows(L, g, wrapLen) {
   for (const n of L.nodes) grow(segOf(n), n.x, n.x + n.w, n.anc.length ? undefined : n.y);
   for (const o of L.groups.concat(L.entries)) grow(segOf(o), o.x, o.x + o.w);
   for (const e of L.edges) if (!crossing(e) && segOf({ id: e.from, anc: e.anc }) !== undefined) for (const [x] of e.points) grow(segOf({ id: e.from, anc: e.anc }), x, x);
+  // 줄마다 옮긴 거리: 그 줄 상자 중 shift가 있는 것(층 순서로 처음), 없으면 줄 첫 상자가 기준
+  const gnode = new Map();
+  for (const n of nodesOf(g)) if (n && n.id) gnode.set(n.id, n);
+  const segTop = Array.from({ length: nSeg }, () => []);
+  for (const n of top) if (segOf(n) !== undefined) segTop[segOf(n)].push(n);
+  segTop.forEach((a) => a.sort((p, q) => p.layer - q.layer || p.x - q.x));
+  const shiftOfNode = (n) => { const m = n && gnode.get(n.id); return m && Number(m.shift) > 0 ? Number(m.shift) : 0; };
+  const anchor = segTop.map((a) => a.find((n) => shiftOfNode(n) > 0) || a[0]);
+  const moved = anchor.map(shiftOfNode);
   let cross = 0;
   const shift = S.map((s, k) => {
-    const d = [cross - s.x0, S[0].y0 - s.y0];
+    const d = [cross - s.x0, S[0].y0 - s.y0 + ROW_PAD + moved[k]];
     cross += s.x1 - s.x0 + WRAP_GAP;
     return d;
   });
+  L.rows = S.map((s, k) => ({ k, anchor: anchor[k] ? anchor[k].id : null, shift: moved[k],
+    c0: s.x0 + shift[k][0], c1: s.x1 + shift[k][0], f0: S[0].y0 + ROW_PAD + moved[k] }));
   const mv = (o, k) => { const [dx, dy] = shift[k]; o.x += dx; o.y += dy; if (o.ox !== undefined) { o.ox += dx; o.oy += dy; } };
   for (const n of L.nodes) mv(n, segOf(n));
   for (const o of L.groups.concat(L.entries)) mv(o, segOf(o));
@@ -739,7 +758,7 @@ function layoutGraph(g, sizeOf = null, opts = {}) {
     return m;
   });
   const L = wrapRows(layoutScope(h ? swapPos(nodesOf(g)) : nodesOf(g), "input", h ? (n) => sizeOf(n).slice().reverse() : sizeOf, opts),
-    g, opts.wrap ? opts.wrap - 2 * MARGIN : 0);
+    g, opts.wrap ? opts.wrap - 2 * MARGIN - ROW_PAD : 0);
   const mv = (o) => Object.assign({}, o, { x: o.x + MARGIN, y: o.y + MARGIN }, o.ox !== undefined ? { ox: o.ox + MARGIN, oy: o.oy + MARGIN } : {});
   const t = (o) => (h ? Object.assign({}, o, { x: o.y, y: o.x, w: o.h, h: o.w }, o.ox !== undefined ? { ox: o.oy, oy: o.ox } : {}) : o);
   const res = {
@@ -748,6 +767,11 @@ function layoutGraph(g, sizeOf = null, opts = {}) {
     edges: L.edges.map((e) => Object.assign({}, e, { points: e.points.map(([x, y]) => (h ? [y + MARGIN, x + MARGIN] : [x + MARGIN, y + MARGIN])) })),
     entries: L.entries.map(mv).map(t),
     width: (h ? L.height : L.width) + 2 * MARGIN, height: (h ? L.width : L.height) + 2 * MARGIN, dir: h ? "h" : "v",
+    // 줄바꿈한 줄들: 손잡이 자리 (x, y = 줄 첫머리 앞, 옆축 가운데)와 기준 상자·옮긴 거리
+    rows: (L.rows || []).map((r) => {
+      const f = r.f0 + MARGIN, c = (r.c0 + r.c1) / 2 + MARGIN;
+      return { k: r.k, anchor: r.anchor, shift: r.shift, x: h ? f : c, y: h ? c : f };
+    }),
   };
   res.nodes.sort((a, b) => a.anc.length - b.anc.length || a.layer - b.layer || (h ? a.x - b.x || a.y - b.y : a.y - b.y || a.x - b.x));
   return res;
@@ -858,6 +882,14 @@ function mount(els, opts) {
         `<path d="${d}" class="edge-hit" data-edge="${key}"${top(e)}/>`;
     }
     for (const en of L.entries) s += `<circle cx="${en.x + en.w / 2}" cy="${en.y + en.h / 2}" r="4" class="entry"${top(en)}><title>묶음의 입력</title></circle>`;
+    for (const r of L.rows || []) {                            // 줄바꿈한 줄마다 손잡이: 끌면 그 줄을 흐름 방향(가로면 좌우)으로 옮김
+      if (!r.anchor) continue;
+      const hz = L.dir === "h", gw = hz ? 14 : 44, gh = hz ? 44 : 14, gx = hz ? r.x - 24 : r.x - 22, gy = hz ? r.y - 22 : r.y - 24;
+      s += `<g class="row-grip" data-row="${r.k}" data-anchor="${esc(r.anchor)}" data-shift="${r.shift}">` +
+        `<title>끌어서 이 줄을 ${hz ? "좌우" : "위아래"}로 옮기기 (두 번 누르면 맨 ${hz ? "왼쪽" : "위"}으로)</title>` +
+        `<rect x="${gx}" y="${gy}" width="${gw}" height="${gh}" rx="4"/>` +
+        `<text x="${gx + gw / 2}" y="${gy + gh / 2}">${hz ? "⇔" : "⇕"}</text></g>`;
+    }
     for (const bx of L.nodes) {
       if (L.groups.some((gr) => gr.id === bx.id)) continue;
       const n = findNode(graph, bx.id).node, on = sel.has(bx.id);
@@ -1112,6 +1144,10 @@ function mount(els, opts) {
   }
   function clearGhost() { if (ghost) ghost.remove(); ghost = null; els.canvas.classList.remove("dragging"); }
 
+  els.canvas.addEventListener("dblclick", (e) => {            // 줄 손잡이 두 번: 그 줄을 맨 앞(왼쪽·위)으로
+    const rg = e.target.closest("[data-row]");
+    if (rg && Number(rg.dataset.shift) > 0) change(setShift(graph, rg.dataset.anchor, 0));
+  });
   els.palette.addEventListener("mousedown", (e) => {
     const it = e.target.closest("[data-t]");
     if (!it || e.button !== 0) return;
@@ -1125,6 +1161,12 @@ function mount(els, opts) {
     if (rz && p) {
       const bx = L.nodes.find((n) => n.id === rz.dataset.rsz);
       drag = { kind: "size", id: bx.id, x0: p[0], y0: p[1], bx, ids: selIds().filter((id) => !L.groups.some((gr) => gr.id === id)) };
+      e.preventDefault();
+      return;
+    }
+    const rg = e.target.closest("[data-row]");
+    if (rg && p) {
+      drag = { kind: "row", anchor: rg.dataset.anchor, shift0: Number(rg.dataset.shift) || 0, x0: p[0], y0: p[1], base: graph, moved: false };
       e.preventDefault();
       return;
     }
@@ -1153,6 +1195,18 @@ function mount(els, opts) {
       const edge = p ? nearestEdge(L.edges, p) : null;
       if (edge !== dropEdge) showDrop(edge);
       setGhost(`${TYPES[drag.type].name} — ${!p ? "판 위에 놓으세요" : edge ? "이 선 사이에 넣기" : "여기에 두기 (선은 나중에 이음)"}`, e);
+      return;
+    }
+    if (drag && drag.kind === "row") {                         // 줄 옮기기: 놓기 전까지는 보기만 (되돌리기 기록은 놓을 때 한 번)
+      const p = svgPoint(e);
+      if (!p) return;
+      const d = flowDir === "h" ? p[0] - drag.x0 : p[1] - drag.y0;
+      drag.moved = drag.moved || Math.abs(d) > 3;
+      if (!drag.moved) return;
+      drag.g = setShift(drag.base, drag.anchor, drag.shift0 + d);
+      graph = drag.g;
+      draw();
+      graph = drag.base;
       return;
     }
     if (drag && drag.kind === "size") {
@@ -1218,6 +1272,13 @@ function mount(els, opts) {
         hint("아직 이어지지 않은 상자입니다: 위 상자 아래의 동그라미를 끌어 이 상자에 놓으세요");
       }
       return;
+    }
+    if (drag && drag.kind === "row") {
+      const d = drag;
+      drag = null;
+      ignoreNextClick();
+      if (!d.moved || !d.g) return;                         // 누르기만 함 (두 번 누르기가 같은 손잡이에 가도록 다시 그리지 않음)
+      return change(d.g);
     }
     if (drag && drag.kind === "size") {
       const d = drag;
@@ -1431,7 +1492,7 @@ function mount(els, opts) {
   return { set, get, decorate, select, redraw: draw, redrawPalette: drawPalette, undo, redo, autoLayout, setEdgeStyle, setFlowDir, setWrap };
 }
 
-const API = { mount, fmtShape, forInput, labelLines, setBreak, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, fitNote, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,
+const API = { mount, fmtShape, forInput, labelLines, setBreak, setShift, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, fitNote, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,
   singleEntryExit, wrapResidual, wrapRepeat, unwrap, splitBranch, copyNodes, pasteAfter, setParam, newId, findNode, history, clone };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.StudioGraph = API;

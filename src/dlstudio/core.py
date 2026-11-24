@@ -438,7 +438,7 @@ ROUTES = {
 }
 
 
-VIEW_KEYS = ("pos", "size", "brk")      # 화면용 값 (모델에는 영향 없음)
+VIEW_KEYS = ("pos", "size", "brk", "shift")      # 화면용 값 (모델에는 영향 없음)
 
 
 def _same_model(a, b) -> bool:
