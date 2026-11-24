@@ -45,10 +45,17 @@ def test_rnn_shapes():
     assert c.shapes[(0,)] == (32,) and c.shapes[(1,)] == (16,) and c.shapes[(3,)] == (3,)
 
 
-def test_rnn_not_first_rejected():
+def test_rnn_after_conv_allowed():
+    """순환 층은 (채널, 길이) 뒤 어디에나: 시점마다 채널 수만큼 값을 읽음. 숫자 묶음 뒤에는 안 됨."""
     c = check([{"type": "conv", "channels": 4, "kernel": 3}, {"type": "lstm", "hidden": 8, "layers": 1},
                {"type": "output"}], 20, 2)
-    assert (1,) in _paths(c)
+    assert c.ok and c.kind == "cnn" and c.shapes[(1,)] == (8,)
+    c = check([{"type": "conv", "channels": 4, "kernel": 3}, {"type": "global_avg"}, {"type": "lstm", "hidden": 8, "layers": 1},
+               {"type": "output"}], 20, 2)
+    assert (2,) in _paths(c)
+    c = check([{"type": "lstm", "hidden": 8, "layers": 1, "return_sequences": True, "bidirectional": True},
+               {"type": "conv", "channels": 4, "kernel": 3}, {"type": "global_avg"}, {"type": "output"}], 20, 2)
+    assert c.ok and c.kind == "rnn" and c.shapes[(0,)] == (16, 20)
 
 
 def test_cnn_after_rnn_rejected():

@@ -6,7 +6,7 @@
 "use strict";
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
-const PY_FILES = ["__init__.py", "analysis.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "graph.py", "jobs.py",
+const PY_FILES = ["__init__.py", "analysis.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "graph.py", "jobs.py", "layers.py", "nn_extra.py",
   "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
 const DATA_FILES = ["data/digits8.npz", "data/pneumonia28.npz"];
 const E = () => window.DLEngine;

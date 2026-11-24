@@ -101,10 +101,14 @@ def test_rnn_rules():
     c = check_graph(G(N("r", "lstm", "input", hidden=16, layers=1), N("o", "output", "r")), 30, 2)
     assert c.ok and c.kind == "rnn" and c.shapes["r"] == (16,)
     c = check_graph(G(conv("c", "input", 4), N("r", "lstm", "c", hidden=16, layers=1), N("o", "output", "r")), 30, 2)
-    assert msgs(c, "r")
+    assert c.ok and c.shapes["r"] == (16,)                        # 순환 층은 (채널, 길이) 뒤 어디에나
     c = check_graph(G(N("r", "lstm", "input", hidden=8, layers=1), conv("c", "input", 8), N("g", "global_avg", "c"),
                       N("s", "add", "r", "g"), N("o", "output", "s")), 30, 2)
-    assert not c.ok
+    assert c.ok and c.kind == "rnn"                                # 입력을 순환 층과 나눠 써도 됨
+    c = check_graph(G(N("d", "dense", "input", units=4), N("r", "lstm", "d", hidden=8, layers=1), N("o", "output", "r")), 30, 2)
+    assert msgs(c, "r")                                            # 숫자 묶음 뒤에는 안 됨
+    c = check_graph(G(conv("c", "input", 4), N("f", "rand_flip", "c"), N("g", "global_avg", "f"), N("o", "output", "g")), 30, 2)
+    assert msgs(c, "f")                                            # 증강은 Input 바로 뒤에만
 
 
 def test_tanh_anywhere():

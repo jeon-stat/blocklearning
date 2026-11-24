@@ -19,9 +19,17 @@ const yieldNow = () => new Promise((r) => {
 });
 
 // ------------------------------------------------------------ 가중치 만들기 (PyTorch 기본 초기화와 같은 분포)
-function initParam(step, name, shape, kind, rand) {
+function initParam(step, name, shape, kind, rand, init) {
   const n = prod(shape);
   if (kind === "count") return tf.scalar(0, "int32");
+  if (init === "ones") return tf.ones(shape);
+  if (init === "zeros") return tf.zeros(shape);
+  if (init === "const0.25") return tf.fill(shape, 0.25);
+  if (init === "normal1" || init === "normal02") {               // Box–Muller (seed로 같은 값)
+    const sd = init === "normal1" ? 1 : 0.02, v = new Float32Array(n);
+    for (let i = 0; i < n; i++) v[i] = Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand()) * sd;
+    return tf.tensor(v, shape);
+  }
   const leaf = name.split(".").pop();
   if (step.type === "bn") {
     if (leaf === "weight" || leaf === "running_var") return tf.ones(shape);
@@ -29,6 +37,7 @@ function initParam(step, name, shape, kind, rand) {
   }
   let bound;
   if (["lstm", "gru", "simple_rnn"].includes(step.type)) bound = 1 / Math.sqrt(step.cfg.hidden);
+  else if (step.type === "conv_t" || step.type === "conv_t2d") bound = 1 / Math.sqrt(prod(step.params[0][1].slice(1)));
   else {                                                     // Conv·Linear: kaiming_uniform(a=√5) → U(±1/√fan_in), bias도 같음
     const wshape = leaf === "bias" ? null : shape;
     let fanIn;
@@ -56,13 +65,19 @@ const ACT = {
   softplus: (x) => tf.softplus(x),
   sigmoid: (x) => tf.sigmoid(x),
   tanh: (x) => tf.tanh(x),
+  selu: (x) => tf.selu(x),
+  relu6: (x) => tf.relu6(x),
+  hardswish: (x) => x.mul(tf.relu6(x.add(3))).div(6),
+  hardsigmoid: (x) => tf.relu6(x.add(3)).div(6),
+  softmax: (x) => (x.rank === 2 ? tf.softmax(x) : chFirst(tf.softmax(chLast(x)))),          // 채널 방향 (PyTorch dim=1)
 };
 
 function conv1d(x, w, b, cfg) {                       // x (N, C, L), w (out, in/g, k)
   const k = cfg.kernel, d = cfg.dilation || 1, s = cfg.stride || 1, g = cfg.groups || 1;
-  const pad = cfg.padding === "valid" ? 0 : (d * (k - 1)) / 2;
+  const pad = cfg.padding === "valid" ? 0 : cfg.padding === "causal" ? 0 : Math.floor((d * (k - 1)) / 2);
   let h = tf.transpose(x, [0, 2, 1]);                     // (N, L, C)
   if (pad) h = tf.pad(h, [[0, 0], [pad, pad], [0, 0]]);
+  if (cfg.padding === "causal" && d * (k - 1)) h = tf.pad(h, [[0, 0], [d * (k - 1), 0], [0, 0]]);   // 과거만 봄
   let kern = tf.transpose(w, [2, 1, 0]);                  // (k, in/g, out)
   if (d > 1) {                                            // TF.js는 dilation의 기울기를 못 함 → 커널 사이에 0을 끼운 같은 커널
     const z = tf.zeros([d - 1, kern.shape[1], kern.shape[2]]), parts = [];
@@ -80,12 +95,22 @@ function conv1d(x, w, b, cfg) {                       // x (N, C, L), w (out, in
   return tf.transpose(y, [0, 2, 1]);
 }
 
-function conv2d(x, w, b, cfg) {                       // x (N, C, H, W), w (out, in, k, k)
-  const k = cfg.kernel, s = cfg.stride || 1, pad = cfg.padding === "valid" ? 0 : Math.floor(k / 2);
+function conv2d(x, w, b, cfg) {                       // x (N, C, H, W), w (out, in/g, k, k)
+  const k = cfg.kernel, s = cfg.stride || 1, d = cfg.dilation || 1, g = cfg.groups || 1;
+  const pad = cfg.padding === "valid" ? 0 : Math.floor((d * (k - 1)) / 2);
   let h = tf.transpose(x, [0, 2, 3, 1]);
   if (pad) h = tf.pad(h, [[0, 0], [pad, pad], [pad, pad], [0, 0]]);
-  const y = tf.conv2d(h, tf.transpose(w, [2, 3, 1, 0]), s, "valid").add(b);
-  return tf.transpose(y, [0, 3, 1, 2]);
+  let kern = tf.transpose(w, [2, 3, 1, 0]);               // (k, k, in/g, out)
+  if (d > 1) {                                            // dilation: 커널 칸 사이에 0을 끼움 (기울기가 되는 연산만)
+    const [kh, kw, ci, co] = kern.shape;
+    kern = kern.reshape([kh, 1, kw, 1, ci, co]).pad([[0, 0], [0, d - 1], [0, 0], [0, d - 1], [0, 0], [0, 0]])
+      .reshape([kh * d, kw * d, ci, co]).slice([0, 0, 0, 0], [d * (kh - 1) + 1, d * (kw - 1) + 1, ci, co]);
+  }
+  const one = (hh, kk) => tf.conv2d(hh, kk, s, "valid");
+  let y;
+  if (g === 1) y = one(h, kern);
+  else { const hs = tf.split(h, g, 3), ks = tf.split(kern, g, 3); y = tf.concat(hs.map((hh, i) => one(hh, ks[i])), 3); }
+  return tf.transpose(y.add(b), [0, 3, 1, 2]);
 }
 
 function avgPool1d(x, k) {                            // (N, C, L) → (N, C, ⌊L/k⌋)
@@ -119,13 +144,22 @@ function batchNorm(x, P, key, training, pending) {
 
 function linear(x, W, b) { return tf.matMul(x, W, false, true).add(b); }
 
-function rnn(x, P, key, cfg, type) {                  // x (N, L, 1) → 마지막 시점의 숨은 값 (N, H)
-  const H = cfg.hidden, layers = cfg.layers || 1;
-  let seq = x;
-  let last;
+function rnn(x, P, key, cfg, type) {                  // x (N, C, L) → 마지막 숨은 값 (N, H·방향) 또는 줄 (N, H·방향, L)
+  const H = cfg.hidden, layers = cfg.layers || 1, bi = !!cfg.bidirectional;
+  let seq = tf.transpose(x, [0, 2, 1]);                    // (N, L, C)
   for (let l = 0; l < layers; l++) {
-    const Wih = P[`${key}.rnn.weight_ih_l${l}`], Whh = P[`${key}.rnn.weight_hh_l${l}`];
-    const bih = P[`${key}.rnn.bias_ih_l${l}`], bhh = P[`${key}.rnn.bias_hh_l${l}`];
+    const f = rnnDir(seq, P, `${key}.rnn`, `l${l}`, H, type);
+    seq = bi ? tf.concat([f, tf.reverse(rnnDir(tf.reverse(seq, 1), P, `${key}.rnn`, `l${l}_reverse`, H, type), 1)], 2) : f;
+  }
+  const L = seq.shape[1];
+  if (cfg.return_sequences) return tf.transpose(seq, [0, 2, 1]);
+  if (bi) return tf.concat([seq.slice([0, L - 1, 0], [-1, 1, H]).squeeze([1]), seq.slice([0, 0, H], [-1, 1, H]).squeeze([1])], 1);
+  return seq.slice([0, L - 1, 0], [-1, 1, -1]).squeeze([1]);
+}
+function rnnDir(seq, P, pre, sfx, H, type) {         // 한 방향 한 층: (N, L, I) → (N, L, H)
+  {
+    const Wih = P[`${pre}.weight_ih_${sfx}`], Whh = P[`${pre}.weight_hh_${sfx}`];
+    const bih = P[`${pre}.bias_ih_${sfx}`], bhh = P[`${pre}.bias_hh_${sfx}`];
     const [N, L, I] = seq.shape;
     const xw = tf.matMul(seq.reshape([N * L, I]), Wih, false, true).add(bih).reshape([N, L, -1]);   // 모든 시점의 입력 쪽을 한 번에
     const steps = tf.unstack(xw, 1);
@@ -147,17 +181,15 @@ function rnn(x, P, key, cfg, type) {                  // x (N, L, 1) → 마지�
       }
       outs.push(h);
     }
-    last = h;
-    seq = tf.stack(outs, 1);
+    return tf.stack(outs, 1);
   }
-  return last;
 }
 
 function se(x, P, key, cfg) {
-  const s = x.mean(-1);
+  const s = spatialOf(x).mean(-1);
   const a = ACT[cfg.act || "relu"](linear(s, P[key + ".fc1.weight"], P[key + ".fc1.bias"]));
   const w = tf.sigmoid(linear(a, P[key + ".fc2.weight"], P[key + ".fc2.bias"]));
-  return x.mul(w.expandDims(-1));
+  return x.mul(chanW(w, x));
 }
 
 function layer(st, ins, P, training, pending) {
@@ -188,8 +220,309 @@ function layer(st, ins, P, training, pending) {
     case "se": return se(x, P, k, c);
     case "add": return ins.slice(1).reduce((a, b) => a.add(b), ins[0]);
     case "concat": return tf.concat(ins, 1);
-    default: throw new Error("모르는 층: " + st.type);
+    case "multiply": return ins.slice(1).reduce((a, b) => a.mul(b), ins[0]);
+    case "average": return ins.slice(1).reduce((a, b) => a.add(b), ins[0]).div(ins.length);
+    case "maximum": return ins.slice(1).reduce((a, b) => tf.maximum(a, b), ins[0]);
+    default: {
+      const f = EXTRA[st.type];
+      if (!f) throw new Error("모르는 층: " + st.type);
+      return f(x, st, P, k, training, ins);
+    }
   }
+}
+
+// ------------------------------------------------------------ 추가 블록 (nn_extra.py와 같은 식). x는 채널이 먼저: (N, C, L) · (N, C, H, W)
+const spatialOf = (x) => (x.rank === 2 ? x.expandDims(-1) : x.reshape([x.shape[0], x.shape[1], -1]));   // (N, C, 위치 수)
+const chanW = (w, x) => w.reshape([w.shape[0], w.shape[1]].concat(new Array(x.rank - 2).fill(1)));      // (N, C) → x에 곱할 모양
+function chLast(x) { return x.rank === 2 ? x : tf.transpose(x, x.rank === 3 ? [0, 2, 1] : [0, 2, 3, 1]); }
+function chFirst(y) { return y.rank === 2 ? y : tf.transpose(y, y.rank === 3 ? [0, 2, 1] : [0, 3, 1, 2]); }
+function linearCh(x, W, b) {                          // 위치마다 채널에 Linear (PyTorch: x.movedim(1, -1) → Linear)
+  if (x.rank === 2) return linear(x, W, b);
+  const h = chLast(x), sh = h.shape;
+  const y = linear(h.reshape([-1, sh[sh.length - 1]]), W, b);
+  return chFirst(y.reshape(sh.slice(0, -1).concat([W.shape[0]])));
+}
+const toSeq = (x) => tf.transpose(spatialOf(x), [0, 2, 1]);                      // (N, T, C)
+const fromSeq = (y, shape) => tf.transpose(y, [0, 2, 1]).reshape([shape[0], y.shape[2]].concat(shape.slice(2)));
+function splitHeads(z, h) { const [n, t, c] = z.shape; return z.reshape([n, t, h, c / h]).transpose([0, 2, 1, 3]); }
+const joinHeads = (y) => { const [n, h, t, d] = y.shape; return y.transpose([0, 2, 1, 3]).reshape([n, t, h * d]); };
+function rope(x) {                                     // (N, heads, T, d): 짝 (2i, 2i+1)을 위치 × 10000^(−2i/d)만큼 돌림
+  const [n, h, T, d] = x.shape, ang = new Float32Array(T * (d / 2));
+  for (let p = 0; p < T; p++) for (let i = 0; i < d / 2; i++) ang[p * (d / 2) + i] = p * Math.pow(10000, -(2 * i) / d);
+  const a = tf.tensor(ang, [T, d / 2]), cos = tf.cos(a), sin = tf.sin(a);
+  const [x1, x2] = tf.unstack(x.reshape([n, h, T, d / 2, 2]), 4);
+  return tf.stack([x1.mul(cos).sub(x2.mul(sin)), x1.mul(sin).add(x2.mul(cos))], 4).reshape([n, h, T, d]);
+}
+function attend(q, k, v, causal) {                    // (N, h, T, d) → softmax(QKᵀ/√d)V
+  let att = tf.matMul(q, k, false, true).mul(1 / Math.sqrt(q.shape[3]));
+  if (causal) {
+    const T = att.shape[2], m = tf.linalg.bandPart(tf.ones([T, T]), -1, 0);     // 아래 삼각(자기 포함) = 1
+    att = att.mul(m).add(m.sub(1).mul(1e9));                                       // 미래 = −1e9 (PyTorch masked_fill과 같은 값)
+  }
+  return tf.matMul(tf.softmax(att), v);
+}
+function qkv(x, P, k, heads) {
+  const s = toSeq(x), z = linear(s.reshape([-1, s.shape[2]]), P[k + ".qkv.weight"], P[k + ".qkv.bias"]).reshape([s.shape[0], s.shape[1], -1]);
+  return tf.split(z, 3, 2).map((t) => splitHeads(t, heads));
+}
+const proj = (y, x, P, k) => {                         // (N, T, C) → Linear → 원래 모양
+  const o = linear(y.reshape([-1, y.shape[2]]), P[k + ".proj.weight"], P[k + ".proj.bias"]).reshape(y.shape);
+  return fromSeq(o, x.shape);
+};
+function poolMat(L, out) { return Array.from({ length: out }, (_, i) => [Math.floor((i * L) / out), Math.ceil(((i + 1) * L) / out)]); }
+function adaptive(x, size, mode) {                    // PyTorch Adaptive*Pool과 같은 구간 [⌊iL/n⌋, ⌈(i+1)L/n⌉)
+  const red = (t, ax) => (mode === "max" ? t.max(ax, true) : t.mean(ax, true));
+  const along = (t, ax) => tf.concat(poolMat(t.shape[ax], size).map(([a, b]) => {
+    const begin = new Array(t.rank).fill(0), sz = t.shape.slice();
+    begin[ax] = a; sz[ax] = b - a;
+    return red(t.slice(begin, sz), ax);
+  }), ax);
+  let y = along(x, 2);
+  if (x.rank === 4) y = along(y, 3);
+  return y;
+}
+function interpMat(L, out) {                          // 선형 보간 (align_corners=False): (L, out) 행렬
+  const M = new Float32Array(L * out);
+  for (let i = 0; i < out; i++) {
+    const src = Math.max(0, ((i + 0.5) * L) / out - 0.5), i0 = Math.min(Math.floor(src), L - 1), i1 = Math.min(i0 + 1, L - 1), w1 = src - i0;
+    M[i0 * out + i] += 1 - w1; M[i1 * out + i] += w1;
+  }
+  return tf.tensor(M, [L, out]);
+}
+function alongLast(x, M) { const sh = x.shape; return tf.matMul(x.reshape([-1, sh[sh.length - 1]]), M).reshape(sh.slice(0, -1).concat([M.shape[1]])); }
+function convT(x, W, b, cfg, two) {                   // ConvTranspose: 입력 칸 사이에 0 (stride−1개) → 양쪽 채움 → 뒤집은 커널로 보통 Conv
+  const k = cfg.kernel, s = cfg.stride || 2;
+  const [p, op] = s === 2 ? ({ 1: [0, 1], 2: [0, 0], 3: [1, 1], 4: [1, 0], 5: [2, 1] })[k] : [(k - 1) / 2, 0];
+  const dil = (t, ax) => {                             // ax 축에 0 끼우기
+    if (s === 1) return t;
+    const sh = t.shape, n = sh[ax];
+    const e = t.expandDims(ax + 1), padv = new Array(e.rank).fill([0, 0]);
+    padv[ax + 1] = [0, s - 1];
+    const r = e.pad(padv), ns = sh.slice(); ns[ax] = n * s;
+    const begin = new Array(sh.length).fill(0), size = ns.slice(); size[ax] = (n - 1) * s + 1;
+    return r.reshape(ns).slice(begin, size);
+  };
+  let h = dil(x, 2);
+  if (two) h = dil(h, 3);
+  const lo = k - 1 - p, hi = k - 1 - p + op, padv = [[0, 0], [0, 0], [lo, hi]].concat(two ? [[lo, hi]] : []);
+  h = h.pad(padv);
+  const kern = tf.reverse(W, two ? [2, 3] : [2]).transpose(two ? [1, 0, 2, 3] : [1, 0, 2]);   // (out, in, k…)
+  return two ? conv2d(h, kern, b, { kernel: k, padding: "valid" }) : conv1d(h, kern, b, { kernel: k, padding: "valid" });
+}
+function sinTable(c, n) {
+  const v = new Float32Array(c * n);
+  for (let ch = 0; ch < c; ch++) for (let p = 0; p < n; p++) {
+    const a = p / Math.pow(10000, (ch - (ch % 2)) / c);
+    v[ch * n + p] = ch % 2 === 0 ? Math.sin(a) : Math.cos(a);
+  }
+  return tf.tensor(v, [c, n]);
+}
+function specMats(nFft, nMels, nMfcc) {               // Spectrogram 고정 표 (nn_extra.Spectrogram과 같은 식)
+  const nf = Math.floor(nFft / 2) + 1, cosk = new Float32Array(nf * nFft), sink = new Float32Array(nf * nFft);
+  for (let f = 0; f < nf; f++) for (let n = 0; n < nFft; n++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * n) / nFft), a = (2 * Math.PI * f * n) / nFft;
+    cosk[f * nFft + n] = w * Math.cos(a); sink[f * nFft + n] = w * Math.sin(a);
+  }
+  const sr = 16000, mel = (v) => 2595 * Math.log10(1 + v / 700), hz = (m) => 700 * (Math.pow(10, m / 2595) - 1);
+  const pts = Array.from({ length: nMels + 2 }, (_, i) => hz((mel(sr / 2) * i) / (nMels + 1)));
+  const fb = new Float32Array(nMels * nf);
+  for (let m = 0; m < nMels; m++) for (let j = 0; j < nf; j++) {
+    const fr = (sr / 2) * j / (nf - 1);
+    const up = pts[m + 1] > pts[m] ? (fr - pts[m]) / (pts[m + 1] - pts[m]) : 0, down = pts[m + 2] > pts[m + 1] ? (pts[m + 2] - fr) / (pts[m + 2] - pts[m + 1]) : 0;
+    fb[m * nf + j] = Math.max(0, Math.min(up, down));
+  }
+  const dct = new Float32Array(nMfcc * nMels);
+  for (let q = 0; q < nMfcc; q++) for (let m = 0; m < nMels; m++) dct[q * nMels + m] = Math.sqrt((q === 0 ? 1 : 2) / nMels) * Math.cos((Math.PI / nMels) * (m + 0.5) * q);
+  return { cos: tf.tensor(cosk, [nf, 1, nFft]), sin: tf.tensor(sink, [nf, 1, nFft]), mel: tf.tensor(fb, [nMels, nf]), dct: tf.tensor(dct, [nMfcc, nMels]), nf };
+}
+const uni = (n) => tf.randomUniform([n]);
+function perSample(x, fn) { return tf.stack(tf.unstack(x, 0).map((xi, i) => fn(xi, i))); }
+function imgTransform(x, mats) {                      // 그림 (N, C, H, W)에 샘플마다 변환 (출력 칸 → 입력 칸, 픽셀 단위 8값)
+  return tf.transpose(tf.image.transform(tf.transpose(x, [0, 2, 3, 1]), tf.tensor2d(mats), "bilinear", "constant"), [0, 3, 1, 2]);
+}
+const EXTRA = {
+  glu: (x, st, P, k) => {
+    const h = linearCh(x, P[k + ".proj.weight"], P[k + ".proj.bias"]);
+    const [a, g] = tf.split(h, 2, 1);
+    return a.mul(st.cfg.gate === "silu" ? g.mul(tf.sigmoid(g)) : tf.sigmoid(g));
+  },
+  dw_conv: (x, st, P, k) => conv1d(x, P[k + ".weight"], P[k + ".bias"], { kernel: st.cfg.kernel || 3, groups: x.shape[1] }),
+  dw_conv2d: (x, st, P, k) => conv2d(x, P[k + ".weight"], P[k + ".bias"], { kernel: st.cfg.kernel || 3, groups: x.shape[1] }),
+  sep_conv: (x, st, P, k) => conv1d(conv1d(x, P[k + ".depthwise.weight"], P[k + ".depthwise.bias"], { kernel: st.cfg.kernel || 3, groups: x.shape[1] }),
+    P[k + ".pointwise.weight"], P[k + ".pointwise.bias"], { kernel: 1 }),
+  sep_conv2d: (x, st, P, k) => conv2d(conv2d(x, P[k + ".depthwise.weight"], P[k + ".depthwise.bias"], { kernel: st.cfg.kernel || 3, groups: x.shape[1] }),
+    P[k + ".pointwise.weight"], P[k + ".pointwise.bias"], { kernel: 1 }),
+  max_pool: (x, st) => { const s = st.cfg.size || 2, [N, C, L] = x.shape, Lk = Math.floor(L / s); return x.slice([0, 0, 0], [N, C, Lk * s]).reshape([N, C, Lk, s]).max(3); },
+  max_pool2d: (x) => { const [N, C, H, W] = x.shape, H2 = Math.floor(H / 2), W2 = Math.floor(W / 2); return x.slice([0, 0, 0, 0], [N, C, H2 * 2, W2 * 2]).reshape([N, C, H2, 2, W2, 2]).max([3, 5]); },
+  global_max: (x) => spatialOf(x).max(-1),
+  global_max2d: (x) => spatialOf(x).max(-1),
+  adaptive_pool: (x, st) => adaptive(x, st.cfg.size || 4, st.cfg.mode || "avg"),
+  first_step: (x) => x.slice([0, 0, 0], [-1, -1, 1]).squeeze([2]),
+  attn_pool: (x, st, P, k) => {
+    const s = spatialOf(x), sc = linearCh(s, P[k + ".score.weight"], P[k + ".score.bias"]).squeeze([1]);   // (N, T)
+    return s.mul(tf.softmax(sc).expandDims(1)).sum(-1);
+  },
+  upsample: (x, st) => {
+    const sp = x.shape.slice(2);
+    if ((st.cfg.mode || "nearest") === "nearest") {
+      const dbl = (t, ax) => { const sh = t.shape.slice(); sh[ax] *= 2; return tf.stack([t, t], ax + 1).reshape(sh); };   // 칸마다 두 번
+      return x.rank === 3 ? dbl(x, 2) : dbl(dbl(x, 3), 2);
+    }
+    if (x.rank === 3) return alongLast(x, interpMat(sp[0], sp[0] * 2));
+    const w = alongLast(x, interpMat(sp[1], sp[1] * 2));                       // 가로 → 세로 (bilinear는 축마다 나눠 됨)
+    return tf.transpose(alongLast(tf.transpose(w, [0, 1, 3, 2]), interpMat(sp[0], sp[0] * 2)), [0, 1, 3, 2]);
+  },
+  pixel_shuffle: (x) => {
+    if (x.rank === 3) { const [N, C, L] = x.shape; return x.reshape([N, C / 2, 2, L]).transpose([0, 1, 3, 2]).reshape([N, C / 2, L * 2]); }
+    const [N, C, H, W] = x.shape;
+    return x.reshape([N, C / 4, 2, 2, H, W]).transpose([0, 1, 4, 2, 5, 3]).reshape([N, C / 4, H * 2, W * 2]);
+  },
+  conv_t: (x, st, P, k) => convT(x, P[k + ".weight"], P[k + ".bias"], st.cfg, false),
+  conv_t2d: (x, st, P, k) => convT(x, P[k + ".weight"], P[k + ".bias"], st.cfg, true),
+  eca: (x, st, P, k) => {
+    const s = spatialOf(x).mean(-1).expandDims(1);                                  // (N, 1, C)
+    const kk = st.cfg.kernel || 3, y = conv1d(s, P[k + ".conv.weight"], tf.zeros([1]), { kernel: kk });
+    return x.mul(chanW(tf.sigmoid(y.squeeze([1])), x));
+  },
+  spatial_attn: (x, st, P, k) => spatialPart(x, st, P, k),
+  cbam: (x, st, P, k) => {
+    const f = spatialOf(x), mlp = (v) => linear(tf.relu(linear(v, P[k + ".fc1.weight"], P[k + ".fc1.bias"])), P[k + ".fc2.weight"], P[k + ".fc2.bias"]);
+    const ca = tf.sigmoid(mlp(f.mean(-1)).add(mlp(f.max(-1))));
+    return spatialPart(x.mul(chanW(ca, x)), st, P, k);
+  },
+  mha: (x, st, P, k) => {
+    let [q, kk, v] = qkv(x, P, k, st.cfg.heads || 2);
+    if (st.cfg.pos === "rope") { q = rope(q); kk = rope(kk); }
+    return proj(joinHeads(attend(q, kk, v, !!st.cfg.causal)), x, P, k);
+  },
+  linear_attn: (x, st, P, k) => {
+    let [q, kk, v] = qkv(x, P, k, st.cfg.heads || 2);
+    q = tf.elu(q).add(1); kk = tf.elu(kk).add(1);
+    const kv = tf.matMul(kk, v, true, false), z = tf.scalar(1).div(tf.matMul(q, kk.sum(2, true), false, true).add(1e-6));
+    return proj(joinHeads(tf.matMul(q, kv).mul(z)), x, P, k);
+  },
+  nonlocal: (x, st, P, k) => {
+    const s = toSeq(x), L = (n) => linearCh(tf.transpose(s, [0, 2, 1]), P[k + `.${n}.weight`], P[k + `.${n}.bias`]);   // (N, h, T)
+    const th = L("theta"), ph = L("phi"), g = L("g");
+    const att = tf.softmax(tf.matMul(th, ph, true, false));                     // (N, T, T)
+    const y = tf.matMul(att, g, false, true);                                    // (N, T, h)
+    const o = linear(y.reshape([-1, y.shape[2]]), P[k + ".out.weight"], P[k + ".out.bias"]).reshape([y.shape[0], y.shape[1], -1]);
+    return x.add(fromSeq(o, x.shape));
+  },
+  cross_attn: (x, st, P, k, training, ins) => {
+    const h = st.cfg.heads || 2, s = toSeq(x), r = toSeq(ins[1]);
+    const lin = (t, n) => linear(t.reshape([-1, t.shape[2]]), P[k + `.${n}.weight`], P[k + `.${n}.bias`]).reshape([t.shape[0], t.shape[1], -1]);
+    const [kk, v] = tf.split(lin(r, "kv"), 2, 2);
+    return proj(joinHeads(attend(splitHeads(lin(s, "q"), h), splitHeads(kk, h), splitHeads(v, h), false)), x, P, k);
+  },
+  pos_enc: (x, st, P, k) => {
+    const c = x.shape[1], n = prod(x.shape.slice(2));
+    const pe = st.cfg.mode === "learned" ? P[k + ".pe"] : sinTable(c, n);
+    return x.add(pe.reshape(x.shape.slice(1)));
+  },
+  patch_embed: (x, st, P, k) => {
+    const p = st.cfg.patch || 4, y = conv2d(x, P[k + ".proj.weight"], P[k + ".proj.bias"], { kernel: p, stride: p, padding: "valid" });
+    return y.reshape([y.shape[0], y.shape[1], -1]);
+  },
+  cls_token: (x, st, P, k) => tf.concat([P[k + ".cls"].reshape([1, -1, 1]).tile([x.shape[0], 1, 1]), x], 2),
+  layernorm: (x, st, P, k) => {
+    const h = chLast(x), m = tf.moments(h, -1, true);
+    return chFirst(h.sub(m.mean).div(m.variance.add(1e-5).sqrt()).mul(P[k + ".weight"]).add(P[k + ".bias"]));
+  },
+  rmsnorm: (x, st, P, k) => x.mul(tf.rsqrt(x.square().mean(1, true).add(1e-5))).mul(P[k + ".weight"].reshape([-1].concat(new Array(x.rank - 2).fill(1)))),
+  groupnorm: (x, st, P, k) => groupNorm(x, st.cfg.groups || 4, P, k),
+  instancenorm: (x, st, P, k) => groupNorm(x, x.shape[1], P, k),
+  prelu: (x, st, P, k) => tf.relu(x).add(P[k + ".weight"].mul(tf.minimum(x, 0))),
+  spatial_dropout: (x, st, P, k, training) => {
+    const r = st.cfg.rate ?? 0.1;
+    if (!training || !r) return x;
+    const keep = tf.randomUniform([x.shape[0], x.shape[1]]).greaterEqual(r).toFloat().div(1 - r);
+    return x.mul(chanW(keep, x));
+  },
+  drop_path: (x, st, P, k, training) => {
+    const r = st.cfg.rate ?? 0.1;
+    if (!training || !r) return x;
+    return x.mul(uni(x.shape[0]).greaterEqual(r).toFloat().div(1 - r).reshape([x.shape[0]].concat(new Array(x.rank - 1).fill(1))));
+  },
+  gaussian_noise: (x, st, P, k, training) => (training ? x.add(tf.randomNormal(x.shape).mul(st.cfg.std ?? 0.1)) : x),
+  slice: (x, st) => { const b = new Array(x.rank).fill(0), s = new Array(x.rank).fill(-1); b[1] = st.cfg.start || 0; s[1] = st.cfg.count; return x.slice(b, s); },
+  reshape: (x, st) => x.reshape([x.shape[0], st.cfg.channels, -1]),
+  permute: (x) => tf.transpose(x, x.rank === 3 ? [0, 2, 1] : [0, 1, 3, 2]),
+  to_seq: (x) => x.reshape([x.shape[0], x.shape[1], -1]),
+  crop: (x, st) => { const a = st.cfg.amount || 1, b = [0, 0].concat(x.shape.slice(2).map(() => a)), s = [-1, -1].concat(x.shape.slice(2).map((v) => v - 2 * a)); return x.slice(b, s); },
+  pad: (x, st) => { const a = st.cfg.amount || 1; return x.pad([[0, 0], [0, 0]].concat(x.shape.slice(2).map(() => [a, a]))); },
+  embedding: (x, st, P, k) => {
+    const bins = st.cfg.bins || 32, idx = tf.clipByValue(tf.floor(x.squeeze([1]).add(3).div(6).mul(bins)), 0, bins - 1).toInt();
+    const e = tf.gather(P[k + ".weight"], idx.reshape([-1])).reshape(idx.shape.concat([-1]));   // (N, …, dim)
+    return chFirst(e);
+  },
+  spectrogram: (x, st) => {
+    const c = st.cfg, nFft = c.n_fft || 32, hop = c.hop || 8, M = specMats(nFft, c.n_mels || 16, c.n_mfcc || 13), z = tf.zeros([M.nf]);
+    const re = conv1d(x, M.cos, z, { kernel: nFft, stride: hop, padding: "valid" }), im = conv1d(x, M.sin, z, { kernel: nFft, stride: hop, padding: "valid" });
+    const p = re.square().add(im.square());                                        // (N, 주파수, 시간)
+    if ((c.mode || "log") === "log") return tf.log1p(p).expandDims(1);
+    const mm = tf.log1p(tf.matMul(M.mel.expandDims(0).tile([p.shape[0], 1, 1]), p));
+    return (c.mode === "mel" ? mm : tf.matMul(M.dct.expandDims(0).tile([p.shape[0], 1, 1]), mm)).expandDims(1);
+  },
+  rand_flip: (x, st, P, k, training) => {
+    if (!training) return x;
+    const dir = st.cfg.dir || "h", N = x.shape[0], pick = (t, ax) => {
+      const m = uni(N).less(0.5).reshape([N].concat(new Array(t.rank - 1).fill(1))).toFloat();
+      return tf.reverse(t, ax).mul(m).add(t.mul(tf.scalar(1).sub(m)));
+    };
+    if (x.rank === 3) return pick(x, 2);
+    let y = x;
+    if (dir.includes("h")) y = pick(y, 3);
+    if (dir.includes("v")) y = pick(y, 2);
+    return y;
+  },
+  rand_rotate: (x, st, P, k, training) => {
+    if (!training) return x;
+    const [N, , H, W] = x.shape, cx = (W - 1) / 2, cy = (H - 1) / 2, deg = st.cfg.degrees || 15;
+    return imgTransform(x, Array.from({ length: N }, () => {
+      const a = (Math.random() * 2 - 1) * deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+      return [c, -s, cx - c * cx + s * cy, s, c, cy - s * cx - c * cy, 0, 0];
+    }));
+  },
+  rand_zoom: (x, st, P, k, training) => {
+    if (!training) return x;
+    const [N, , H, W] = x.shape, cx = (W - 1) / 2, cy = (H - 1) / 2, f = st.cfg.frac ?? 0.1;
+    return imgTransform(x, Array.from({ length: N }, () => { const z = 1 / (1 + (Math.random() * 2 - 1) * f); return [z, 0, cx - z * cx, 0, z, cy - z * cy, 0, 0]; }));
+  },
+  rand_shift: (x, st, P, k, training) => {
+    if (!training) return x;
+    const f = st.cfg.frac ?? 0.1;
+    if (x.rank === 4) {
+      const [N, , H, W] = x.shape;
+      return imgTransform(x, Array.from({ length: N }, () => [1, 0, (Math.random() * 2 - 1) * f * W, 0, 1, (Math.random() * 2 - 1) * f * H, 0, 0]));
+    }
+    const L = x.shape[2], m = Math.round(L * f);
+    if (!m) return x;
+    const padded = x.pad([[0, 0], [0, 0], [m, m]]);
+    return perSample(padded, (xi) => xi.slice([0, Math.floor(Math.random() * (2 * m + 1))], [-1, L]));
+  },
+  rand_scale: (x, st, P, k, training) => (training ? x.mul(uni(x.shape[0]).mul(2).sub(1).mul(st.cfg.frac ?? 0.2).add(1).reshape([x.shape[0]].concat(new Array(x.rank - 1).fill(1)))) : x),
+  rand_stretch: (x, st, P, k, training) => {
+    if (!training) return x;
+    const L = x.shape[2], f = st.cfg.frac ?? 0.1;
+    return perSample(x, (xi) => {
+      const n = Math.max(2, Math.round(L * (1 + (Math.random() * 2 - 1) * f))), y = alongLast(xi, interpMat(L, n));
+      if (n >= L) { const a = Math.floor((n - L) / 2); return y.slice([0, a], [-1, L]); }
+      const a = Math.floor((L - n) / 2);
+      return y.pad([[0, 0], [a, L - n - a]]);
+    });
+  },
+};
+function spatialPart(x, st, P, k) {                   // 위치마다 [채널 평균, 채널 최댓값] → k칸 Conv → sigmoid → 곱함
+  const m = tf.concat([x.mean(1, true), x.max(1, true)], 1), kk = st.cfg.kernel || 7;
+  const y = x.rank === 4 ? conv2d(m, P[k + ".conv.weight"], P[k + ".conv.bias"], { kernel: kk }) : conv1d(m, P[k + ".conv.weight"], P[k + ".conv.bias"], { kernel: kk });
+  return x.mul(tf.sigmoid(y));
+}
+function groupNorm(x, g, P, k) {                      // (N, C, …) → 묶음(g)마다 평균·분산 (편향 분산, eps 1e-5) → 채널마다 배율·이동
+  const sh = x.shape, N = sh[0], C = sh[1], r = x.reshape([N, g, -1]), m = tf.moments(r, 2, true);
+  const y = r.sub(m.mean).div(m.variance.add(1e-5).sqrt()).reshape(sh);
+  const cs = [1, C].concat(new Array(x.rank - 2).fill(1));
+  return y.mul(P[k + ".weight"].reshape(cs)).add(P[k + ".bias"].reshape(cs));
 }
 
 // ------------------------------------------------------------ 모델
@@ -202,9 +535,9 @@ class Net {
     this.nameOf = {};                                     // TF.js 변수 이름 → PyTorch 이름
     const rand = rng(seed * 7919 + 17);
     for (const st of plan.steps) {
-      for (const [name, shape, kind] of st.params) {
+      for (const [name, shape, kind, init] of st.params) {
         // TF.js 변수 이름은 전체에서 겹치면 안 됨 → 자동 이름, 우리 이름은 nameOf로
-        const v = tf.variable(initParam(st, name, shape, kind, rand), kind === "weight", undefined, kind === "count" ? "int32" : "float32");
+        const v = tf.variable(initParam(st, name, shape, kind, rand, init), kind === "weight", undefined, kind === "count" ? "int32" : "float32");
         this.P[name] = v;
         this.nameOf[v.name] = name;
         if (kind === "weight") this.trainable.push(v);
@@ -213,7 +546,7 @@ class Net {
   }
 
   forward(x, training = false, pending = [], record = null) {
-    const vals = { x };
+    const vals = { x: this.kind === "rnn" ? tf.transpose(x, [0, 2, 1]) : x };   // 순환 모델 입력 (N, L, 1) → 층들이 쓰는 (N, 1, L)
     for (const st of this.plan.steps) {
       const y = layer(st, st.inputs.map((n) => vals[n]), this.P, training, pending);
       vals[st.name] = y;

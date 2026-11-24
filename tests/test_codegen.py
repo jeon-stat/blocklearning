@@ -12,6 +12,7 @@ from dlstudio import codegen, tasks
 from dlstudio.blocks import to_model_input
 from dlstudio.data import load_example
 from dlstudio.graph import build_graph_model, check_graph
+from tests.extra_cases import extra_cases
 from tests.test_graph_build import random_graph
 
 
@@ -55,7 +56,7 @@ def _cases():
                                 N("k", "concat", "a", "b"), N("s", "add", "k", "k"), N("o", "output", "s")), 30, 2, None))
     out.append(("stride_dilation", G(N("c", "conv", "input", channels=4, kernel=3, stride=2, dilation=2),
                                      N("g", "global_avg", "c"), N("o", "output", "g")), 30, 2, None))
-    return out
+    return out + extra_cases()
 
 
 CASES = _cases()
@@ -86,6 +87,10 @@ def test_pytorch_code_matches_studio_model(case):
 @pytest.mark.parametrize("case", CASES, ids=IDS)
 def test_keras_code_parses(case):
     name, g, L, n_out, image = case
+    if codegen.keras_unsupported(g, L, n_out, image):              # Keras로 못 바꾸는 블록: 알아듣게 거절
+        with pytest.raises(ValueError, match="TensorFlow 코드로 바꿀 수 없는 블록"):
+            codegen.to_keras(g, L, n_out, image, {"task": "regression"})
+        return
     code = codegen.to_keras(g, L, n_out, image, {"task": "regression"})
     ast.parse(code)
     assert "build_model" in code and "import tensorflow" in code
@@ -154,6 +159,8 @@ def _keras_expected_params(net) -> int:
 def test_keras_code_builds_same_structure(case):
     tf = pytest.importorskip("tensorflow")
     name, g, L, n_out, image = case
+    if codegen.keras_unsupported(g, L, n_out, image) or name.startswith("x_"):
+        pytest.skip("Keras로 못 바꾸는 블록이 있거나 가중치 수가 달라지는 추가 블록")
     net = build_graph_model(g, L, n_out, seed=1, image=image).eval()
     ns: dict = {}
     exec(compile(codegen.to_keras(g, L, n_out, image, {"task": "classification"}), f"<{name}>", "exec"), ns)

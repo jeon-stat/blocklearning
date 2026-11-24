@@ -541,8 +541,11 @@ class Studio:
         info = {"task": d.task, "classes": list(d.classes) if d.task in ("classification", "detection") else []}
         settings = b.get("settings") or self.train_settings or {}
         train = {k: settings[k] for k in ("epochs", "lr", "batch_size") if k in settings}
-        code = codegen.generate(fw, graph, d.length, d.n_out, d.image, info, train,
-                                weights_file=weights_file if trained and fw == "pytorch" else None)
+        try:
+            code = codegen.generate(fw, graph, d.length, d.n_out, d.image, info, train,
+                                    weights_file=weights_file if trained and fw == "pytorch" else None)
+        except ValueError as e:                              # Keras로 못 바꾸는 블록 등
+            raise UserError(str(e), "PyTorch 코드는 모든 블록을 내보낼 수 있습니다") from None
         return code, trained, fw, graph
 
     def api_code(self, b: dict) -> dict:

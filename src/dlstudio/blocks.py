@@ -8,13 +8,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from dlstudio import layers as X
+
 BLOCK_TYPES = ("conv", "pool", "global_avg", "last_step", "bn", "act", "dropout", "flatten", "dense", "lstm", "gru",
-               "simple_rnn", "se", "branch", "residual", "repeat", "output", "conv2d", "pool2d", "global_avg2d")
+               "simple_rnn", "se", "branch", "residual", "repeat", "output", "conv2d", "pool2d", "global_avg2d") + X.EXTRA_TYPES
 CNN_TYPES = ("conv", "pool", "global_avg", "last_step", "se", "branch")      # 시간 축이 있어야 하는 층
 ONE_D_TYPES = ("conv", "pool", "global_avg", "last_step", "se")              # 시계열·표 전용 (이미지에서 못 씀)
 IMAGE_TYPES = ("conv2d", "pool2d", "global_avg2d")                           # 이미지 전용
 RNN_TYPES = ("lstm", "gru", "simple_rnn")
-ACT_KINDS = ("relu", "leaky_relu", "gelu", "silu", "elu", "mish", "softplus", "sigmoid", "tanh")
+ACT_KINDS = ("relu", "leaky_relu", "gelu", "silu", "elu", "mish", "softplus", "sigmoid", "tanh",
+             "selu", "relu6", "hardswish", "hardsigmoid", "softmax")
 # 한도: 실수로 PC가 멈출 만큼 큰 모델만 막는 안전선
 MAX_WIDTH = 65536           # Dense 입력·출력 개수
 MAX_CHANNEL_LEN = 1048576   # 채널 하나의 길이(이미지면 높이×너비)
@@ -23,7 +26,7 @@ NAMES = {"conv": "Conv1D", "pool": "AvgPool1D", "global_avg": "GlobalAvgPool1D",
          "bn": "BatchNorm", "act": "Activation", "dropout": "Dropout", "flatten": "Flatten", "dense": "Dense",
          "lstm": "LSTM", "gru": "GRU", "simple_rnn": "SimpleRNN", "se": "SE block", "branch": "Concat branches", "residual": "Residual block",
          "repeat": "Repeat", "conv2d": "Conv2D", "pool2d": "AvgPool2D", "global_avg2d": "GlobalAvgPool2D",
-         "output": "Output"}
+         "output": "Output", **X.EXTRA_NAMES}
 
 Path = tuple
 
@@ -69,7 +72,8 @@ PARAMS = {
              ("dilation", 1, 64, 1, None, "dilation은 1–64"), ("groups", 1, 256, 1, None, "groups는 1–256")],
     "pool": [("size", 2, 4, None, (2, 4), "pool size는 2 또는 4")],
     "conv2d": [("channels", 1, 256, None, None, "filters는 1–256"), ("kernel", 1, 7, None, (1, 3, 5, 7), "kernel size는 1·3·5·7"),
-               ("stride", 1, 2, 1, (1, 2), "stride는 1 또는 2")],
+               ("stride", 1, 2, 1, (1, 2), "stride는 1 또는 2"), ("dilation", 1, 8, 1, (1, 2, 4, 8), "dilation은 1·2·4·8"),
+               ("groups", 1, 256, 1, None, "groups는 1–256")],
     "pool2d": [("size", 2, 2, 2, (2,), "pool size는 2")],
     "dense": [("units", 1, 1024, None, None, "units는 1–1024")],
     "lstm": [("hidden", 1, 256, None, None, "units는 1–256"), ("layers", 1, 3, 1, None, "layers는 1–3")],
@@ -77,6 +81,7 @@ PARAMS = {
     "simple_rnn": [("hidden", 1, 256, None, None, "units는 1–256"), ("layers", 1, 3, 1, None, "layers는 1–3")],
     "repeat": [("times", 1, 10, None, None, "repeat count는 1–10")],
     "se": [("ratio", 1, 64, 4, None, "ratio는 1–64")],
+    **X.EXTRA_PARAMS,
 }
 
 
@@ -104,8 +109,16 @@ class _Walker:
         if b["type"] == "se" and b.get("act", "relu") not in ACT_KINDS:
             self.issue(path, f"SE block: 안쪽 activation {b.get('act')!r}을(를) 모름", "ReLU 등 목록에 있는 함수로")
             ok = False
-        if b["type"] in ("conv", "conv2d") and b.get("padding", "same") not in ("same", "valid"):
-            self.issue(path, f"{NAMES[b['type']]}: padding {b.get('padding')!r}이(가) 맞지 않음", "padding은 same 또는 valid")
+        pads = ("same", "valid", "causal") if b["type"] == "conv" else ("same", "valid")
+        if b["type"] in ("conv", "conv2d") and b.get("padding", "same") not in pads:
+            self.issue(path, f"{NAMES[b['type']]}: padding {b.get('padding')!r}이(가) 맞지 않음", "padding은 " + "·".join(pads))
+            ok = False
+        if b["type"] in RNN_TYPES:
+            for key in ("bidirectional", "return_sequences"):
+                if not isinstance(b.get(key, False), bool):
+                    self.issue(path, f"{NAMES[b['type']]}: {key} 값 {b.get(key)!r}이(가) 맞지 않음", "참·거짓으로")
+                    ok = False
+        if b["type"] in X.EXTRA_TYPES and not X.values_ok(self, b, path):
             ok = False
         if b["type"] == "dropout":
             r = b.get("rate", 0.5)
@@ -132,42 +145,47 @@ class _Walker:
         t = b["type"]
         if not self.values_ok(b, path):
             return None
-        if self.image and (t in ONE_D_TYPES or t in RNN_TYPES):
-            self.issue(path, f"{NAMES[t]}은(는) 이미지 데이터에는 쓸 수 없음", "이미지에는 Conv2D·AvgPool2D·GlobalAvgPool2D를 쓰세요")
-            return None
-        if not self.image and t in IMAGE_TYPES:
-            self.issue(path, f"{NAMES[t]}은(는) 이미지 데이터에만 쓸 수 있음", "시계열·표에는 Conv1D·AvgPool1D·GlobalAvgPool1D를 쓰세요")
-            return None
         if t == "output":
             if ctx != "top" or not last:
                 self.issue(path, "출력 블록은 맨 아래에 하나만", "출력 블록을 맨 아래로 옮기세요")
             if getattr(self.n_out, "grid", None):
                 return self.det_head(shape, path)
             return self.dense_like(shape, self.n_out, path)
-        if t in RNN_TYPES:
-            if not first:
-                self.issue(path, f"{NAMES[t]} 블록은 입력 바로 다음에만 올 수 있음",
-                           f"{NAMES[t]} 블록을 맨 위로 옮기고, 깊게 하려면 층 수를 늘리세요")
-                return None
-            return (b["hidden"],)
         if shape is None:
             return None
+        if t in RNN_TYPES:                                    # (채널, 길이)를 시점마다 채널 수만큼의 값으로 읽음
+            if len(shape) != 2:
+                self.issue(path, f"{NAMES[t]}은(는) (채널, 길이) 모양에만 쓸 수 있음 (지금 {tuple(shape)})",
+                           "이미지는 ToSequence 뒤에, Dense·GlobalPool 뒤에는 쓸 수 없음 (앞 순환 층은 return_sequences를 켜세요)")
+                return None
+            h = b["hidden"] * (2 if b.get("bidirectional") else 1)
+            return (h, shape[1]) if b.get("return_sequences") else (h,)
+        if t in X.EXTRA_TYPES:
+            return X.shape(self, b, shape, path, ctx)
         if t in IMAGE_TYPES and len(shape) != 3:
-            self.issue(path, f"{NAMES[t]}은(는) (채널, 높이, 너비) 모양에만 쓸 수 있음",
-                       "GlobalAvgPool2D·Flatten·Dense 뒤에는 Conv2D·AvgPool2D를 쓸 수 없습니다")
+            self.issue(path, f"{NAMES[t]}은(는) (채널, 높이, 너비) 모양에만 쓸 수 있음 (지금 {tuple(shape)})",
+                       "시계열에는 Conv1D·AvgPool1D를 쓰세요 (Spectrogram 뒤에는 됨). GlobalAvgPool2D·Flatten·Dense 뒤에는 쓸 수 없습니다")
             return None
-        if t in CNN_TYPES and len(shape) != 2 and not (t == "branch" and len(shape) == 3):
-            self.issue(path, f"{NAMES[t]}은(는) 시간 축이 있는 데이터에만 쓸 수 있음",
-                       "LSTM·GRU·GlobalAvgPool1D·Dense 뒤에는 Conv1D·AvgPool1D를 쓸 수 없습니다")
+        if t == "se" and len(shape) not in (2, 3):
+            self.issue(path, f"SE block은 (채널, 길이)나 (채널, 높이, 너비) 모양에만 (지금 {tuple(shape)})", X.SPATIAL_HINT)
+            return None
+        if t in CNN_TYPES and t != "se" and len(shape) != 2 and not (t == "branch" and len(shape) == 3):
+            self.issue(path, f"{NAMES[t]}은(는) (채널, 길이) 모양에만 쓸 수 있음 (지금 {tuple(shape)})",
+                       "이미지에는 Conv2D·AvgPool2D 등 2D 층을 쓰세요 (ToSequence 뒤에는 됨). LSTM·GlobalAvgPool·Dense 뒤에는 쓸 수 없습니다")
             return None
         C, L = shape if len(shape) == 2 else (shape[0], None) if len(shape) == 3 else (None, None)
         if t == "conv2d":
             stride, valid, k = b.get("stride", 1), b.get("padding", "same") == "valid", b["kernel"]
+            d, g = b.get("dilation", 1), b.get("groups", 1)
             if ctx == "residual" and (stride != 1 or valid):
                 self.issue(path, "Residual block 안에서는 stride 2나 padding valid를 쓸 수 없음 (크기가 바뀜)",
                            "stride 1, padding same으로 하거나 Residual block 밖으로 옮기세요")
                 return None
-            size = (lambda n: (n - k) // stride + 1) if valid else (lambda n: -(-n // stride))
+            if C % g or b["channels"] % g:
+                self.issue(path, f"groups {g}가 들어오는 채널 {C}과 filters {b['channels']}을(를) 나누지 못함",
+                           "groups는 두 채널 수의 공약수로 (depthwise는 DepthwiseConv2D 블록)")
+                return None
+            size = (lambda n: (n - d * (k - 1) - 1) // stride + 1) if valid else (lambda n: -(-n // stride))
             return self.grid(b["channels"], size(shape[1]), size(shape[2]), path)
         if t == "pool2d":
             if ctx == "residual":
@@ -324,12 +342,10 @@ def check(blocks: list, length: int, n_out: int, image: tuple = None) -> Checked
     else:
         kind = "rnn" if isinstance(blocks[0], dict) and blocks[0].get("type") in RNN_TYPES else "cnn"
     w.walk(blocks, (1,) + tuple(image) if image else (1, length), (), "top")
-    if kind == "rnn":
-        for i, b in enumerate(blocks[1:], start=1):
-            if isinstance(b, dict) and b.get("type") in RNN_TYPES + CNN_TYPES + ("residual", "repeat") \
-                    and not any(x.path == (i,) for x in w.issues):
-                w.issue((i,), f"{NAMES[b['type']]}은(는) LSTM·GRU·SimpleRNN 뒤에 쓸 수 없음",
-                        "순환 층 뒤에는 Dense·Activation·BatchNorm·Dropout·Output만 쓸 수 있습니다")
+    for i, b in enumerate(blocks):                          # 증강은 맨 앞(증강끼리)에만
+        if isinstance(b, dict) and b.get("type") in X.AUG_TYPES and any(
+                not (isinstance(p, dict) and p.get("type") in X.AUG_TYPES) for p in blocks[:i]):
+            w.issue((i,), f"{NAMES[b['type']]}은(는) Input 바로 뒤(다른 증강 블록 뒤)에만", "증강 블록을 맨 위로 옮기세요")
     outs = [i for i, b in enumerate(blocks) if isinstance(b, dict) and b.get("type") == "output"]
     if not outs:
         w.issue((), "출력 블록이 없음", "맨 아래에 출력 블록을 놓으세요")
@@ -391,8 +407,8 @@ def _modules():
             self.fc1, self.act, self.fc2 = nn.Linear(c, h), act, nn.Linear(h, c)
 
         def forward(self, x):
-            s = torch.sigmoid(self.fc2(self.act(self.fc1(x.mean(-1)))))
-            return x * s.unsqueeze(-1)
+            s = torch.sigmoid(self.fc2(self.act(self.fc1(x.flatten(2).mean(-1)))))
+            return x * s.reshape(*s.shape, *([1] * (x.dim() - 2)))
 
     class Branch(nn.Module):
         """갈래마다 계산해 채널 방향으로 이어 붙임 (Inception). 빈 갈래는 들어온 값 그대로."""
@@ -427,7 +443,7 @@ def _modules():
             self.block_modules = block_modules
 
         def forward(self, x):
-            return self.layers(x)
+            return self.layers(x.transpose(1, 2) if self.kind == "rnn" else x)
 
     return GlobalAvg, Flatten, Residual, LastStep, StudioNet, LastTimestep, SE, Branch, GlobalAvg2d
 
@@ -435,8 +451,11 @@ def _modules():
 def act_module(kind: str):
     """활성화 이름 → 모듈."""
     torch, nn = _torch()
+    if kind == "softmax":
+        return nn.Softmax(dim=1)
     return {"relu": nn.ReLU, "sigmoid": nn.Sigmoid, "tanh": nn.Tanh, "leaky_relu": nn.LeakyReLU, "gelu": nn.GELU,
-            "silu": nn.SiLU, "elu": nn.ELU, "mish": nn.Mish, "softplus": nn.Softplus}[kind]()
+            "silu": nn.SiLU, "elu": nn.ELU, "mish": nn.Mish, "softplus": nn.Softplus, "selu": nn.SELU, "relu6": nn.ReLU6,
+            "hardswish": nn.Hardswish, "hardsigmoid": nn.Hardsigmoid}[kind]()
 
 
 def make_layer(b: dict, shape, n_out: int):
@@ -446,15 +465,19 @@ def make_layer(b: dict, shape, n_out: int):
     t = b["type"]
     if t == "conv":
         k, d = b["kernel"], b.get("dilation", 1)
+        if b.get("padding") == "causal":
+            from dlstudio.nn_extra import CausalConv1d
+            return CausalConv1d(shape[0], b["channels"], k, stride=b.get("stride", 1), dilation=d, groups=b.get("groups", 1))
         pad = 0 if b.get("padding", "same") == "valid" else d * (k - 1) // 2
         return nn.Conv1d(shape[0], b["channels"], k, stride=b.get("stride", 1), padding=pad, dilation=d,
                          groups=b.get("groups", 1))
     if t == "pool":
         return nn.AvgPool1d(b["size"])
     if t == "conv2d":
-        k = b["kernel"]
+        k, d = b["kernel"], b.get("dilation", 1)
         return nn.Conv2d(shape[0], b["channels"], k, stride=b.get("stride", 1),
-                         padding=0 if b.get("padding", "same") == "valid" else k // 2)
+                         padding=0 if b.get("padding", "same") == "valid" else d * (k - 1) // 2, dilation=d,
+                         groups=b.get("groups", 1))
     if t == "pool2d":
         return nn.AvgPool2d(2)
     if t == "global_avg2d":
@@ -479,9 +502,20 @@ def make_layer(b: dict, shape, n_out: int):
         lin = nn.Linear(_prod(shape), n_out if t == "output" else b["units"])
         return nn.Sequential(Flatten(), lin) if len(shape) >= 2 else lin
     if t in RNN_TYPES:
-        cls = {"lstm": nn.LSTM, "gru": nn.GRU, "simple_rnn": nn.RNN}[t]
-        return LastStep(cls(1, b["hidden"], b.get("layers", 1), batch_first=True))
+        from dlstudio.nn_extra import RNNBlock
+        return RNNBlock(t, shape[0], b["hidden"], b.get("layers", 1), bool(b.get("bidirectional")), bool(b.get("return_sequences")))
+    if t in X.EXTRA_TYPES:
+        return extra_layer(b, shape)
     raise ValueError(f"알 수 없는 층 {t}")
+
+
+def extra_layer(b: dict, shape, shape2=None):
+    """추가 블록 → PyTorch 모듈 (layers.torch_args의 이름·인자로)."""
+    torch, nn = _torch()
+    from dlstudio import nn_extra
+    name, kw = X.torch_args(b["type"], b, shape, shape2)
+    cls = getattr(nn, name[3:]) if name.startswith("nn.") else getattr(nn_extra, name)
+    return cls(*kw.get("_", []), **{k: v for k, v in kw.items() if k != "_"})
 
 
 def build_model(blocks: list, length: int, n_out: int, seed: int = 0, image: tuple = None):

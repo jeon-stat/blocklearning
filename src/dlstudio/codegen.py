@@ -12,6 +12,7 @@ import keyword
 from dataclasses import dataclass, field
 from typing import Optional
 
+from dlstudio import layers as X
 from dlstudio.blocks import RNN_TYPES
 from dlstudio.graph import BODY_IN, INPUT, _Checker, _config, _key
 
@@ -30,6 +31,7 @@ class Step:
     out_shape: tuple
     key: str                       # 예: "mods.m_b0" · "mods.m_R.1.m_c"
     node: str = ""                 # 그래프의 노드 id (Repeat 안이면 안쪽 id)
+    in_shapes: list = field(default_factory=list)      # 입력마다 모양 (입력이 둘인 층)
 
 
 @dataclass
@@ -54,7 +56,17 @@ def _ident(nid: str, used: set) -> str:
 # 생성 코드의 변수 이름: 층 종류 + 번호 (conv1, relu1, pool1 …). 가중치 이름(key)과는 따로라 바꿔도 저장한 프로젝트와 상관없음
 PREFIX = {"conv": "conv", "conv2d": "conv", "pool": "pool", "pool2d": "pool", "global_avg": "gap", "global_avg2d": "gap",
           "last_step": "last", "bn": "bn", "dropout": "drop", "flatten": "flat", "dense": "fc", "lstm": "lstm", "gru": "gru",
-          "simple_rnn": "rnn", "se": "se", "add": "add", "concat": "cat"}
+          "simple_rnn": "rnn", "se": "se", "add": "add", "concat": "cat",
+          "glu": "glu", "dw_conv": "dwconv", "dw_conv2d": "dwconv", "sep_conv": "sepconv", "sep_conv2d": "sepconv",
+          "max_pool": "maxpool", "max_pool2d": "maxpool", "global_max": "gmp", "global_max2d": "gmp", "adaptive_pool": "apool",
+          "first_step": "first", "attn_pool": "attnpool", "upsample": "up", "pixel_shuffle": "shuffle", "conv_t": "convt",
+          "conv_t2d": "convt", "eca": "eca", "cbam": "cbam", "spatial_attn": "spattn", "mha": "attn", "linear_attn": "linattn",
+          "nonlocal": "nonlocal", "cross_attn": "xattn", "pos_enc": "pos", "patch_embed": "patch", "cls_token": "cls",
+          "layernorm": "ln", "rmsnorm": "rms", "groupnorm": "gn", "instancenorm": "inorm", "prelu": "prelu",
+          "spatial_dropout": "sdrop", "drop_path": "droppath", "gaussian_noise": "noise", "slice": "split",
+          "reshape": "reshape", "permute": "transpose", "to_seq": "seq", "crop": "crop", "pad": "pad", "embedding": "emb",
+          "spectrogram": "spec", "rand_flip": "flip", "rand_rotate": "rotate", "rand_shift": "shift", "rand_zoom": "zoom",
+          "rand_scale": "scale", "rand_stretch": "stretch", "multiply": "mul", "average": "avg", "maximum": "max"}
 
 
 def _pretty(t: str, cfg: dict, counts: dict) -> str:
@@ -99,7 +111,8 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
             cfg = _config(n)
             if t == "output" and getattr(n_out, "grid", None):       # 탐지 출력: 격자 칸마다 1×1 필터
                 cfg = dict(cfg, head="grid", per_cell=n_out.per_cell, grid=n_out.grid)
-            plan.steps.append(Step(nm, t, cfg, [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k), k))
+            plan.steps.append(Step(nm, t, cfg, [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k), k,
+                                   [tuple(shapes[x]) for x in ins]))
             names[k], shapes[k] = nm, out
         return names[scope.exit]
 
@@ -109,7 +122,8 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
 
 # ---------------------------------------------------------------- 공통 글자
 
-ACT_LABEL = {"relu": "ReLU", "leaky_relu": "LeakyReLU", "gelu": "GELU", "silu": "SiLU", "elu": "ELU", "mish": "Mish",
+ACT_LABEL = {"selu": "SELU", "relu6": "ReLU6", "hardswish": "HardSwish", "hardsigmoid": "HardSigmoid", "softmax": "Softmax",
+             "relu": "ReLU", "leaky_relu": "LeakyReLU", "gelu": "GELU", "silu": "SiLU", "elu": "ELU", "mish": "Mish",
              "softplus": "Softplus", "sigmoid": "Sigmoid", "tanh": "Tanh"}
 
 
@@ -124,7 +138,7 @@ def _label(s: Step) -> str:
             "act": ACT_LABEL.get(b.get("kind"), "Activation"), "dropout": f"Dropout {b.get('rate', 0.5)}",
             "flatten": "Flatten", "dense": f"Dense {b.get('units')}", "output": "Output",
             "lstm": f"LSTM {b.get('hidden')}", "gru": f"GRU {b.get('hidden')}", "simple_rnn": f"SimpleRNN {b.get('hidden')}",
-            "se": f"SE block (ratio {b.get('ratio', 4)})", "add": "Add", "concat": "Concat"}.get(t, t)
+            "se": f"SE block (ratio {b.get('ratio', 4)})", "add": "Add", "concat": "Concat"}.get(t, X.name_of(t))
 
 
 def _shape_text(shape: tuple) -> str:
@@ -173,7 +187,8 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
 
 _TORCH_ACT = {"relu": "torch.relu({})", "leaky_relu": "F.leaky_relu({})", "gelu": "F.gelu({})", "silu": "F.silu({})",
               "elu": "F.elu({})", "mish": "F.mish({})", "softplus": "F.softplus({})", "sigmoid": "torch.sigmoid({})",
-              "tanh": "torch.tanh({})"}
+              "tanh": "torch.tanh({})", "selu": "F.selu({})", "relu6": "F.relu6({})", "hardswish": "F.hardswish({})",
+              "hardsigmoid": "F.hardsigmoid({})", "softmax": "torch.softmax({}, dim=1)"}
 
 _TORCH_SE = '''
 
@@ -186,8 +201,8 @@ class SE(nn.Module):
         self.fc1, self.act, self.fc2 = nn.Linear(channels, hidden), act, nn.Linear(hidden, channels)
 
     def forward(self, x):
-        s = torch.sigmoid(self.fc2(self.act(self.fc1(x.mean(-1)))))
-        return x * s.unsqueeze(-1)
+        s = torch.sigmoid(self.fc2(self.act(self.fc1(x.flatten(2).mean(-1)))))
+        return x * s.reshape(*s.shape, *([1] * (x.dim() - 2)))
 '''
 
 _TORCH_ACT_MODULE = {"relu": "nn.ReLU()", "leaky_relu": "nn.LeakyReLU()", "gelu": "nn.GELU()", "silu": "nn.SiLU()",
@@ -199,6 +214,10 @@ def _torch_layer(s: Step, n_out: int):
     """(모듈 만드는 식 또는 None, forward 식, studio 키 → 코드 키 짝 [(studio 앞부분, 코드 앞부분)])."""
     b, t, a = s.cfg, s.type, s.inputs[0] if s.inputs else ""
     me = f"self.{s.name}"
+    if t == "conv" and b.get("padding") == "causal":
+        opts = "".join(f", {n}={v}" for n, v, dflt in (("stride", b.get("stride", 1), 1), ("dilation", b.get("dilation", 1), 1),
+                                                         ("groups", b.get("groups", 1), 1)) if v != dflt)
+        return f"CausalConv1d({s.in_shape[0]}, {b['channels']}, {b['kernel']}{opts})", f"{me}({a})", [(s.key, s.name)]
     if t == "conv":
         k, d = b["kernel"], b.get("dilation", 1)
         pad = 0 if b.get("padding", "same") == "valid" else d * (k - 1) // 2
@@ -206,9 +225,10 @@ def _torch_layer(s: Step, n_out: int):
                                                          ("dilation", d, 1), ("groups", b.get("groups", 1), 1)) if v != dflt)
         return f"nn.Conv1d({s.in_shape[0]}, {b['channels']}, {k}{opts})", f"{me}({a})", [(s.key, s.name)]
     if t == "conv2d":
-        k = b["kernel"]
-        pad = 0 if b.get("padding", "same") == "valid" else k // 2
-        opts = "".join(f", {n}={v}" for n, v, dflt in (("stride", b.get("stride", 1), 1), ("padding", pad, 0)) if v != dflt)
+        k, d = b["kernel"], b.get("dilation", 1)
+        pad = 0 if b.get("padding", "same") == "valid" else d * (k - 1) // 2
+        opts = "".join(f", {n}={v}" for n, v, dflt in (("stride", b.get("stride", 1), 1), ("padding", pad, 0), ("dilation", d, 1),
+                                                         ("groups", b.get("groups", 1), 1)) if v != dflt)
         return f"nn.Conv2d({s.in_shape[0]}, {b['channels']}, {k}{opts})", f"{me}({a})", [(s.key, s.name)]
     if t == "pool":
         return None, f"F.avg_pool1d({a}, {b['size']})", []
@@ -237,10 +257,19 @@ def _torch_layer(s: Step, n_out: int):
         src = f"torch.flatten({a}, 1)" if flat else a
         return f"nn.Linear({_prod(s.in_shape)}, {units})", f"{me}({src})", [(s.key + (".1" if flat else ""), s.name)]
     if t in RNN_TYPES:
-        cls = {"lstm": "nn.LSTM", "gru": "nn.GRU", "simple_rnn": "nn.RNN"}[t]
-        layers = b.get("layers", 1)
-        opt = f", num_layers={layers}" if layers != 1 else ""
-        return f"{cls}(1, {b['hidden']}{opt}, batch_first=True)", f"{me}({a})[0][:, -1]", [(s.key + ".rnn", s.name)]
+        opts = "".join(f", {n}={v}" for n, v, dflt in (("layers", b.get("layers", 1), 1), ("bidirectional", bool(b.get("bidirectional")), False),
+                                                         ("return_sequences", bool(b.get("return_sequences")), False)) if v != dflt)
+        return f'RNNBlock("{t}", {s.in_shape[0]}, {b["hidden"]}{opts})', f"{me}({a})", [(s.key, s.name)]
+    if t in X.EXTRA_TYPES:
+        name, kw = X.torch_args(t, b, s.in_shape, s.in_shapes[1] if len(s.in_shapes) > 1 else None)
+        expr = f"{me}({a}, {s.inputs[1]})" if t in X.TWO_INPUT else f"{me}({a})"
+        return f"{name}({X.args_text(kw)})", expr, [(s.key, s.name)]
+    if t == "multiply":
+        return None, " * ".join(s.inputs), []
+    if t == "average":
+        return None, f"({' + '.join(s.inputs)}) / {len(s.inputs)}", []
+    if t == "maximum":
+        return None, f"torch.stack([{', '.join(s.inputs)}]).amax(0)", []
     if t == "se":
         act = _TORCH_ACT_MODULE[b.get("act", "relu")]
         return f"SE({s.in_shape[0]}, {b.get('ratio', 4)}, {act})", f"{me}({a})", [(s.key, s.name)]
@@ -249,6 +278,35 @@ def _torch_layer(s: Step, n_out: int):
     if t == "concat":
         return None, f"torch.cat([{', '.join(s.inputs)}], dim=1)", []
     raise ValueError(f"코드로 바꿀 수 없는 층: {t}")
+
+
+def _extra_classes(plan: Plan) -> list:
+    """생성 코드에 넣을 nn_extra 클래스 이름 (쓴 순서)."""
+    out = []
+    for s in plan.steps:
+        if s.type in RNN_TYPES:
+            name = "RNNBlock"
+        elif s.type == "conv" and s.cfg.get("padding") == "causal":
+            name = "CausalConv1d"
+        elif s.type in X.EXTRA_TYPES:
+            name = X.torch_args(s.type, s.cfg, s.in_shape, s.in_shapes[1] if len(s.in_shapes) > 1 else None)[0]
+        else:
+            continue
+        if not name.startswith("nn.") and name not in out:
+            out.append(name)
+    if any(n in out for n in ("RandomRotation", "RandomShift", "RandomZoom")):
+        out.insert(0, "_affine")
+    return out
+
+
+def _class_sources(names: list) -> list:
+    """nn_extra.py에서 그 클래스·함수의 소스 (torch 없이 글자로 읽음: 웹(Pyodide)에서도 됨)."""
+    import ast
+    from pathlib import Path
+    text = (Path(__file__).resolve().parent / "nn_extra.py").read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    found = {n.name: ast.get_source_segment(text, n) for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef))}
+    return [found[n] for n in names]
 
 
 def _key_map(plan: Plan) -> list:
@@ -281,9 +339,15 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
         "import torch", "import torch.nn.functional as F", "from torch import nn"]
     if any(s.type == "se" for s in plan.steps):
         lines += _TORCH_SE.rstrip("\n").split("\n")
+    used = _extra_classes(plan)
+    if used:
+        lines.insert(lines.index("import torch"), "import math")
+        for src in _class_sources(used):
+            lines += ["", ""] + src.split("\n")
     lines += ["", "", "class StudioModel(nn.Module):", "    def __init__(self):", "        super().__init__()"]
     lines += init or ["        pass"]
-    lines += ["", "    def forward(self, x):"] + fwd_lines + [f"        return {plan.out}", "", ""]
+    first = ["        x = x.transpose(1, 2)            # 순환 모델: (샘플 수, 길이, 1) → 층들이 쓰는 (샘플 수, 1, 길이)"] if plan.kind == "rnn" else []
+    lines += ["", "    def forward(self, x):"] + first + fwd_lines + [f"        return {plan.out}", "", ""]
     head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
     if head:
         return "\n".join(lines + _torch_det(head, tr, weights_file, plan))
@@ -479,7 +543,7 @@ def param_specs(step: Step) -> list:
     if t == "conv":
         return [w("weight", b["channels"], ins[0] // b.get("groups", 1), b["kernel"]), w("bias", b["channels"])]
     if t == "conv2d":
-        return [w("weight", b["channels"], ins[0], b["kernel"], b["kernel"]), w("bias", b["channels"])]
+        return [w("weight", b["channels"], ins[0] // b.get("groups", 1), b["kernel"], b["kernel"]), w("bias", b["channels"])]
     if t == "bn":
         C = ins[0]
         return [w("weight", C), w("bias", C), (f"{k}.running_mean", [C], "buffer"), (f"{k}.running_var", [C], "buffer"),
@@ -493,11 +557,15 @@ def param_specs(step: Step) -> list:
     if t in RNN_TYPES:
         G, H = {"lstm": 4, "gru": 3, "simple_rnn": 1}[t], b["hidden"]
         out = []
+        dirs = ("", "_reverse") if b.get("bidirectional") else ("",)
         for layer in range(b.get("layers", 1)):
-            inp = 1 if layer == 0 else H
-            out += [(f"{k}.rnn.weight_ih_l{layer}", [G * H, inp], "weight"), (f"{k}.rnn.weight_hh_l{layer}", [G * H, H], "weight"),
-                    (f"{k}.rnn.bias_ih_l{layer}", [G * H], "weight"), (f"{k}.rnn.bias_hh_l{layer}", [G * H], "weight")]
+            inp = ins[0] if layer == 0 else H * len(dirs)
+            for sfx in dirs:
+                out += [(f"{k}.rnn.weight_ih_l{layer}{sfx}", [G * H, inp], "weight"), (f"{k}.rnn.weight_hh_l{layer}{sfx}", [G * H, H], "weight"),
+                        (f"{k}.rnn.bias_ih_l{layer}{sfx}", [G * H], "weight"), (f"{k}.rnn.bias_hh_l{layer}{sfx}", [G * H], "weight")]
         return out
+    if t in X.EXTRA_TYPES:
+        return X.params(t, b, ins, step.out_shape, k, step.in_shapes[1] if len(step.in_shapes) > 1 else None)
     if t == "se":
         C = ins[0]
         h = max(1, C // b.get("ratio", 4))
@@ -509,7 +577,8 @@ def plan_dict(graph: dict, length: int, n_out: int, image: tuple = None) -> dict
     """웹 엔진용 계획 (JSON): 층 순서·설정·모양·가중치 이름과 모양, 학습 파라미터 수."""
     plan = make_plan(graph, length, n_out, image)
     steps = [{"name": s.name, "type": s.type, "cfg": s.cfg, "inputs": s.inputs, "in_shape": list(s.in_shape),
-              "out_shape": list(s.out_shape), "node": s.node, "key": s.key, "params": [list(p) for p in param_specs(s)]} for s in plan.steps]
+              "in_shapes": [list(x) for x in s.in_shapes], "out_shape": list(s.out_shape), "node": s.node, "key": s.key,
+              "params": [list(p) for p in param_specs(s)]} for s in plan.steps]
     n_params = sum(_prod(p[1]) for st in steps for p in st["params"] if p[2] == "weight")
     return {"kind": plan.kind, "in_shape": list(plan.in_shape), "n_out": plan.n_out, "out": plan.out, "steps": steps,
             "aliases": plan.aliases, "params": n_params}
@@ -517,7 +586,10 @@ def plan_dict(graph: dict, length: int, n_out: int, image: tuple = None) -> dict
 
 # ---------------------------------------------------------------- TensorFlow Keras
 
-_KERAS_ACT = {"relu": 'layers.Activation("relu"', "gelu": 'layers.Activation(gelu', "silu": 'layers.Activation("swish"',
+_KERAS_ACT = {"selu": 'layers.Activation("selu"', "relu6": "layers.ReLU(6.0", "softmax": "layers.Softmax(axis=-1",
+              "hardswish": "layers.Lambda(lambda t: t * tf.nn.relu6(t + 3.0) / 6.0",
+              "hardsigmoid": "layers.Lambda(lambda t: tf.nn.relu6(t + 3.0) / 6.0",
+              "relu": 'layers.Activation("relu"', "gelu": 'layers.Activation(gelu', "silu": 'layers.Activation("swish"',
               "elu": 'layers.Activation("elu"', "softplus": 'layers.Activation("softplus"',
               "sigmoid": 'layers.Activation("sigmoid"', "tanh": 'layers.Activation("tanh"',
               "mish": 'layers.Activation(mish', "leaky_relu": "layers.LeakyReLU(0.01"}
@@ -539,6 +611,8 @@ def _keras_lines(s: Step, n_out: int) -> list:
         opts = "".join(f", {k}={v}" for k, v, dflt in (("strides", 1 if both else stride, 1), ("dilation_rate", dil, 1),
                                                         ("groups", b.get("groups", 1), 1)) if v != dflt)
         pad = "valid" if b.get("padding", "same") == "valid" else "same"
+        if b.get("padding") == "causal":
+            pad = "causal"
         if both:
             return [f'{n}_full = layers.{cls}({b["channels"]}, {b["kernel"]}, padding="{pad}"{opts}, name="{n}_full")({a})',
                     f"{n} = layers.Lambda(lambda t: t[:, ::{stride}, :], {nm})({n}_full)"]
@@ -579,18 +653,25 @@ def _keras_lines(s: Step, n_out: int) -> list:
         for i in range(k):
             last = i == k - 1
             var = n if last else f"{n}_l{i}"
-            seq = "" if last else ", return_sequences=True"
-            out.append(f'{var} = layers.{cls}({b["hidden"]}{seq}, name="{var}")({cur})')
+            seq = "" if last and not b.get("return_sequences") else ", return_sequences=True"
+            layer = f'layers.{cls}({b["hidden"]}{seq})'
+            if b.get("bidirectional"):
+                out.append(f'{var} = layers.Bidirectional({layer}, name="{var}")({cur})')
+            else:
+                out.append(f'{var} = layers.{cls}({b["hidden"]}{seq}, name="{var}")({cur})')
             cur = var
         return out
+    if t in X.EXTRA_TYPES or t in X.NEW_MERGES:
+        return _keras_extra(s)
     if t == "se":
         C, h = s.in_shape[0], max(1, s.in_shape[0] // b.get("ratio", 4))
         act = b.get("act", "relu")
         act_kw = {"relu": '"relu"', "sigmoid": '"sigmoid"', "tanh": '"tanh"'}.get(act, '"relu"')
-        return [f'{n}_s = layers.GlobalAveragePooling1D(name="{n}_squeeze")({a})',
+        two = len(s.in_shape) == 3
+        return [f'{n}_s = layers.GlobalAveragePooling{"2" if two else "1"}D(name="{n}_squeeze")({a})',
                 f'{n}_s = layers.Dense({h}, activation={act_kw}, name="{n}_fc1")({n}_s)',
                 f'{n}_s = layers.Dense({C}, activation="sigmoid", name="{n}_fc2")({n}_s)',
-                f'{n} = layers.Multiply({nm})([{a}, layers.Reshape((1, {C}), name="{n}_reshape")({n}_s)])']
+                f'{n} = layers.Multiply({nm})([{a}, layers.Reshape(({"1, 1" if two else "1"}, {C}), name="{n}_reshape")({n}_s)])']
     if t == "add":
         return [f"{n} = layers.Add({nm})([{', '.join(s.inputs)}])"]
     if t == "concat":
@@ -598,10 +679,117 @@ def _keras_lines(s: Step, n_out: int) -> list:
     raise ValueError(f"코드로 바꿀 수 없는 층: {t}")
 
 
+KERAS_UNSUPPORTED = ("adaptive_pool", "attn_pool", "rmsnorm", "eca", "cbam", "spatial_attn", "linear_attn", "nonlocal",
+                     "cross_attn", "pos_enc", "cls_token", "embedding", "spectrogram", "rand_scale", "rand_stretch", "drop_path")
+
+
+def keras_unsupported(graph: dict, length: int, n_out: int, image: tuple = None) -> list:
+    """Keras 코드로 바꿀 수 없는 블록 이름들 (PyTorch 코드는 모두 됨)."""
+    plan = make_plan(graph, length, n_out, image)
+    bad = []
+    for s in plan.steps:
+        rank = len(s.in_shape)
+        if s.type in KERAS_UNSUPPORTED or (s.type == "mha" and s.cfg.get("pos") == "rope") \
+                or (s.type == "upsample" and rank == 2 and s.cfg.get("mode") == "linear") \
+                or (s.type in ("pixel_shuffle", "rand_flip", "rand_shift") and rank == 2):
+            bad.append(X.name_of(s.type))
+    return sorted(set(bad))
+
+
+def _keras_extra(s: Step) -> list:
+    """추가 블록 → Keras 줄 (채널이 마지막: 줄 (N, L, C), 그림 (N, H, W, C))."""
+    b, t, n = s.cfg, s.type, s.name
+    a = s.inputs[0] if s.inputs else ""
+    nm = f'name="{n}"'
+    o = lambda k: X.opt(b, k)
+    rank = len(s.in_shape)
+    d = "2D" if rank == 3 else "1D"
+    C = s.in_shape[0]
+    if t in ("multiply", "average", "maximum"):
+        return [f"{n} = layers.{t.capitalize()}({nm})([{', '.join(s.inputs)}])"]
+    if t == "glu":
+        g = "tf.sigmoid" if o("gate") == "sigmoid" else "tf.nn.silu"
+        return [f'{n}_h = layers.Dense({2 * o("units")}, name="{n}_proj")({a})',
+                f"{n} = layers.Lambda(lambda t: t[..., :{o('units')}] * {g}(t[..., {o('units')}:]), {nm})({n}_h)"]
+    if t in ("dw_conv", "dw_conv2d"):
+        return [f'{n} = layers.DepthwiseConv{"2D" if t == "dw_conv2d" else "1D"}({o("kernel")}, depth_multiplier={o("multiplier")}, padding="same", {nm})({a})']
+    if t in ("sep_conv", "sep_conv2d"):
+        return [f'{n} = layers.SeparableConv{"2D" if t == "sep_conv2d" else "1D"}({o("channels")}, {o("kernel")}, padding="same", {nm})({a})']
+    if t in ("max_pool", "max_pool2d"):
+        return [f"{n} = layers.MaxPooling{d}({o('size')}, {nm})({a})"]
+    if t in ("global_max", "global_max2d"):
+        return [f"{n} = layers.GlobalMaxPooling{d}({nm})({a})"]
+    if t == "first_step":
+        return [f"{n} = layers.Lambda(lambda t: t[:, 0, :], {nm})({a})"]
+    if t == "upsample":
+        if rank == 3:
+            mode = "bilinear" if o("mode") == "linear" else "nearest"
+            return [f'{n} = layers.UpSampling2D(2, interpolation="{mode}", {nm})({a})']
+        return [f"{n} = layers.UpSampling1D(2, {nm})({a})"]
+    if t == "pixel_shuffle":
+        return [f"{n} = layers.Lambda(lambda t: tf.nn.depth_to_space(t, 2), {nm})({a})"]
+    if t in ("conv_t", "conv_t2d"):
+        return [f'{n} = layers.Conv{d}Transpose({o("channels")}, {o("kernel")}, strides={o("stride")}, padding="same", {nm})({a})']
+    if t == "mha":
+        h = o("heads")
+        causal = ", use_causal_mask=True" if o("causal") else ""
+        if rank == 3:
+            H, W = s.in_shape[1], s.in_shape[2]
+            return [f'{n}_s = layers.Reshape(({H * W}, {C}), name="{n}_seq")({a})',
+                    f'{n}_s = layers.MultiHeadAttention({h}, {C // h}, name="{n}_mha")({n}_s, {n}_s{causal})',
+                    f"{n} = layers.Reshape(({H}, {W}, {C}), {nm})({n}_s)"]
+        return [f"{n} = layers.MultiHeadAttention({h}, {C // h}, {nm})({a}, {a}{causal})"]
+    if t == "patch_embed":
+        p = o("patch")
+        return [f'{n}_c = layers.Conv2D({o("dim")}, {p}, strides={p}, name="{n}_proj")({a})',
+                f"{n} = layers.Reshape((-1, {o('dim')}), {nm})({n}_c)"]
+    if t == "layernorm":
+        return [f"{n} = layers.LayerNormalization(axis=-1, epsilon=1e-5, {nm})({a})"]
+    if t == "groupnorm":
+        return [f"{n} = layers.GroupNormalization({o('groups')}, axis=-1, epsilon=1e-5, {nm})({a})"]
+    if t == "instancenorm":
+        return [f"{n} = layers.GroupNormalization({C}, axis=-1, epsilon=1e-5, {nm})({a})"]
+    if t == "prelu":
+        axes = list(range(1, rank + 1))
+        return [f"{n} = layers.PReLU(shared_axes={axes}, {nm})({a})"]
+    if t == "spatial_dropout":
+        return [f"{n} = layers.SpatialDropout{d}({float(o('rate'))}, {nm})({a})"]
+    if t == "gaussian_noise":
+        return [f"{n} = layers.GaussianNoise({float(o('std'))}, {nm})({a})"]
+    if t == "slice":
+        return [f"{n} = layers.Lambda(lambda t: t[..., {o('start')}:{o('start') + o('count')}], {nm})({a})"]
+    if t == "reshape":
+        c = o("channels")
+        first = "(0, 2, 1)" if rank == 2 else "(0, 3, 1, 2)" if rank == 3 else None
+        pre = f"tf.transpose(t, {first})" if first else "t"
+        return [f"{n} = layers.Lambda(lambda t: tf.transpose(tf.reshape({pre}, (-1, {c}, {s.out_shape[1]})), (0, 2, 1)), {nm})({a})"]
+    if t == "permute":
+        return [f"{n} = layers.Permute({'(2, 1)' if rank == 2 else '(2, 1, 3)'}, {nm})({a})"]
+    if t == "to_seq":
+        return [f"{n} = layers.Reshape(({s.in_shape[1] * s.in_shape[2]}, {C}), {nm})({a})"]
+    if t == "crop":
+        return [f"{n} = layers.Cropping{d}({o('amount')}, {nm})({a})"]
+    if t == "pad":
+        return [f"{n} = layers.ZeroPadding{d}({o('amount')}, {nm})({a})"]
+    if t == "rand_flip":
+        mode = {"h": "horizontal", "v": "vertical", "hv": "horizontal_and_vertical"}[o("dir")]
+        return [f'{n} = layers.RandomFlip("{mode}", {nm})({a})']
+    if t == "rand_rotate":
+        return [f"{n} = layers.RandomRotation({o('degrees') / 360:.6g}, fill_mode='constant', {nm})({a})"]
+    if t == "rand_zoom":
+        return [f"{n} = layers.RandomZoom({float(o('frac'))}, fill_mode='constant', {nm})({a})"]
+    if t == "rand_shift":
+        return [f"{n} = layers.RandomTranslation({float(o('frac'))}, {float(o('frac'))}, fill_mode='constant', {nm})({a})"]
+    raise ValueError(f"TensorFlow 코드로 바꿀 수 없는 블록: {X.name_of(t)} (PyTorch 코드를 쓰세요)")
+
+
 def to_keras(graph: dict, length: int, n_out: int, image: tuple = None, data_info: Optional[dict] = None,
              train: Optional[dict] = None) -> str:
     """TensorFlow Keras 코드 (build_model 함수형 API + 학습 함수 + 실행 예). 채널이 마지막인 모양."""
     plan = make_plan(graph, length, n_out, image)
+    bad = keras_unsupported(graph, length, n_out, image)
+    if bad:
+        raise ValueError(f"TensorFlow 코드로 바꿀 수 없는 블록: {', '.join(bad)} — PyTorch 코드로 내보내세요 (모든 블록이 됨)")
     task = (data_info or {}).get("task", "classification")
     tr = dict({"epochs": 30, "lr": 1e-3, "batch_size": 32}, **(train or {}))
     if plan.kind == "rnn":

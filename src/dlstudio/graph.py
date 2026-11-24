@@ -10,14 +10,16 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from dlstudio import layers as X
 from dlstudio.blocks import BLOCK_TYPES, NAMES, RNN_TYPES, _Walker
 
-MERGE_TYPES = ("add", "concat")
+MERGE_TYPES = ("add", "concat") + X.NEW_MERGES             # 입력 2개 이상을 합침 (가중치 없음)
+SAME_SHAPE_MERGES = ("add",) + X.NEW_MERGES                 # 모양이 모두 같아야 함
 LAYER_TYPES = tuple(t for t in BLOCK_TYPES if t not in ("branch", "residual", "repeat")) + MERGE_TYPES + ("repeat", "input")
 ID_RE = re.compile(r"^[A-Za-z0-9_]{1,40}$")
 INPUT, BODY_IN = "input", "in"
 _CONFIG_SKIP = ("id", "inputs", "body")
-GRAPH_NAMES = dict(NAMES, add="Add", concat="Concat", input="Input", repeat="Repeat")
+GRAPH_NAMES = dict(NAMES, add="Add", concat="Concat", input="Input", repeat="Repeat", **{k: X.EXTRA_NAMES[k] for k in X.NEW_MERGES})
 
 
 @dataclass
@@ -133,8 +135,8 @@ class _Checker:
                     ok = False
                     continue
                 inner = [x["type"] for x in body["nodes"]]
-                if any(x in RNN_TYPES + ("output",) for x in inner):
-                    self.issue(nid, "Repeat 안에는 LSTM·GRU·SimpleRNN·Output을 넣을 수 없음", "그 층을 Repeat 밖으로 옮기세요")
+                if any(x in RNN_TYPES + ("output",) + X.AUG_TYPES for x in inner):
+                    self.issue(nid, "Repeat 안에는 LSTM·GRU·SimpleRNN·증강·Output을 넣을 수 없음", "그 층을 Repeat 밖으로 옮기세요")
                     ok = False
         return ok
 
@@ -157,6 +159,11 @@ class _Checker:
             if t in MERGE_TYPES:
                 if len(ins) < 2:
                     self.issue(nid, f"{GRAPH_NAMES[t]}: 합칠 입력이 2개 이상이어야 함", "다른 층의 출력 손잡이를 끌어 이 상자에 놓으세요")
+                    sc.bad.add(nid)
+            elif t in X.TWO_INPUT:
+                if len(ins) != 2:
+                    self.issue(nid, f"{GRAPH_NAMES[t]}: 입력이 2개여야 함 (지금 {len(ins)}개) — 첫째 = 질문, 둘째 = 참고",
+                               "다른 층의 출력 손잡이를 끌어 이 상자에 놓으세요")
                     sc.bad.add(nid)
             elif not ins:
                 self.issue(nid, "입력이 연결되지 않음", "위 층의 출력 손잡이를 끌어 이 상자에 놓으세요")
@@ -212,11 +219,13 @@ class _Checker:
         return out
 
     def rnn_rule(self, sc: _Scope, users: dict) -> None:
+        """증강(학습 때만 그림·신호를 바꿈)은 Input 바로 뒤나 다른 증강 뒤에만 (배운 값을 지난 뒤에는 뜻이 없음)."""
         for k in sc.order:
-            t = sc.nodes[k]["type"]
-            if t in RNN_TYPES and (sc.nodes[k].get("inputs") != [INPUT] or set(users[INPUT]) != {k}):
-                self.issue(k, f"{NAMES[t]}은(는) Input 바로 다음에, Input을 혼자 쓸 때만 쓸 수 있음",
-                           "순환 층 앞에는 다른 층을 둘 수 없습니다. 순환 층을 Input 바로 아래에 두세요")
+            n = sc.nodes[k]
+            if n["type"] in X.AUG_TYPES and not all(x == INPUT or (x in sc.nodes and sc.nodes[x]["type"] in X.AUG_TYPES)
+                                                    for x in n.get("inputs") or []):
+                self.issue(k, f"{NAMES[n['type']]}은(는) Input 바로 뒤(다른 증강 블록 뒤)에만 쓸 수 있음",
+                           "증강 블록을 Input 바로 아래로 옮기세요")
                 sc.bad.add(k)
 
     # ------------------------------------------------------------ 3. 모양
@@ -230,8 +239,13 @@ class _Checker:
                 vals[k] = None
                 continue
             t = n["type"]
-            if t == "add":
-                s = self.add_shape(k, ins)
+            if t in SAME_SHAPE_MERGES:
+                s = self.add_shape(k, ins, GRAPH_NAMES[t])
+            elif t in X.TWO_INPUT:
+                w = _Walker(self.n_out, image=bool(self.image))
+                s = X.two_shape(lambda m, h: self.issue(k, m, h), n, ins[0], ins[1]) if w.values_ok(_config(n), (k,)) else None
+                for i in w.issues:
+                    self.issue(k, i.message, i.hint)
             elif t == "concat":
                 s = self.concat_shape(k, ins)
             elif t == "repeat":
@@ -248,10 +262,10 @@ class _Checker:
                 self.shapes[k] = tuple(s)
         return vals.get(sc.exit) if sc.exit else None
 
-    def add_shape(self, k, ins):
+    def add_shape(self, k, ins, name="Add"):
         if any(tuple(s) != tuple(ins[0]) for s in ins[1:]):
             shown = "과(와) ".join(str(tuple(s)) for s in ins)
-            self.issue(k, f"Add: 더할 값들의 모양이 다름 {shown}",
+            self.issue(k, f"{name}: 합칠 값들의 모양이 다름 {shown}",
                        "모양을 맞추세요: 채널이나 길이가 다르면 지름길에 1×1 Conv(필요하면 stride 2)를 넣으세요")
             return None
         return tuple(ins[0])
@@ -329,10 +343,14 @@ def _graph_net_class():
                 kind, nid, ins = step[0], step[1], step[2]
                 if kind == "layer":
                     v = mods[_key(nid)](vals[ins[0]])
-                elif kind == "add":
+                elif kind == "layer2":
+                    v = mods[_key(nid)](vals[ins[0]], vals[ins[1]])
+                elif kind in ("add", "multiply", "average", "maximum"):
                     v = vals[ins[0]]
                     for j in ins[1:]:
-                        v = v + vals[j]
+                        v = v + vals[j] if kind in ("add", "average") else v * vals[j] if kind == "multiply" else torch.maximum(v, vals[j])
+                    if kind == "average":
+                        v = v / len(ins)
                 elif kind == "concat":
                     v = torch.cat([vals[j] for j in ins], dim=1)
                 else:                                          # repeat
@@ -347,12 +365,14 @@ def _graph_net_class():
             return vals
 
         def forward(self, x):
+            if self.kind == "rnn":                             # 순환 모델의 입력 (N, L, 1) → 층들이 쓰는 (N, 1, L)
+                x = x.transpose(1, 2)
             return self._exec(self.plan, {INPUT: x}, self.mods, None)[self.output_id]
 
         def trace(self, x) -> dict:
             """모든 노드의 출력 (Repeat 안은 마지막 반복). 샘플 따라가기용."""
             rec: dict = {INPUT: x}
-            self._exec(self.plan, {INPUT: x}, self.mods, rec)
+            self._exec(self.plan, {INPUT: x.transpose(1, 2) if self.kind == "rnn" else x}, self.mods, rec)
             return rec
 
     return GraphNet
@@ -362,7 +382,7 @@ def build_graph_model(graph: dict, length: int, n_out: int, seed: int = 0, image
     """그래프 JSON → GraphNet (float32). 검사를 통과하지 못하면 ValueError(첫 문제)."""
     import torch
     from torch import nn
-    from dlstudio.blocks import make_layer
+    from dlstudio.blocks import extra_layer, make_layer
 
     checked = check_graph(graph, length, n_out, image=image)
     if not checked.ok:
@@ -395,10 +415,13 @@ def build_graph_model(graph: dict, length: int, n_out: int, seed: int = 0, image
                 plan.append(("repeat", k, ins, body.exit, steps))
                 c.shapes[k] = tuple(s)
                 continue
-            m = make_layer(_config(n), shape_of(ins[0]), n_out)
+            if t in X.TWO_INPUT:
+                m = extra_layer(_config(n), shape_of(ins[0]), shape_of(ins[1]))
+            else:
+                m = make_layer(_config(n), shape_of(ins[0]), n_out)
             mods[_key(k)] = m
             block_modules[k] = m
-            plan.append(("layer", k, ins))
+            plan.append(("layer2" if t in X.TWO_INPUT else "layer", k, ins))
         return plan, mods
 
     plan, mods = build(sc, (1,) + tuple(image) if image else (1, length))
