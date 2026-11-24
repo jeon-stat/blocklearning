@@ -52,7 +52,7 @@ def test_open_rejects_other_zip(tmp_path):
 
 
 def test_save_open_non_ascii_path(tmp_path):
-    p = tmp_path / "크립토랩" / "모델.dlstudio"
+    p = tmp_path / "한글폴더" / "모델.dlstudio"
     save_project(str(p), GRAPH, SRC, SETTINGS, build_graph_model(GRAPH, 12, 2), {})
     assert open_project(str(p))["graph"] == GRAPH
 

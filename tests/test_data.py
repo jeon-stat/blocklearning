@@ -94,7 +94,7 @@ def test_split_reproducible(tmp_path):
 
 
 def test_non_ascii_path(tmp_path):
-    d = load_csv(_write(tmp_path / "크립토랩" / "데이터.csv", _rows()))
+    d = load_csv(_write(tmp_path / "한글폴더" / "데이터.csv", _rows()))
     assert d.length == 8
 
 

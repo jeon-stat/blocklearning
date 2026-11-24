@@ -38,7 +38,7 @@ def _X(n=8, L=24, seed=0):
 
 
 class _Run:
-    """만든 모델을 그대로 앞으로 계산 (예전 heml 변환 시험 자리: 만들어지고 돌아가는지·모양 확인)."""
+    """만든 모델을 그대로 앞으로 계산 (만들어지고 돌아가는지·모양 확인)."""
 
     def __init__(self, model):
         self.model = model.eval()
