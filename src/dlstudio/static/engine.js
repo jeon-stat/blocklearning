@@ -174,7 +174,13 @@ function layer(st, ins, P, training, pending) {
     case "act": return ACT[c.kind](x);
     case "dropout": return training && (c.rate || 0.5) > 0 ? tf.dropout(x, c.rate ?? 0.5) : x;
     case "flatten": return x.reshape([x.shape[0], -1]);
-    case "dense": case "output": {
+    case "output":
+      if (c.head === "grid") {                                // 탐지: 격자 칸마다 1×1 필터 → (값, G, G)를 펼침 (PyTorch와 같은 순서)
+        const y = conv2d(x, P[k + ".0.weight"], P[k + ".0.bias"], { kernel: 1 });
+        return y.reshape([y.shape[0], -1]);
+      }
+      // falls through
+    case "dense": {
       const flat = st.in_shape.length >= 2, kk = k + (flat ? ".1" : "");
       return linear(flat ? x.reshape([x.shape[0], -1]) : x, P[kk + ".weight"], P[kk + ".bias"]);
     }
@@ -302,7 +308,9 @@ function regressionView(out, y, nOut) {
 // s: {epochs, lr, batch_size, seed}. onEpoch({epoch, loss, test_metric}) → true면 멈춤.
 async function train(plan, d, s, onEpoch, isCancelled) {
   const net = new Net(plan, s.seed || 0);
-  const reg = d.task !== "classification";
+  const det = d.task === "detection" ? d.det : null;       // 탐지: {grid, per_cell, n_cls, train, test (그림마다 정답 상자)}
+  const reg = !det && d.task !== "classification";
+  const score = (out, which) => (det ? detMetric(out, det[which], det) : metric(out, which === "test" ? d.y_test : d.y_train, d.task, d.n_out));
   let mu = 0, sd = 1;
   if (reg) {
     for (const v of d.y_train) mu += v; mu /= d.n_train;
@@ -311,7 +319,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
   }
   const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image);
   const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image);
-  const ytr = reg ? tf.tensor2d(Float32Array.from(d.y_train, (v) => (v - mu) / sd), [d.n_train, 1])
+  const ytr = det ? tf.tensor2d(d.y_train, [d.n_train, d.n_out])
+    : reg ? tf.tensor2d(Float32Array.from(d.y_train, (v) => (v - mu) / sd), [d.n_train, 1])
     : tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), d.n_out).toFloat();
   const opt = tf.train.adam(s.lr || 1e-3, 0.9, 0.999, 1e-8);
   const rand = rng((s.seed || 0) * 104729 + 3);
@@ -331,7 +340,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
           const xb = tf.gather(Xtr, ii), yb = tf.gather(ytr, ii);
           return opt.minimize(() => {
             const out = net.forward(xb, true, pending);
-            return reg ? tf.losses.meanSquaredError(yb, out) : tf.losses.softmaxCrossEntropy(yb, out);
+            return det ? detLoss(out, yb, det.grid, det.per_cell)
+              : reg ? tf.losses.meanSquaredError(yb, out) : tf.losses.softmaxCrossEntropy(yb, out);
           }, true, net.trainable);
         });
         for (const [buf, val] of pending) {
@@ -344,7 +354,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       }
       const out = net.predict(Xte).map((v) => (reg ? v * sd + mu : v));
       done = epoch;
-      const stop = onEpoch && onEpoch({ epoch, loss: lossSum / Math.max(1, nb), test_metric: metric(out, d.y_test, d.task, d.n_out) });
+      const stop = onEpoch && onEpoch({ epoch, loss: lossSum / Math.max(1, nb), test_metric: score(out, "test") });
       if (stop || (isCancelled && isCancelled())) break;
       await yieldNow();
     }
@@ -357,13 +367,14 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     // 마지막 평가는 CPU로 (브라우저 GPU(WebGL)가 드물게 묶음 크기에 따라 틀린 값을 냄). GPU 값과 다르면 알림
     const outGpu = net.predict(Xte);
     const [out, outTr] = await onCpu(() => [net.predict(Xte), net.predict(Xtr)]);
-    const r = { epochs_done: done, test_metric: metric(out, d.y_test, d.task, d.n_out),
-      metric_name: reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
-      train_metric: metric(outTr, d.y_train, d.task, d.n_out) };   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+    const r = { epochs_done: done, test_metric: score(out, "test"),
+      metric_name: det ? "map50" : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
+      train_metric: score(outTr, "train") };   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
     if (!same(outGpu, out))
       r.warnings.push({ message: "학습 중 이 브라우저의 GPU 계산이 불안정했습니다. 아래 결과는 CPU로 다시 계산한 값이지만, 학습이 덜 됐을 수 있습니다",
         hint: "페이지를 새로 고친 뒤 다시 학습해 보세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
-    if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);
+    if (det) Object.assign(r, detResult(out, det.test, det));
+    else if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);
     else {
       [r.confusion, r.recall] = confusion(out, d.y_test, d.n_out);
       r.pred = Array.from({ length: d.n_test }, (_, i) => argmax(out, i, d.n_out));   // 시험 샘플마다 예측 (틀린 샘플 모아 보기)
@@ -373,6 +384,112 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     [Xtr, Xte, ytr].forEach((t) => t.dispose());
     opt.dispose();
   }
+}
+
+// ------------------------------------------------------------ 객체 탐지 (detect.py와 같은 식·순서)
+const DET = { coord: 5, noobj: 0.5, scoreMin: 0.05, show: 0.5, nms: 0.5, match: 0.5, maxDet: 50, keep: 0.25 };
+function detLoss(out, t, G, A) {                      // 있음(BCE) + 사물 칸 위치·크기 제곱 오차 × 5 + 클래스 교차 엔트로피, 그림 수로 나눔
+  const N = out.shape[0], o = out.reshape([N, A, G, G]), y = t.reshape([N, A, G, G]);
+  const part = (a, n) => [o.slice([0, a, 0, 0], [N, n, G, G]), y.slice([0, a, 0, 0], [N, n, G, G])];
+  const [o0, y0] = part(0, 1), pos = y0.squeeze([1]), x = o0.squeeze([1]);
+  const bce = tf.relu(x).sub(x.mul(pos)).add(tf.log1p(tf.exp(x.abs().neg())));      // BCE with logits (안정한 식)
+  let loss = bce.mul(pos.mul(1 - DET.noobj).add(DET.noobj)).sum();
+  const [ob, yb] = part(1, 4);
+  loss = loss.add(tf.sigmoid(ob).sub(yb).square().sum(1).mul(pos).sum().mul(DET.coord));
+  if (A > 6) {
+    const [oc, yc] = part(5, A - 5);
+    loss = loss.add(yc.mul(oc.sub(tf.logSumExp(oc, 1, true))).sum(1).neg().mul(pos).sum());
+  }
+  return loss.div(N);
+}
+const sig = (v) => 1 / (1 + Math.exp(-Math.max(-60, Math.min(60, v))));
+function iou(a, b) {                                  // [x, y, w, h]
+  const x0 = Math.max(a[0], b[0]), y0 = Math.max(a[1], b[1]);
+  const x1 = Math.min(a[0] + a[2], b[0] + b[2]), y1 = Math.min(a[1] + a[3], b[1] + b[3]);
+  const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0), union = a[2] * a[3] + b[2] * b[3] - inter;
+  return union > 0 ? inter / union : 0;
+}
+function nms(cand) {
+  const keep = [];
+  cand.sort((a, b) => b[1] - a[1] || a[0] - b[0] || a[2] - b[2] || a[3] - b[3]);
+  for (const c of cand) {
+    if (keep.every((q) => c[0] !== q[0] || iou(c.slice(2), q.slice(2)) <= DET.nms)) keep.push(c);
+    if (keep.length >= DET.maxDet) break;
+  }
+  return keep;
+}
+function detDecode(out, i, det, scoreMin = DET.scoreMin) {   // 출력 i번째 줄 → [[클래스 번호, 점수, x, y, w, h], …]
+  const G = det.grid, A = det.per_cell, K = A - 5, GG = G * G, off = i * A * GG, cand = [];
+  const at = (c, gy, gx) => out[off + c * GG + gy * G + gx];
+  for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
+    let k = 0, p = 1;
+    if (K > 1) {
+      let m = -Infinity;
+      for (let j = 0; j < K; j++) m = Math.max(m, at(5 + j, gy, gx));
+      let sum = 0, best = -1;
+      for (let j = 0; j < K; j++) { const e = Math.exp(at(5 + j, gy, gx) - m); sum += e; if (e > best) { best = e; k = j; } }
+      p = best / sum;
+    }
+    const s = sig(at(0, gy, gx)) * p;
+    if (s < scoreMin) continue;
+    const cx = (gx + sig(at(1, gy, gx))) / G, cy = (gy + sig(at(2, gy, gx))) / G;
+    const w = sig(at(3, gy, gx)) ** 2, h = sig(at(4, gy, gx)) ** 2;
+    const x0 = Math.max(0, cx - w / 2), y0 = Math.max(0, cy - h / 2), x1 = Math.min(1, cx + w / 2), y1 = Math.min(1, cy + h / 2);
+    if (x1 > x0 && y1 > y0) cand.push([k, s, x0, y0, x1 - x0, y1 - y0]);
+  }
+  return nms(cand);
+}
+function detMatch(preds, gts, k) {                    // 그림 하나·클래스 k → [[점수, 맞음]]
+  const used = gts.map(() => false), out = [];
+  const mine = preds.filter((p) => p[0] === k).sort((a, b) => b[1] - a[1]);
+  for (const p of mine) {
+    let best = 0, j = -1;
+    gts.forEach((g, gi) => { if (g[0] === k && !used[gi]) { const v = iou(p.slice(2), g.slice(1)); if (v > best) { best = v; j = gi; } } });
+    const ok = j >= 0 && best >= DET.match;
+    if (ok) used[j] = true;
+    out.push([p[1], ok]);
+  }
+  return out;
+}
+function detAP(preds, gts, K) {                       // → [mAP, 클래스마다 AP (정답 없으면 null)]
+  const aps = [];
+  for (let k = 0; k < K; k++) {
+    let nPos = 0;
+    for (const g of gts) for (const b of g) if (b[0] === k) nPos++;
+    if (!nPos) { aps.push(null); continue; }
+    const hits = [];
+    preds.forEach((p, i) => hits.push(...detMatch(p, gts[i], k)));
+    hits.sort((a, b) => b[0] - a[0]);
+    const rec = [0], prec = [1];
+    let tp = 0, fp = 0;
+    for (const [, ok] of hits) { if (ok) tp++; else fp++; rec.push(tp / nPos); prec.push(tp / Math.max(tp + fp, 1)); }
+    if (!hits.length) rec.push(0);
+    rec.push(1); prec.push(0);
+    if (!hits.length) prec.splice(1, 0, 0);
+    for (let i = prec.length - 2; i >= 0; i--) prec[i] = Math.max(prec[i], prec[i + 1]);
+    let ap = 0;
+    for (let i = 1; i < rec.length; i++) ap += (rec[i] - rec[i - 1]) * prec[i];
+    aps.push(Math.round(ap * 1e6) / 1e6);
+  }
+  const have = aps.filter((a) => a !== null);
+  return [have.length ? have.reduce((a, b) => a + b, 0) / have.length : 0, aps];
+}
+function detPR(preds, gts, K) {                       // 점수 0.5 이상만: 맞게 찾음·잘못 찾음·놓침, 정밀도·재현율
+  let tp = 0, fp = 0, nGt = 0;
+  preds.forEach((p, i) => {
+    const shown = p.filter((q) => q[1] >= DET.show);
+    for (let k = 0; k < K; k++) for (const [, ok] of detMatch(shown, gts[i], k)) { if (ok) tp++; else fp++; }
+    nGt += gts[i].length;
+  });
+  return { tp, fp, fn: nGt - tp, precision: tp + fp ? tp / (tp + fp) : null, recall: nGt ? tp / nGt : null };
+}
+function detAll(out, n, det) { return Array.from({ length: n }, (_, i) => detDecode(out, i, det)); }
+function detMetric(out, gts, det) { return detAP(detAll(out, gts.length, det), gts, det.per_cell - 5)[0]; }
+function detResult(out, gts, det) {
+  const preds = detAll(out, gts.length, det), K = det.per_cell - 5, [m, ap] = detAP(preds, gts, K);
+  const r4 = (v) => Math.round(v * 1e4) / 1e4;
+  return { test_metric: m, ap, pr: detPR(preds, gts, K),
+    det_pred: preds.map((ps) => ps.filter((p) => p[1] >= DET.keep).map((p) => [p[0]].concat(p.slice(1).map(r4)))) };
 }
 
 // fn을 CPU 백엔드에서 (이미 CPU거나 CPU가 없으면 그대로). 가중치는 TF.js가 알아서 옮김
@@ -398,7 +515,8 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, toInput, metric, confusion, regressionView, thin, onCpu, ACT, tf };
+const API = { Net, train, toInput, metric, confusion, regressionView, thin, onCpu, ACT, tf,
+  DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;
 })();

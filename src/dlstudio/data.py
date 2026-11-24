@@ -53,11 +53,22 @@ class Dataset:
     source: dict = field(default_factory=dict)
     features: list = field(default_factory=list)      # 열 이름 (머리글이 없으면 빈 목록)
     image: Optional[tuple] = None                      # 이미지면 (H, W): X는 H·W로 펼친 픽셀
+    det: Optional[dict] = None                         # 탐지면 {"grid": 격자, "train"·"test": 그림마다 [[클래스 번호, x, y, w, h], …]}
 
     @property
     def n_out(self) -> int:
-        """모델 출력 크기: 분류면 클래스 수, 회귀면 1."""
+        """모델 출력 크기: 분류면 클래스 수, 회귀면 1, 탐지면 격자² × (5 + 클래스 수) (DetOut: 격자를 함께 지님)."""
+        if self.task == "detection":
+            from dlstudio.detect import DetOut
+            return DetOut(self.det["grid"], len(self.classes))
         return len(self.classes) if self.task == "classification" else 1
+
+    def label_text(self, part: str, i: int):
+        """샘플 i의 정답 (화면용): 분류는 클래스 이름, 회귀는 값, 탐지는 상자 수."""
+        if self.task == "detection":
+            return f"상자 {len(self.det[part][i])}개"
+        y = self.y_train if part == "train" else self.y_test
+        return self.classes[int(y[i])] if self.task == "classification" else float(y[i])
 
     def raw(self, X: np.ndarray) -> np.ndarray:
         """정규화를 되돌린 값 (그림용)."""
@@ -68,6 +79,8 @@ class Dataset:
         return new_data_kinds(self)
 
     def summary(self) -> dict:
+        if self.task == "detection":
+            return self._det_summary()
         y_all = np.concatenate([self.y_train, self.y_test])
         if self.task == "classification":
             counts = {name: int((y_all == k).sum()) for k, name in enumerate(self.classes)}
@@ -93,6 +106,19 @@ class Dataset:
                 "feature_means": None if self.image or self.length > 40 else
                 [round(float(v), 4) for v in self.raw(self.X_train).mean(0)],    # ⑤ 직접 넣기 칸의 처음 값
                 "preview": [{"label": label(i), "values": [round(float(v), 5) for v in raw[i]]} for i in picks]}
+
+    def _det_summary(self) -> dict:
+        boxes = self.det["train"] + self.det["test"]
+        counts = {name: sum(1 for bs in boxes for b in bs if b[0] == k) for k, name in enumerate(self.classes)}
+        raw = self.raw(self.X_train[:6])
+        return {"n_train": int(len(self.X_train)), "n_test": int(len(self.X_test)), "length": int(self.length),
+                "task": "detection", "classes": list(self.classes), "class_counts": counts, "target_range": None,
+                "features": [], "image": list(self.image), "example": (self.source or {}).get("example"),
+                "predict_kinds": self._predict_kinds(), "feature_means": None,
+                "detection": {"grid": int(self.det["grid"]), "n_boxes": sum(len(b) for b in boxes),
+                              "no_box": sum(1 for b in boxes if not b)},
+                "preview": [{"label": self.label_text("train", i), "values": [round(float(v), 5) for v in raw[i]],
+                             "boxes": self.det["train"][i]} for i in range(len(raw))]}
 
 
 def _num(s: str) -> Optional[float]:
@@ -546,6 +572,108 @@ def _load_image_folder_table(path, size, normalize, test_ratio, seed, label_file
                         test_ratio=test_ratio, seed=seed, source=src, image=(size, size))
 
 
+def make_det_dataset(X: np.ndarray, boxes: list, classes: list, size: int, normalize: bool = True,
+                     test_ratio: float = 0.2, seed: int = 0, source: Optional[dict] = None) -> Dataset:
+    """탐지 데이터: 그림 (n, size²) 픽셀 0–1 + 그림마다 상자 [[클래스 번호, x, y, w, h], …] → Dataset (task "detection").
+    정답(y)은 모델 출력과 같은 자리의 목표값 (detect.encode). 시험 데이터는 무작위로 test_ratio만큼."""
+    from dlstudio.detect import encode, grid_of
+    X = np.asarray(X, dtype=np.float64)
+    n = len(X)
+    if n < MIN_SAMPLES:
+        raise DataError([Issue(None, None, f"그림이 {n}장뿐임 (최소 {MIN_SAMPLES}장)", "그림을 더 모아 라벨링하세요")])
+    if len(classes) < 1 or not any(boxes):
+        raise DataError([Issue(None, None, "상자가 하나도 없음", "라벨링에서 사물에 상자(또는 다각형·원)를 그리세요")])
+    G, K = grid_of(size), len(classes)
+    Y = np.stack([encode(b, G, K) for b in boxes])
+    test = np.sort(np.random.default_rng(seed).permutation(n)[:max(1, int(round(n * test_ratio)))])
+    train = np.setdiff1d(np.arange(n), test)
+    Xtr, Xte = X[train], X[test]
+    m, s = (float(Xtr.mean()), float(Xtr.std()) or 1.0) if normalize else (0.0, 1.0)
+    mean, std = np.full(X.shape[1], m), np.full(X.shape[1], s)
+    src = dict(source or {}, normalize=normalize, test_ratio=test_ratio, seed=seed)
+    return Dataset((Xtr - mean) / std, (Xte - mean) / std, Y[train], Y[test], "detection", list(classes), X.shape[1],
+                   mean, std, src, [], (size, size),
+                   {"grid": G, "train": [boxes[i] for i in train], "test": [boxes[i] for i in test]})
+
+
+def read_det_file(det_file: str) -> tuple:
+    """탐지 정답 파일 (라벨링에서 만듦, JSON) → (클래스 이름 목록, {그림 이름: [[클래스 번호, x, y, w, h], …]})."""
+    import json
+    try:
+        d = json.loads(Path(det_file).read_text(encoding="utf-8"))
+        classes = [str(c) for c in d["classes"]]
+        items = {str(it["name"]): [[int(b[0])] + [float(v) for v in b[1:5]] for b in it["boxes"]] for it in d["items"]}
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        raise DataError([Issue(None, None, f"탐지 정답 파일을 읽을 수 없음: {det_file}", "라벨링에서 [학습 데이터로 쓰기]를 다시 누르세요")])
+    return classes, items
+
+
+def load_detection_folder(path: str, det_file: str, size: int = 64, normalize: bool = True, test_ratio: float = 0.2,
+                          seed: int = 0) -> Dataset:
+    """그림 폴더 + 탐지 정답 파일 → 탐지 Dataset. 그림은 흑백 size×size로 (상자는 0–1 비율이라 그대로)."""
+    from dlstudio.detect import DET_SIZES
+    if size not in DET_SIZES:
+        raise DataError([Issue(None, None, f"크기 {size}는 탐지에 쓸 수 없음", f"{', '.join(map(str, DET_SIZES))} 중에서 고르세요")])
+    try:
+        from PIL import Image
+    except ImportError:
+        raise DataError([Issue(None, None, "이미지 폴더를 읽으려면 Pillow가 필요함", "명령창에서 pip install pillow 를 실행하세요")])
+    classes, items = read_det_file(det_file)
+    files = {n: f for n, f, _ in image_files(path)}
+    missing = [n for n in items if n not in files]
+    if missing:
+        raise DataError([Issue(None, None, f"폴더에 없는 그림 {len(missing)}개: {', '.join(missing[:5])}",
+                               "라벨링할 때와 같은 폴더를 고르세요")])
+    if len(items) > MAX_IMAGES:
+        raise DataError([Issue(None, None, f"그림이 {len(items):,}장 (한도 {MAX_IMAGES:,}장)", "그림 수를 줄이세요")])
+    X, boxes = [], []
+    for n in sorted(items):
+        try:
+            with Image.open(files[n]) as im:
+                X.append(_gray01(im, size, Image).reshape(-1))
+        except Exception:
+            raise DataError([Issue(None, None, f"그림을 읽을 수 없음: {n}", "깨진 파일이면 라벨링에서 빼세요")])
+        boxes.append(items[n])
+    src = {"folder": str(path), "size": size, "det_file": str(det_file)}
+    return make_det_dataset(np.asarray(X), boxes, classes, size, normalize, test_ratio, seed, src)
+
+
+def parts_det_arrays(n: int = 400, size: int = 64, seed: int = 0) -> tuple:
+    """합성 부품 사진 (제조, 탐지): 결이 있는 판 위에 원형 부품(밝은 원·가운데 구멍)·사각 부품(어두운 사각형)이 1–3개.
+    → (픽셀 0–1로 펼친 X (n, size²), 그림마다 상자 [[클래스 번호, x, y, w, h], …])."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64) + 0.5
+    X, B = [], []
+    for _ in range(n):
+        img = 0.45 + rng.normal(0, 0.05, size)[None, :] * np.ones((size, 1)) + rng.normal(0, 0.04, (size, size))
+        img += rng.uniform(-0.08, 0.08) * (xx / size - 0.5)
+        boxes, taken = [], []
+        for _ in range(int(rng.integers(1, 4))):
+            for _try in range(20):
+                k = int(rng.integers(0, 2))
+                r = rng.uniform(5, 11) if k == 0 else rng.uniform(4.5, 9)        # 원은 반지름, 사각형은 반 변
+                cx, cy = rng.uniform(r + 1, size - r - 1, 2)
+                if all(np.hypot(cx - a, cy - b) > r + q + 2 for a, b, q in taken):
+                    break
+            else:
+                continue
+            taken.append((cx, cy, r))
+            if k == 0:
+                d2 = (xx - cx) ** 2 + (yy - cy) ** 2
+                img = np.where(d2 < r ** 2, 0.85 + rng.normal(0, 0.03, (size, size)), img)
+                img = np.where(d2 < (0.35 * r) ** 2, 0.3, img)
+            else:
+                inside = (np.abs(xx - cx) < r) & (np.abs(yy - cy) < r)
+                img = np.where(inside, 0.12 + rng.normal(0, 0.03, (size, size)), img)
+            boxes.append([k, (cx - r) / size, (cy - r) / size, 2 * r / size, 2 * r / size])
+        X.append(np.clip(img, 0, 1).reshape(-1))
+        B.append([[b[0]] + [round(float(v), 5) for v in b[1:]] for b in boxes])
+    return np.asarray(X), B
+
+
+DET_EXAMPLES = {"parts_det": (parts_det_arrays, ["원형 부품", "사각 부품"], 64)}
+
+
 def _series_key_img(s: str) -> str:
     """정답 표와 그림 이름 맞추기: 공백·대소문자·확장자 무시."""
     s = s.strip().lower()
@@ -734,6 +862,7 @@ EXAMPLES = {
     "digits": (None, [str(i) for i in range(10)], None),      # 이미지: load_example에서 IMAGE_EXAMPLES로
     "surface": (None, ["정상", "스크래치", "얼룩", "구멍"], None),
     "pneumonia": (None, ["정상", "폐렴"], None),
+    "parts_det": (None, ["원형 부품", "사각 부품"], None),           # 탐지: load_example에서 DET_EXAMPLES로
 }
 
 
@@ -791,6 +920,10 @@ def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 
     "process_cls" 공정 변수 8개 → 불량 여부, "process_reg" 공정 변수 8개 → 수율, "wear_rul" 마모 진동 → 잔여 수명."""
     if kind not in EXAMPLES:
         raise ValueError(f"예시 데이터 종류는 {', '.join(EXAMPLES)} 중 하나: {kind}")
+    if kind in DET_EXAMPLES:
+        fn, names, size = DET_EXAMPLES[kind]
+        X, boxes = fn()
+        return make_det_dataset(X, boxes, names, size, normalize, test_ratio, seed, {"example": kind})
     if kind in IMAGE_EXAMPLES:
         fn, names, image = IMAGE_EXAMPLES[kind]
         X, y = fn()

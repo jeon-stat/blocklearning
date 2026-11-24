@@ -155,16 +155,21 @@ def _fold_target_scale(net, mu: float, sd: float) -> None:
         lin.bias.mul_(sd).add_(mu)
 
 
-def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None):
-    """평범한 torch 학습: Adam, 분류는 교차 엔트로피, 회귀는 MSE. 반복마다 callback({"epoch", "loss", "model"}),
-    True를 돌려주면 멈춤. 돌려주는 모델은 CPU."""
+def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None,
+        det=None):
+    """평범한 torch 학습: Adam, 분류는 교차 엔트로피, 회귀는 MSE, 탐지는 YOLO식 손실 (det: DetOut). 반복마다
+    callback({"epoch", "loss", "model"}), True를 돌려주면 멈춤. 돌려주는 모델은 CPU."""
     import torch
     from torch import nn
     torch.manual_seed(seed)
     dev = torch.device(device) if device else torch.device("cpu")
     net = net.to(dev)
     Xt = torch.as_tensor(np.asarray(X), dtype=torch.float32, device=dev)
-    if task == "classification":
+    if task == "detection":
+        from dlstudio.detect import torch_loss
+        yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev)
+        loss_fn = lambda out, t: torch_loss(out, t, det.grid, det.per_cell)
+    elif task == "classification":
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev), nn.CrossEntropyLoss()
     else:
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(-1, 1), nn.MSELoss()
@@ -201,6 +206,8 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     dev = _device(settings.device)
     Xte_t = torch.as_tensor(Xte, dtype=torch.float32, device=dev)
     done = []
+    if data.task == "detection":
+        return _train_det(job, model, Xtr, Xte, Xte_t, data, settings, dev)
     reg = data.task != "classification"
     mu = float(np.mean(data.y_train)) if reg else 0.0         # 회귀 정답은 정규화해 학습 (21–96 같은 값도 잘 배움)
     sd = (float(np.std(data.y_train)) or 1.0) if reg else 1.0
@@ -236,3 +243,33 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     else:
         result["mae"], result["scatter"] = regression_view(out, data.y_test)
     return result
+
+
+def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, dev) -> dict:
+    """탐지 학습: 손실은 detect.torch_loss, 시험 지표는 mAP@0.5."""
+    import torch
+    from dlstudio import detect
+    det, done = data.n_out, []
+    G, K = det.grid, det.n_cls
+
+    def cb(info):
+        net = info["model"]
+        net.eval()
+        with torch.no_grad():
+            out = net(Xte_t).detach().double().cpu().numpy()
+        done.append(info["epoch"])
+        job.report({"epoch": info["epoch"], "loss": float(info["loss"]),
+                    "test_metric": detect.metric(out, data.det["test"], G, K)})
+        return job.cancelled
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        net = fit(model, Xtr, data.y_train, "detection", settings.epochs, settings.lr, settings.batch_size,
+                  seed=settings.seed, device=dev, callback=cb, det=det)
+    with torch.no_grad():
+        out = net(torch.as_tensor(Xte, dtype=torch.float32)).double().numpy()
+        Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
+        out_tr = np.concatenate([net(Xtr_t[i:i + 512]).double().numpy() for i in range(0, len(Xtr_t), 512)])
+    r = detect.result(out, data.det["test"], G, K)
+    return dict(r, model=net, epochs_done=len(done), metric_name="map50", warnings=[], confusion=None, recall=None,
+                train_metric=detect.metric(out_tr, data.det["train"], G, K))

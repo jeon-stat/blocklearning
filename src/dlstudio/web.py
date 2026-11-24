@@ -84,7 +84,10 @@ def data_payload(studio: Studio) -> dict:
             "meta": json.dumps({"n_train": int(len(d.y_train)), "n_test": int(len(d.y_test)), "n_features": int(d.X_train.shape[1]),
                                 "task": d.task, "n_out": int(d.n_out), "length": int(d.length),
                                 "image": list(d.image) if d.image else None,
-                                "classes": [str(c) for c in d.classes] if d.task == "classification" else []})}
+                                "classes": [str(c) for c in d.classes] if d.task in ("classification", "detection") else [],
+                                "det": None if d.task != "detection" else
+                                {"grid": d.n_out.grid, "per_cell": d.n_out.per_cell, "n_cls": d.n_out.n_cls,
+                                 "train": d.det["train"], "test": d.det["test"]}})}
 
 
 def set_trained(studio: Studio, graph_json: str, settings_json: str, results_json: str, state=None) -> None:
@@ -156,7 +159,7 @@ def predict_finish(studio: Studio, out_bytes) -> dict:
     raw = out_bytes.to_bytes() if hasattr(out_bytes, "to_bytes") else bytes(out_bytes)
     p, studio.pending = studio.pending, None
     out = np.frombuffer(raw, dtype=np.float32).reshape(len(p["names"]), -1)
-    return _clean(table(studio.data, p["names"], out, p["labels"]))
+    return _clean(table(studio.data, p["names"], out, p["labels"], p["X"]))
 
 
 @_wrap
@@ -167,7 +170,7 @@ def sample(studio: Studio, i: int) -> dict:
         raise UserError("학습된 모델이 없음", "④ 학습 단계에서 먼저 학습하세요")
     if not 0 <= i < len(d.y_test):
         raise UserError(f"시험 샘플 번호 {i}이(가) 없음", f"0–{len(d.y_test) - 1} 사이로 고르세요")
-    label = d.classes[int(d.y_test[i])] if d.task == "classification" else float(d.y_test[i])
+    label = d.label_text("test", i)
     order = check_graph(studio.model_graph, d.length, d.n_out, image=d.image).order
     return {"x": d.X_test[i].astype(float).tolist(), "input": np.round(d.raw(d.X_test[i]), 5).tolist(),
             "label": label, "order": order, "classes": [str(c) for c in d.classes]}

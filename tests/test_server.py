@@ -464,7 +464,7 @@ def test_label_boxes_api(server, tmp_path):
     code, r = _call(server, "/api/label/export_coco", {"file": str(tmp_path / "c.json")})
     assert code == 200 and (tmp_path / "c.json").exists()
     code, e = _call(server, "/api/label/use", {})
-    assert code == 400 and "객체 탐지" in e["error"]["message"]
+    assert code == 400 and "상자를 그린 그림이 1장" in e["error"]["message"]          # 탐지 데이터는 10장 이상
 
 
 def test_label_team_api(server, tmp_path):

@@ -141,6 +141,8 @@ class _Walker:
         if t == "output":
             if ctx != "top" or not last:
                 self.issue(path, "출력 블록은 맨 아래에 하나만", "출력 블록을 맨 아래로 옮기세요")
+            if getattr(self.n_out, "grid", None):
+                return self.det_head(shape, path)
             return self.dense_like(shape, self.n_out, path)
         if t in RNN_TYPES:
             if not first:
@@ -278,6 +280,19 @@ class _Walker:
             self.issue(path, f"크기 {H}×{W}가 한도 {self.max_len:,}칸을 넘음", "AvgPool2D로 크기를 줄이세요")
             return None
         return (C, H, W)
+
+    def det_head(self, shape, path):
+        """탐지 출력: 바로 앞이 격자 모양 (채널, G, G)이어야 함 → 칸마다 1×1 필터로 (값 수, G, G)를 펼쳐 냄."""
+        if shape is None:
+            return None
+        G = self.n_out.grid
+        if len(shape) != 3 or shape[1] != G or shape[2] != G:
+            now = "×".join(map(str, shape[1:])) if len(shape) == 3 else f"숫자 {_prod(shape)}개 (위치가 없음)"
+            self.issue(path, f"탐지 모델의 출력 블록 바로 앞은 {G}×{G} 격자여야 함 (지금 {now})",
+                       f"그림 {G * 8}×{G * 8}을 AvgPool2D로 세 번 줄이면 {G}×{G}가 됩니다. "
+                       "GlobalAvgPool2D·Flatten·Dense는 위치를 잃어 탐지에 쓸 수 없습니다")
+            return None
+        return (int(self.n_out),)
 
     def dense_like(self, shape, units, path):
         if shape is None:
@@ -458,6 +473,8 @@ def make_layer(b: dict, shape, n_out: int):
         return nn.BatchNorm2d(shape[0]) if len(shape) == 3 else nn.BatchNorm1d(shape[0])
     if t == "act":
         return act_module(b["kind"])
+    if t == "output" and getattr(n_out, "grid", None):           # 탐지: 격자 칸마다 1×1 필터 → (값 수, G, G)를 펼침
+        return nn.Sequential(nn.Conv2d(shape[0], n_out.per_cell, 1), Flatten())
     if t in ("dense", "output"):
         lin = nn.Linear(_prod(shape), n_out if t == "output" else b["units"])
         return nn.Sequential(Flatten(), lin) if len(shape) >= 2 else lin

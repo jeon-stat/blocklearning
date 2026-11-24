@@ -49,7 +49,7 @@ function metaText() {                                   // 첫 화면 카드의 
     const best = runs.reduce((a, r) => (r.results.test_metric !== null && r.results.test_metric !== undefined &&
       (!a || r.results.test_metric > a.results.test_metric) ? r : a), null);
     const score = best ? (best.results.metric_name === "r2" ? `최고 R² ${best.results.test_metric.toFixed(3)}`
-      : `최고 시험 정확도 ${(best.results.test_metric * 100).toFixed(1)}%`) : "아직 학습 안 함";
+      : `최고 시험 ${best.results.metric_name === "map50" ? "mAP@0.5" : "정확도"} ${(best.results.test_metric * 100).toFixed(1)}%`) : "아직 학습 안 함";
     return [st.sub ? st.sub.name : "", runs.length ? `학습 ${runs.length}번` : "", score].filter(Boolean).join(" · ");
   } catch (e) { return ""; }
 }

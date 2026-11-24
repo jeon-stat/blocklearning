@@ -24,16 +24,16 @@ def _available():
 def test_catalog_shape_and_json():
     json.dumps(CATALOG, ensure_ascii=False)
     ids = [f["id"] for f in CATALOG]
-    assert ids == ["classification", "regression", "anomaly", "forecast", "segmentation"]
+    assert ids == ["classification", "regression", "detection", "anomaly", "forecast", "segmentation"]
     for fam in CATALOG:
         assert fam["name"] and fam["desc"] and fam["subtasks"]
         for sub in fam["subtasks"]:
             assert sub["input"] in ("timeseries", "tabular", "image") and sub["examples_text"]
             if sub["available"]:
-                assert sub["task"] in ("classification", "regression") and sub["example_data"] and sub["templates"]
+                assert sub["task"] in ("classification", "regression", "detection") and sub["example_data"] and sub["templates"]
                 for t in sub["templates"]:
                     assert t["name"] and t["desc"] and t["when"] and "cost" not in t
-    assert not any(s["available"] for f in CATALOG[2:] for s in f["subtasks"])   # 이상 탐지·예측·구간 분할은 준비 중
+    assert not any(s["available"] for f in CATALOG[3:] for s in f["subtasks"])   # 이상 탐지·예측·구간 분할은 준비 중
 
 
 def test_find():

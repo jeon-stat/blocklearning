@@ -699,3 +699,20 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 #lab-boxsvg .shape-hit.shape-radius { cursor: ew-resize; }
 #lab-boxsvg .shape-hit.draft-first { cursor: pointer; }
 #lab-boxsvg .shape-vertex, #lab-boxsvg .shape-mid, #lab-boxsvg .shape-handle-look { pointer-events: none; }
+
+/* 객체 탐지: 그림 위 상자 */
+.det-img { border-radius: 6px; background: #111; display: block; }
+.det-img .det-text { font-weight: 700; paint-order: stroke; stroke: #fff; stroke-width: 2px; stroke-linejoin: round; }
+.det-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; margin: 10px 0; }
+.det-card { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.det-card .det-img { width: 100%; height: auto; }
+.det-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12.5px; margin: 6px 0; }
+.det-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--c); margin-right: 5px; vertical-align: -1px; }
+#det-box h3 { margin: 0; }
+.det-th b { color: var(--ink, #111); min-width: 34px; display: inline-block; }
+.det-head { justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.det-head input[type=range] { vertical-align: middle; width: 140px; }
+.det-help { font-size: 12px; line-height: 1.5; margin-top: 8px; }
+#data-preview .det-legend { flex-basis: 100%; }
+.preview.thumbs.det { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.preview.thumbs.det .det-img { width: 100%; height: auto; max-width: 220px; }

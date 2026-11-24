@@ -91,6 +91,12 @@ class Studio:
             d = load_series_folder(_path(b["series_folder"]), str(b.get("column", "")), int(b.get("length", 0)),
                                    resample=b.get("resample", "interp"), label_file=lf, task=b.get("task", "auto"),
                                    only_labeled=bool(b.get("only_labeled")), **opts)
+        elif b.get("folder") and b.get("det_file"):                # 탐지: 그림 폴더 + 탐지 정답 파일 (라벨링에서 만듦)
+            folder = _path(b.get("folder"))
+            if not os.path.isdir(folder):
+                raise UserError(f"폴더를 찾을 수 없음: {folder}", "라벨링할 때와 같은 그림 폴더를 고르세요")
+            from dlstudio.data import load_detection_folder
+            d = load_detection_folder(folder, _path(b["det_file"]), size=int(b.get("size", 64)), **opts)
         elif b.get("folder"):
             folder = _path(b.get("folder"))
             if not os.path.isdir(folder):
@@ -229,8 +235,7 @@ class Studio:
     def _label_use(self, p, confirmed_only: bool, file) -> dict:
         """정답을 내보내고 studio 데이터로 불러옴. 시계열·그림 폴더는 정답 표로, 표는 정답 열을 붙인 학습용 CSV로."""
         if p.schema == "boxes":
-            raise UserError("도형(상자·다각형·점) 정답으로 학습하는 '객체 탐지·분할' 과제는 아직 DL studio에 없음",
-                            "[내보내기]에서 YOLO·COCO 형식으로 저장해 다른 탐지·분할 도구에서 쓸 수 있습니다")
+            return self._label_use_det(p, confirmed_only, file)
         if p.schema == "segments":
             raise UserError("구간 정답으로 학습하는 '구간 분할' 과제는 아직 studio에 없음",
                             "[내보내기]로 구간 표(file,start,end,label)를 저장해 두세요. 구간 분할 과제가 생기면 그대로 씁니다")
@@ -258,6 +263,36 @@ class Studio:
         length = scan_series_folder(src["path"], label_file=file)["default_length"]
         d = self.api_data_load({"series_folder": src["path"], "column": src["column"], "length": length, "label_file": file,
                                 "only_labeled": True, "task": task})
+        return dict(d, label_file=file)
+
+    def _label_use_det(self, p, confirmed_only: bool, file) -> dict:
+        """도형 정답 → 탐지 정답 파일(JSON: 클래스, 그림마다 상자) → 객체 탐지 데이터. 다각형·원은 감싸는 상자로, 점은 뺌.
+        상자가 하나도 없는 클래스는 뺌 (배울 것이 없음)."""
+        import json
+        from dlstudio.detect import DEFAULT_SIZE, shape_box
+        names = [c["name"] for c in p.classes]
+        items = []
+        for n, shapes in p._boxed(confirmed_only):
+            W, H = p.samples[n].get("width") or 1, p.samples[n].get("height") or 1
+            bs = []
+            for s in shapes:
+                b = shape_box(s, W, H) if s[-1] in names else None
+                if b:
+                    bs.append([s[-1]] + [round(float(v), 6) for v in b])
+            if bs:
+                items.append({"name": n, "boxes": bs})
+        used = [c for c in names if any(b[0] == c for it in items for b in it["boxes"])]
+        if len(items) < 10:
+            raise UserError(f"상자를 그린 그림이 {len(items)}장이라 학습할 수 없음",
+                            "상자·다각형·원을 그린 그림이 10장 이상이어야 합니다 (점은 탐지에 쓰지 않음)"
+                            + (" (확인된 것만 쓰는 중: 확인을 더 하거나 '확인된 것만'을 끄세요)" if confirmed_only else ""))
+        idx = {c: i for i, c in enumerate(used)}
+        for it in items:
+            it["boxes"] = [[idx[b[0]]] + b[1:] for b in it["boxes"]]
+        work = Path(p.file)
+        file = file or str(work.with_name(work.name.replace(".dllabel", "") + "_탐지.json"))
+        Path(file).write_text(json.dumps({"classes": used, "items": items}, ensure_ascii=False), encoding="utf-8")
+        d = self.api_data_load({"folder": p.meta["source"]["path"], "det_file": file, "size": DEFAULT_SIZE})
         return dict(d, label_file=file)
 
     def api_data_scan_folder(self, b: dict) -> dict:
@@ -306,8 +341,12 @@ class Studio:
         x = self.model_input(d.X_test[i:i + 1])[0]
         with torch.no_grad():
             out = m.eval()(torch.as_tensor(x[None], dtype=torch.float32))[0].numpy()
-        label = d.classes[int(d.y_test[i])] if d.task == "classification" else float(d.y_test[i])
-        pred = d.classes[int(out.argmax())] if d.task == "classification" else float(out[0])
+        label = d.label_text("test", i)
+        if d.task == "detection":
+            from dlstudio.detect import SHOW_SCORE, decode
+            pred = f"상자 {len(decode(out, d.n_out.grid, d.n_out.n_cls, SHOW_SCORE))}개 찾음"
+        else:
+            pred = d.classes[int(out.argmax())] if d.task == "classification" else float(out[0])
         order = check_graph(self.model_graph, d.length, d.n_out, image=d.image).order
         return {"index": i, "label": label, "prediction": pred, "input": np.round(d.raw(d.X_test[i]), 5).tolist(),
                 "values": activations(m, x), "order": order}
@@ -391,7 +430,7 @@ class Studio:
         with torch.no_grad():
             for i in range(0, len(X), 512):
                 outs.append(m.eval()(torch.as_tensor(X[i:i + 512], dtype=torch.float32)).numpy())
-        return predict.table(d, new["names"], np.concatenate(outs), new["labels"])
+        return predict.table(d, new["names"], np.concatenate(outs), new["labels"], new["X"])
 
     def api_samples(self, b: dict) -> dict:
         """시험 샘플 여럿의 원래 값·정답 (틀린 샘플 모아 보기). cell=[정답, 예측]이면 그 칸의 샘플들."""
@@ -406,7 +445,7 @@ class Studio:
             idx = [int(i) for i in b.get("indices", [])]
         idx = [i for i in idx if 0 <= i < len(d.y_test)]
         show = idx[:MAX_SAMPLES]
-        lab = lambda i: d.classes[int(d.y_test[i])] if d.task == "classification" else float(d.y_test[i])
+        lab = lambda i: d.det["test"][i] if d.task == "detection" else d.label_text("test", i)
         from dlstudio.analysis import _thin
         raw = lambda i: np.round(d.raw(d.X_test[i]), 4).tolist() if d.image else _thin(d.raw(d.X_test[i])[None])[0]
         return {"indices": idx, "items": [{"index": i, "label": lab(i), "input": raw(i)} for i in show]}
@@ -468,6 +507,8 @@ class Studio:
         load = {k: src[k] for k in ("normalize", "test_ratio", "seed") if k in src}
         if src.get("example"):
             return self.api_data_load(dict(load, example=src["example"]))["summary"]
+        if src.get("folder") and src.get("det_file"):
+            return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 64), det_file=src["det_file"]))["summary"]
         if src.get("folder"):
             return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 28), task=src.get("task", "auto"),
                                            label_file=src.get("label_file"), only_labeled=src.get("only_labeled")))["summary"]
@@ -497,7 +538,7 @@ class Studio:
             i = c.issues[0]
             raise UserError(i.message, i.hint or "③ 모델의 문제를 먼저 고치세요", [x.to_dict() for x in c.issues])
         trained = (self.model is not None or self.web) and self.model_graph is not None and _same_model(graph, self.model_graph)
-        info = {"task": d.task, "classes": list(d.classes) if d.task == "classification" else []}
+        info = {"task": d.task, "classes": list(d.classes) if d.task in ("classification", "detection") else []}
         settings = b.get("settings") or self.train_settings or {}
         train = {k: settings[k] for k in ("epochs", "lr", "batch_size") if k in settings}
         code = codegen.generate(fw, graph, d.length, d.n_out, d.image, info, train,
@@ -618,7 +659,7 @@ MAX_SAMPLES = 24          # 틀린 샘플 모아 보기에서 한 번에 보이�
 
 
 def _label_of(d, i: int):
-    return d.classes[int(d.y_train[i])] if d.task == "classification" else float(d.y_train[i])
+    return d.label_text("train", i)
 
 
 def _paths(b: dict) -> dict:

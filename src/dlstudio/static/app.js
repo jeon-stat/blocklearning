@@ -22,6 +22,46 @@ function svgImage(vals, H, W, cell = 6) {
   return s + `</svg>`;
 }
 
+// 객체 탐지 그림: 흑백 그림 위에 정답(점선)·모델이 찾은 상자(실선, 점수) — 상자는 [클래스 번호, (점수,) x, y, w, h] 0–1 비율
+const DET_COLORS = ["#e11d48", "#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
+const TASK_NAME = { classification: "분류", regression: "회귀", detection: "객체 탐지" };
+function grayURL(vals, H, W) {                          // 펼친 값 → PNG 주소 (칸마다 rect보다 훨씬 가벼움)
+  const flat = Array.isArray(vals[0]) ? vals.flat() : vals;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of flat) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (hi - lo < 1e-12) hi = lo + 1;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d"), im = g.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const v = Math.round((255 * (flat[i] - lo)) / (hi - lo));
+    im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v;
+    im.data[i * 4 + 3] = 255;
+  }
+  g.putImageData(im, 0, 0);
+  return c.toDataURL();
+}
+function detImage(vals, H, W, px, gts, preds, classes, minScore = 0.5) {
+  const fs = Math.max(4.5, W / 12), col = (k) => DET_COLORS[k % DET_COLORS.length];
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="${px}" height="${Math.round((px * H) / W)}" class="img det-img" role="img">` +
+    `<image href="${grayURL(vals, H, W)}" width="${W}" height="${H}" preserveAspectRatio="none" style="image-rendering:pixelated"/>`;
+  for (const [k, x, y, w, h] of gts || [])
+    s += `<rect x="${x * W}" y="${y * H}" width="${w * W}" height="${h * H}" fill="none" stroke="${col(k)}" stroke-width="1.6" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"><title>정답: ${esc(classes[k])}</title></rect>`;
+  for (const [k, sc, x, y, w, h] of (preds || []).filter((p) => p[1] >= minScore)) {
+    const label = `${classes[k]} ${Math.round(sc * 100)}%`;
+    const tw = [...label].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? 1 : 0.6), 0) * fs;   // 글자 폭 어림 (한글 1, 나머지 0.6)
+    const ty = y * H > fs + 1 ? y * H - 1.5 : Math.min(H - 1, (y + h) * H + fs);
+    const right = x * W + tw > W;                                  // 오른쪽 끝을 넘으면 상자 오른쪽 끝에 맞춤
+    s += `<rect x="${x * W}" y="${y * H}" width="${w * W}" height="${h * H}" fill="${col(k)}" fill-opacity=".12" stroke="${col(k)}" stroke-width="2.2" vector-effect="non-scaling-stroke"><title>찾음: ${esc(label)}</title></rect>` +
+      `<text x="${right ? Math.min(W - 0.5, (x + w) * W) : x * W + 0.5}" y="${ty}" font-size="${fs}" fill="${col(k)}" class="det-text"${right ? ' text-anchor="end"' : ""}>${esc(label)}</text>`;
+  }
+  return s + `</svg>`;
+}
+function detLegend(classes, withPred = true) {
+  return `<div class="det-legend">${classes.map((c, k) => `<span><i style="--c:${DET_COLORS[k % DET_COLORS.length]}"></i>${esc(c)}</span>`).join("")}` +
+    `<span class="muted">점선 = 정답${withPred ? " · 실선 = 모델이 찾은 상자 (점수)" : ""}</span></div>`;
+}
+
 // ------------------------------------------------------------ 공통
 async function api(path, body) {
   if (WEB) return window.DLS_WEB.api(path, body);
@@ -330,9 +370,9 @@ async function renderLabelJobs() {                      // 웹: 라벨링 페이
   const kind = { series_folder: "시계열", image_folder: "이미지", table: "표" };
   const schema = { class: "클래스", number: "숫자", segments: "구간", boxes: "도형" };
   $("label-jobs").innerHTML = items.length ? items.map((p) => {
-    const m = p.meta || {}, ok = m.schema === "class" || m.schema === "number";
+    const m = p.meta || {}, ok = m.schema === "class" || m.schema === "number" || (m.schema === "boxes" && m.kind === "image_folder");
     return `<div class="label-job"><div><b>${esc(p.name)}</b><span class="muted">${esc(`${kind[m.kind] || ""} · ${schema[m.schema] || ""} 정답 · ${m.labeled || 0}/${m.total || 0}개`)}</span></div>` +
-      (ok ? `<button data-job="${esc(p.id)}">불러오기</button>` : `<span class="muted" title="구간·상자 정답 과제는 준비 중">학습 과제 준비 중</span>`) + `</div>`;
+      (ok ? `<button data-job="${esc(p.id)}">불러오기</button>` : `<span class="muted" title="구간 정답으로 학습하는 과제는 준비 중">학습 과제 준비 중</span>`) + `</div>`;
   }).join("") : `<p class="muted">아직 없습니다. 라벨링 페이지에서 정답을 붙이면 여기서 불러올 수 있습니다.</p>`;
 }
 $("label-jobs").onclick = (e) => {
@@ -437,18 +477,25 @@ function onData(s) {
   st.summary = s;
   st.dataSrc = s.example || null;
   st.trained = false;
+  $("det-box").hidden = true;                                // 지난 데이터의 시험 그림은 치움
   $("data-summary").hidden = false;
-  const task = s.task === "classification" ? `분류 (${s.classes.length}클래스)` : "회귀";
+  const det = s.task === "detection";
+  const task = s.task === "classification" ? `분류 (${s.classes.length}클래스)` : det ? `객체 탐지 (${s.classes.length}클래스)` : "회귀";
   const tab = inputKind() === "tabular" && !s.image;
-  const cards = [["학습 샘플", s.n_train], ["시험 샘플", s.n_test],
+  const cards = [[det ? "학습 그림" : "학습 샘플", s.n_train], [det ? "시험 그림" : "시험 샘플", s.n_test],
     s.image ? ["크기 (픽셀)", `${s.image[0]}×${s.image[1]}`] : [tab ? "측정 항목 (열)" : "길이 (시점)", s.length], ["과제", task]];
+  if (det) cards.push(["상자", `${s.detection.n_boxes}개`], ["격자", `${s.detection.grid}×${s.detection.grid}칸`]);
   if (s.target_range) cards.push(["정답 범위", `${Number(s.target_range[0].toPrecision(3))} ~ ${Number(s.target_range[1].toPrecision(3))}`]);
   $("data-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("") +
-    Object.entries(s.class_counts).map(([k, v]) => `<div class="card"><div class="k">클래스 '${esc(k)}'</div><div class="v">${v}</div></div>`).join("");
+    Object.entries(s.class_counts).map(([k, v]) => `<div class="card"><div class="k">${det ? `'${esc(k)}' 상자` : `클래스 '${esc(k)}'`}</div><div class="v">${v}</div></div>`).join("");
   const fmt = (v) => Number(Number(v).toPrecision(4));
   $("data-preview").classList.toggle("table", tab);
   $("data-preview").classList.toggle("thumbs", !!s.image);
-  $("data-preview").innerHTML = s.image
+  $("data-preview").classList.toggle("det", det);
+  $("data-preview").innerHTML = det
+    ? s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${detImage(p.values, s.image[0], s.image[1], 150, p.boxes, null, s.classes)}</div>`).join("") +
+      detLegend(s.classes, false)
+    : s.image
     ? s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgImage(p.values, s.image[0], s.image[1], Math.max(3, Math.round(84 / s.image[1])))}</div>`).join("")
     : tab
     ? `<table class="tab"><tr>${s.features.map((f) => `<th>${esc(f)}</th>`).join("")}<th class="lab">정답</th></tr>` +
@@ -456,7 +503,7 @@ function onData(s) {
     : s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgLine(p.values, 240, 60)}</div>`).join("");
   renderAutoTask();
   if (!st.autoTask && st.sub && st.sub.task !== s.task)
-    showMessage(`불러온 데이터는 ${s.task === "classification" ? "분류" : "회귀"}용인데 고른 과제는 ${st.sub.name}입니다`, "① 과제를 데이터에 맞게 다시 고르거나, 맞는 데이터를 불러오세요");
+    showMessage(`불러온 데이터는 ${TASK_NAME[s.task] || s.task}용인데 고른 과제는 ${st.sub.name}입니다`, "① 과제를 데이터에 맞게 다시 고르거나, 맞는 데이터를 불러오세요");
   $("sample-index").max = s.n_test - 1;
   renderExamples();
   markSteps();
@@ -704,7 +751,7 @@ async function pollJob(id, onTick) {
 }
 function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성적 (0~100% 또는 R² 0~1), 오른쪽 축 = loss (가장 큰 값 기준)
   const W = 560, H = 220, L = 46, R = 46, T = 30, B = 26, pw = W - L - R, ph = H - T - B;
-  const n = progress.length, acc = metricName !== "r2";
+  const n = progress.length, acc = metricName !== "r2", map = metricName === "map50";
   const yv = (f) => T + (1 - f) * ph;
   let s = "";
   for (const f of [0, 0.5, 1]) {
@@ -725,7 +772,7 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
       `<text x="${L + pw}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
   }
   s += `<line x1="${L}" y1="12" x2="${L + 18}" y2="12" stroke="#4f46e5" stroke-width="2"/>` +
-    `<text x="${L + 24}" y="16" font-size="12" fill="#4f46e5">시험 ${acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
+    `<text x="${L + 24}" y="16" font-size="12" fill="#4f46e5">시험 ${map ? "mAP@0.5 (왼쪽 축, 높을수록 좋음)" : acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
     `<line x1="${L + 300}" y1="12" x2="${L + 318}" y2="12" stroke="#f97316" stroke-width="2"/>` +
     `<text x="${L + 324}" y="16" font-size="12" fill="#f97316">loss (오른쪽 축, 낮을수록 좋음)</text>`;
   $("curve").innerHTML = s;
@@ -745,7 +792,7 @@ $("btn-train").onclick = async () => {
     st.trainJob = id;
     const json = sig(graph);
     $("train-status").textContent = "학습 중…";
-    const metric = st.summary.task === "classification" ? "accuracy" : "r2";
+    const metric = { classification: "accuracy", detection: "map50" }[st.summary.task] || "r2";
     const j = await pollJob(id, (j) => {
       drawCurve(j.progress, metric);
       const last = j.progress[j.progress.length - 1];
@@ -761,7 +808,7 @@ $("btn-train").onclick = async () => {
       $("train-status").textContent = "끝남";
       loadRuns();
       const r = j.result;
-      showMessage(`학습 끝남: 시험 ${r.metric_name === "r2" ? "R² " + r.test_metric.toFixed(3) : "정확도 " + pct(r.test_metric)}`,
+      showMessage(`학습 끝남: 시험 ${r.metric_name === "r2" ? "R² " + r.test_metric.toFixed(3) : r.metric_name === "map50" ? "mAP@0.5 " + pct(r.test_metric) : "정확도 " + pct(r.test_metric)}`,
         "아래 결과와 '샘플 하나 따라가 보기'를 보세요", "", true);
     } else if (j.state === "cancelled") $("train-status").textContent = "멈춤";
     else { $("train-status").textContent = "실패"; showMessage("학습 실패", "학습률을 낮추거나 블록을 바꿔 보세요", j.error); }
@@ -771,6 +818,8 @@ $("btn-train").onclick = async () => {
 };
 $("btn-train-stop").onclick = () => st.trainJob && api(`/api/jobs/${st.trainJob}/cancel`, {}).catch(showError);
 function renderTrainResult(r) {
+  if (r.metric_name === "map50") return renderDetResult(r);
+  $("det-box").hidden = true;
   const isAcc = r.metric_name === "accuracy";
   const f = (v) => (v === null ? "-" : isAcc ? pct(v) : v.toFixed(3));
   const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(4)));
@@ -785,6 +834,53 @@ function renderTrainResult(r) {
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", r.confusion, r.recall, "시험 데이터", Array.isArray(r.pred));
   renderScatter("train-scatter", r.scatter, r.mae, "시험 데이터");
+}
+function detVerdict(r) {                               // 탐지 결과를 쉬운 말로 + 다음에 해 볼 일
+  const t = r.test_metric, tr = r.train_metric;
+  if (t === null || t === undefined) return null;
+  if (t < 0.1) return ["bad", "아직 사물을 거의 찾지 못합니다.",
+    "Epochs를 늘리거나(50–100), '깊은 탐지 모델'을 써 보거나, 상자를 그린 그림을 더 모아 보세요."];
+  if (tr !== null && tr !== undefined && tr - t > 0.2)
+    return ["warn", `학습 그림은 ${pct(tr)}인데 시험 그림은 ${pct(t)}입니다. 학습 그림을 외운 것일 수 있습니다 (과적합).`,
+      "상자를 그린 그림을 더 모으거나, Epochs를 줄이거나, 채널을 줄여 보세요."];
+  if (t >= 0.7) return ["good", `시험 그림에서 mAP@0.5 ${pct(t)} — 사물의 위치와 종류를 잘 찾습니다.`,
+    "아래 시험 그림에서 놓친 것(점선만 있는 상자)과 잘못 찾은 것을 보고, ⑤ 예측에서 새 그림에 써 보세요."];
+  return ["warn", `시험 그림에서 mAP@0.5 ${pct(t)}입니다. 찾긴 하지만 더 좋아질 수 있습니다.`,
+    "Epochs를 늘리거나 '깊은 탐지 모델'로 바꿔 보고, 아래 그림에서 어떤 사물을 놓치는지 보세요."];
+}
+function renderDetResult(r) {
+  const cls = st.summary.classes || [], pr = r.pr || {};
+  const rows = [["Epochs", r.epochs_done], ["시험 mAP@0.5", `<b>${pct(r.test_metric)}</b>`]];
+  if (r.train_metric !== null && r.train_metric !== undefined) rows.push(["학습 mAP@0.5", pct(r.train_metric)]);
+  (r.ap || []).forEach((a, k) => { if (a !== null) rows.push([`AP '${cls[k]}'`, pct(a)]); });
+  if (pr.precision !== undefined) rows.push(["점수 50% 이상만 볼 때",
+    `찾은 것 중 맞음 ${pct(pr.precision)} · 정답 중 찾음 ${pct(pr.recall)} <span class="muted">(잘못 찾음 ${pr.fp} · 놓침 ${pr.fn})</span>`]);
+  const v = detVerdict(r);
+  $("train-result").innerHTML = kv(rows) + (v ? `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>` : "") +
+    `<p class="muted det-help">mAP@0.5: 찾은 상자가 정답 상자와 절반 이상 겹치고 종류도 맞으면 맞힌 것으로 보고, 점수 높은 순으로 줄 세워 구한 정밀도·재현율 곡선의 넓이를 클래스마다 평균한 값 (1이면 완벽).</p>`;
+  renderWarnings("train-warnings", r.warnings);
+  renderConfusion("train-confusion", null);
+  st.detPred = r.det_pred || null;
+  $("train-scatter").innerHTML = "";
+  $("det-box").hidden = !st.detPred;
+  $("det-box").innerHTML = st.detPred ? `<div class="row det-head"><h3>시험 그림에서 찾은 사물</h3>` +
+    `<label class="muted det-th">점수 <input id="det-th" type="range" min="0.25" max="0.95" step="0.05" value="${st.detTh || 0.5}"> <b id="det-th-v">${Math.round((st.detTh || 0.5) * 100)}%</b> 이상만 보기</label></div>` +
+    detLegend(cls) + `<div id="det-gallery" class="det-gallery"><p class="muted">그림을 불러오는 중…</p></div>` : "";
+  if (!st.detPred) return;
+  $("det-th").oninput = (e) => { st.detTh = Number(e.target.value); $("det-th-v").textContent = Math.round(st.detTh * 100) + "%"; drawDetGallery(); };
+  api("/api/samples", { indices: Array.from({ length: Math.min(24, st.summary.n_test) }, (_, i) => i) })
+    .then((s) => { st.detItems = s.items; drawDetGallery(); })
+    .catch((e) => { $("det-gallery").innerHTML = `<p class="err">${esc(e.message || e)}</p>`; });
+}
+function drawDetGallery() {
+  const el = $("det-gallery"), s = st.summary;
+  if (!el || !st.detItems || !st.detPred) return;
+  const th = st.detTh || 0.5;
+  el.innerHTML = st.detItems.map((it) => {
+    const p = st.detPred[it.index] || [], found = p.filter((q) => q[1] >= th).length;
+    return `<div class="det-card">${detImage(it.input, s.image[0], s.image[1], 168, it.label, p, s.classes, th)}` +
+      `<div class="muted">시험 ${it.index + 1} · 정답 ${it.label.length} · 찾음 ${found}</div></div>`;
+  }).join("");
 }
 function baselineOf(r) {                                // 분류: 시험 데이터에서 가장 많은 클래스만 답할 때 정확도
   if (!r.confusion) return null;
@@ -917,7 +1013,8 @@ function applyTrained(graph, results, settings) {        // 학습한 모델을 
 // ------------------------------------------------------------ ⑤ 새 데이터로 예측
 const PREDICT_FORMAT = {
   csv: (s) => `CSV: 한 행 = 샘플 하나, 값 열 ${s.image ? s.image[0] * s.image[1] + "개(픽셀)" : s.length + "개"} — 학습 CSV와 같은 순서. 정답 열이 더 있으면 맞았는지 표시합니다.`,
-  folder: (s) => `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백으로 바꾸고 ${s.image[0]}×${s.image[1]}로 맞춥니다. 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.`,
+  folder: (s) => s.task === "detection" ? `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백 ${s.image[0]}×${s.image[1]}로 맞추고 그림마다 사물을 찾아 상자로 표시합니다. CSV에는 상자마다 한 줄 (위치는 그림 크기에 대한 0–1 비율).`
+    : `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백으로 바꾸고 ${s.image[0]}×${s.image[1]}로 맞춥니다. 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.`,
   series: () => "시계열 폴더: 샘플마다 CSV 하나 (학습 때와 같은 값 열·길이 맞추기). 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.",
 };
 function renderPredictStep() {
@@ -951,7 +1048,23 @@ async function runPredict(body) {
     $("predict-issues").innerHTML = (e.issues || []).map((i) => `<li>${esc(i.message)}<span class="hint">→ ${esc(i.hint)}</span></li>`).join("");
   }
 }
+function renderPredictDet(r) {                          // 탐지: 그림마다 찾은 상자 (그림 + 표)
+  const s = r.summary, names = st.summary.classes, im = st.summary.image;
+  const cards = [["그림", s.n], ["찾은 상자", s.n_boxes]].concat(Object.entries(s.counts).map(([c, n]) => [`'${c}'`, n]));
+  if (s.no_box) cards.push(["찾은 것 없는 그림", s.no_box]);
+  $("predict-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+  $("predict-gallery").innerHTML = (r.pics || []).length ? detLegend(names).replace("점선 = 정답 · ", "") +
+    `<div class="det-gallery">${r.pics.map((p, i) => `<div class="det-card">${detImage(p.values, im[0], im[1], 168, null, r.rows[i].boxes, names, s.score)}` +
+      `<div class="muted">${esc(p.name)} · ${r.rows[i].boxes.length}개</div></div>`).join("")}</div>` +
+    (r.rows.length > r.pics.length ? `<p class="muted">그림은 처음 ${r.pics.length}장만 보입니다. 전부는 아래 표와 CSV로.</p>` : "") : "";
+  $("predict-table").innerHTML = `<tr><th>그림</th><th>찾은 상자</th><th>내용 (클래스 점수)</th></tr>` + r.rows.map((x) =>
+    `<tr><td>${esc(x.name)}</td><td><b>${x.boxes.length}</b></td><td>${x.boxes.map((b) => `${esc(names[b[0]])} ${Math.round(b[1] * 100)}%`).join(", ") || '<span class="muted">없음</span>'}</td></tr>`).join("");
+  $("predict-note").textContent = r.shown < s.n ? `표에는 처음 ${r.shown}개만 보입니다. 전부는 CSV로 내려받으세요.` : "";
+  $("predict-result").hidden = false;
+}
 function renderPredict(r) {
+  $("predict-gallery").innerHTML = "";
+  if (r.summary.task === "detection") return renderPredictDet(r);
   const s = r.summary, cls = s.task === "classification", num = (v) => Number(Number(v).toPrecision(4));
   const cards = [["샘플", s.n]];
   if (cls) {

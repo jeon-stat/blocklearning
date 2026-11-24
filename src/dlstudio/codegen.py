@@ -96,7 +96,10 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
                 continue
             nm = _ident(_pretty(t, n, counts), used)
             out = tuple(c.shapes[k])
-            plan.steps.append(Step(nm, t, _config(n), [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k), k))
+            cfg = _config(n)
+            if t == "output" and getattr(n_out, "grid", None):       # 탐지 출력: 격자 칸마다 1×1 필터
+                cfg = dict(cfg, head="grid", per_cell=n_out.per_cell, grid=n_out.grid)
+            plan.steps.append(Step(nm, t, cfg, [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k), k))
             names[k], shapes[k] = nm, out
         return names[scope.exit]
 
@@ -148,6 +151,14 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
         what = "값 한 줄 (시계열이면 시점, 표면 특징)"
     lines = [f"입력: {shape} — {what}"]
     info = data_info or {}
+    head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
+    if head:
+        G, A = head["grid"], head["per_cell"]
+        lines.append(f"출력: (샘플 수, {plan.n_out}) = 칸마다 값 {A}개 × 격자 {G}×{G}칸을 펼친 것 (값 순서가 먼저, PyTorch 모양 (값, 세로, 가로)). "
+                     f"칸마다: 사물 있음 · 칸 안 가운데 x·y · 너비·높이의 제곱근 · 클래스 점수 {A - 5}개"
+                     + (f" ({', '.join(map(str, info.get('classes') or []))})" if info.get("classes") else ""))
+        lines.append("정답: 그림마다 같은 모양의 목표값 (DL studio의 dlstudio.detect.encode). 찾은 상자는 아래 decode()로.")
+        return lines
     if info.get("task") == "classification" and info.get("classes"):
         lines.append(f"출력: (샘플 수, {plan.n_out}) 클래스 점수 — 가장 큰 칸이 예측. 순서: {', '.join(map(str, info['classes']))}")
     elif info.get("task") == "regression":
@@ -218,6 +229,8 @@ def _torch_layer(s: Step, n_out: int):
         return f"nn.Dropout({float(b.get('rate', 0.5))})", f"{me}({a})", []
     if t == "flatten":
         return None, f"torch.flatten({a}, 1)", []
+    if t == "output" and b.get("head") == "grid":
+        return f"nn.Conv2d({s.in_shape[0]}, {b['per_cell']}, 1)", f"torch.flatten({me}({a}), 1)", [(s.key + ".0", s.name)]
     if t in ("dense", "output"):
         units = n_out if t == "output" else b["units"]
         flat = len(s.in_shape) >= 2
@@ -271,6 +284,9 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     lines += ["", "", "class StudioModel(nn.Module):", "    def __init__(self):", "        super().__init__()"]
     lines += init or ["        pass"]
     lines += ["", "    def forward(self, x):"] + fwd_lines + [f"        return {plan.out}", "", ""]
+    head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
+    if head:
+        return "\n".join(lines + _torch_det(head, tr, weights_file, plan))
     if task == "regression":
         loss, ytype = "nn.MSELoss()", "torch.float32"
     else:
@@ -331,6 +347,97 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     return "\n".join(lines)
 
 
+def _torch_det(head: dict, tr: dict, weights_file: Optional[str], plan: Plan) -> list:
+    """탐지: 손실(YOLO 첫 버전식, DL studio와 같음)·상자 풀기·학습·예측 코드."""
+    from dlstudio import detect
+    G, A = head["grid"], head["per_cell"]
+    H, W = plan.in_shape[1], plan.in_shape[2]
+    out = [
+        f"GRID, PER_CELL = {G}, {A}          # 격자 {G}×{G}, 칸마다 값 {A}개",
+        "", "",
+        "def det_loss(out, target):",
+        '    """있음(BCE, 없는 칸은 무게 %s) + 사물 칸의 위치·크기 제곱 오차 × %s + 클래스 교차 엔트로피, 그림 수로 나눔."""'
+        % (detect.LAMBDA_NOOBJ, detect.LAMBDA_COORD),
+        "    N = out.shape[0]",
+        "    o, t = out.reshape(N, PER_CELL, GRID, GRID), target.reshape(N, PER_CELL, GRID, GRID)",
+        "    pos = t[:, 0]",
+        "    bce = F.binary_cross_entropy_with_logits(o[:, 0], pos, reduction=\"none\")",
+        f"    loss = (bce * (pos + {detect.LAMBDA_NOOBJ} * (1 - pos))).sum()",
+        f"    loss = loss + {detect.LAMBDA_COORD} * (((torch.sigmoid(o[:, 1:5]) - t[:, 1:5]) ** 2).sum(1) * pos).sum()",
+        "    if PER_CELL > 6:",
+        "        loss = loss + (-(t[:, 5:] * F.log_softmax(o[:, 5:], 1)).sum(1) * pos).sum()",
+        "    return loss / N",
+        "", "",
+        f"def decode(out_row, score_min={detect.SHOW_SCORE}, nms_iou={detect.NMS_IOU}):",
+        '    """출력 한 줄 → 찾은 상자 [(클래스 번호, 점수, x, y, w, h)] (0–1 비율, 왼쪽 위 기준). 점수 = 있음 × 클래스 확률."""',
+        "    o = torch.as_tensor(out_row, dtype=torch.float32).reshape(PER_CELL, GRID, GRID)",
+        "    obj = torch.sigmoid(o[0])",
+        "    prob = torch.softmax(o[5:], 0) if PER_CELL > 6 else torch.ones(1, GRID, GRID)",
+        "    p, k = prob.max(0)",
+        "    score = obj * p",
+        "    cand = []",
+        "    for gy, gx in (score >= score_min).nonzero().tolist():",
+        "        cx, cy = (gx + torch.sigmoid(o[1, gy, gx]).item()) / GRID, (gy + torch.sigmoid(o[2, gy, gx]).item()) / GRID",
+        "        w, h = torch.sigmoid(o[3, gy, gx]).item() ** 2, torch.sigmoid(o[4, gy, gx]).item() ** 2",
+        "        x0, y0, x1, y1 = max(0.0, cx - w / 2), max(0.0, cy - h / 2), min(1.0, cx + w / 2), min(1.0, cy + h / 2)",
+        "        cand.append((int(k[gy, gx]), float(score[gy, gx]), x0, y0, x1 - x0, y1 - y0))",
+        "    keep = []",
+        "    for c in sorted(cand, key=lambda b: -b[1]):                     # 같은 클래스끼리 많이 겹치면 점수 높은 것만",
+        "        if all(c[0] != q[0] or _iou(c[2:], q[2:]) <= nms_iou for q in keep):",
+        "            keep.append(c)",
+        "    return keep",
+        "", "",
+        "def _iou(a, b):",
+        "    x0, y0, x1, y1 = max(a[0], b[0]), max(a[1], b[1]), min(a[0] + a[2], b[0] + b[2]), min(a[1] + a[3], b[1] + b[3])",
+        "    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)",
+        "    union = a[2] * a[3] + b[2] * b[3] - inter",
+        "    return inter / union if union > 0 else 0.0",
+        "", "",
+        f"def train(model, X, Y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
+        '    """X: 위 입력 모양의 그림, Y: 그림마다 목표값 (샘플 수, %d). Adam으로 학습."""' % (G * G * A),
+        "    X, Y = torch.as_tensor(X, dtype=torch.float32), torch.as_tensor(Y, dtype=torch.float32)",
+        "    opt = torch.optim.Adam(model.parameters(), lr=lr)",
+        "    for epoch in range(epochs):",
+        "        model.train()",
+        "        for idx in torch.randperm(len(X)).split(batch_size):",
+        "            opt.zero_grad()",
+        "            loss = det_loss(model(X[idx]), Y[idx])",
+        "            loss.backward()",
+        "            opt.step()",
+        '        print(f"epoch {epoch + 1}: loss {loss.item():.4f}")',
+        "    return model.eval()",
+        "", "",
+    ]
+    if weights_file:
+        out += [
+            f'def load_trained(path="{weights_file}"):',
+            '    """DL studio에서 학습한 모델과 정규화 값을 불러옴 → (model, info)."""',
+            "    z = np.load(path)",
+            "    model = StudioModel()",
+            '    model.load_state_dict({k: torch.from_numpy(z[k]) for k in z.files if not k.startswith("_")})',
+            '    info = {k[1:]: z[k] for k in z.files if k.startswith("_")}       # mean, std, classes',
+            "    return model.eval(), info",
+            "", "",
+            "def predict(model, info, images):",
+            f'    """흑백 그림들 (샘플 수, {H}, {W}) 픽셀 0–1 → 그림마다 찾은 상자 [(클래스 이름, 점수, x, y, w, h)]."""',
+            '    x = (np.asarray(images, dtype=np.float32).reshape(len(images), -1) - info["mean"]) / info["std"]',
+            f"    x = torch.as_tensor(x.reshape(-1, 1, {H}, {W}), dtype=torch.float32)",
+            "    with torch.no_grad():",
+            "        out = model(x)",
+            '    return [[(str(info["classes"][b[0]]),) + b[1:] for b in decode(row)] for row in out]',
+            "", "",
+            'if __name__ == "__main__":',
+            "    model, info = load_trained()",
+            f"    images = np.zeros((2, {H}, {W}), dtype=np.float32)         # ← 여기에 내 그림 (흑백 {H}×{W}, 0–1)",
+            "    print(predict(model, info, images))",
+            "",
+        ]
+        return out
+    return out + ['if __name__ == "__main__":', "    model = StudioModel().eval()",
+                  f"    x = torch.randn(4, 1, {H}, {W})", "    with torch.no_grad():",
+                  "        print([len(decode(row)) for row in model(x)])       # 그림마다 찾은 상자 수 (학습 전이라 무작위)", ""]
+
+
 def code_state(state: dict, graph: dict, length: int, n_out: int, image: tuple = None) -> dict:
     """studio 가중치(GraphNet state_dict 이름: mods.m_<id>...) → 생성한 PyTorch 코드(StudioModel)의 이름. 값은 그대로."""
     plan = make_plan(graph, length, n_out, image)
@@ -359,7 +466,7 @@ def save_npz(state: dict, file, data=None) -> None:
     if data is not None:
         arrays["_mean"] = np.asarray(data.mean, dtype=np.float32)
         arrays["_std"] = np.asarray(data.std, dtype=np.float32)
-        if data.task == "classification":
+        if data.task in ("classification", "detection"):
             arrays["_classes"] = np.asarray([str(c) for c in data.classes])
     np.savez(file, **arrays)
 
@@ -377,6 +484,8 @@ def param_specs(step: Step) -> list:
         C = ins[0]
         return [w("weight", C), w("bias", C), (f"{k}.running_mean", [C], "buffer"), (f"{k}.running_var", [C], "buffer"),
                 (f"{k}.num_batches_tracked", [], "count")]
+    if t == "output" and b.get("head") == "grid":
+        return [(f"{k}.0.weight", [b["per_cell"], ins[0], 1, 1], "weight"), (f"{k}.0.bias", [b["per_cell"]], "weight")]
     if t in ("dense", "output"):
         units = step.out_shape[0]
         kk = k + (".1" if len(ins) >= 2 else "")
@@ -452,6 +561,10 @@ def _keras_lines(s: Step, n_out: int) -> list:
         return [f"{n} = layers.Dropout({float(b.get('rate', 0.5))}, {nm})({a})"]
     if t == "flatten":
         return [f"{n} = layers.Flatten({nm})({a})"]
+    if t == "output" and b.get("head") == "grid":              # 칸마다 1×1 필터, 채널을 앞으로 옮겨 펼침 (PyTorch와 같은 순서)
+        return [f'{n}_cells = layers.Conv2D({b["per_cell"]}, 1, name="{n}_cells")({a})',
+                f'{n}_first = layers.Permute((3, 1, 2), name="{n}_first")({n}_cells)',
+                f"{n} = layers.Flatten({nm})({n}_first)"]
     if t in ("dense", "output"):
         units = n_out if t == "output" else b["units"]
         out = []
@@ -510,7 +623,23 @@ def to_keras(graph: dict, length: int, n_out: int, image: tuple = None, data_inf
         helpers += ["", "", "def mish(t):", "    return t * tf.math.tanh(tf.math.softplus(t))"]
     doc = _io_doc(plan, data_info, channels_last=True)
     doc.append("가중치: DL studio에서 학습한 값은 들어 있지 않음 (TensorFlow에서 아래 train으로 새로 학습)")
-    if task == "regression":
+    head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
+    if head:
+        from dlstudio import detect
+        G, A = head["grid"], head["per_cell"]
+        helpers += ["", "", f"GRID, PER_CELL = {G}, {A}", "", "",
+                    "def det_loss(target, out):",
+                    '    """DL studio와 같은 탐지 손실 (YOLO 첫 버전식). 출력·목표값은 (값, 세로, 가로) 순서로 펼친 것."""',
+                    "    o, t = tf.reshape(out, (-1, PER_CELL, GRID, GRID)), tf.reshape(target, (-1, PER_CELL, GRID, GRID))",
+                    "    pos = t[:, 0]",
+                    "    bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=pos, logits=o[:, 0])",
+                    f"    loss = tf.reduce_sum(bce * (pos + {detect.LAMBDA_NOOBJ} * (1 - pos)))",
+                    f"    loss += {detect.LAMBDA_COORD} * tf.reduce_sum(tf.reduce_sum((tf.sigmoid(o[:, 1:5]) - t[:, 1:5]) ** 2, 1) * pos)",
+                    "    if PER_CELL > 6:",
+                    "        loss += tf.reduce_sum(-tf.reduce_sum(t[:, 5:] * tf.nn.log_softmax(o[:, 5:], axis=1), 1) * pos)",
+                    "    return loss / tf.cast(tf.shape(out)[0], tf.float32)"]
+        loss, metric = "det_loss", "[]"
+    elif task == "regression":
         loss, metric = '"mse"', '["mae"]'
     else:
         loss, metric = "keras.losses.SparseCategoricalCrossentropy(from_logits=True)", '["accuracy"]'

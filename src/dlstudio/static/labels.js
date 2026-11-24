@@ -204,9 +204,8 @@ function setup() {
   $("lab-use").onclick = async () => {
     if (!cur) return;
     const sc = (LB().state() || {}).schema;
-    if (sc === "boxes" || sc === "segments")                // studio에 아직 없는 과제: 내보내기로 안내
-      return LB().showMessage(sc === "boxes" ? "도형(상자·다각형·점) 정답으로 학습하는 '객체 탐지·분할' 과제는 아직 studio에 없습니다" : "구간 정답으로 학습하는 '구간 분할' 과제는 아직 studio에 없습니다",
-        sc === "boxes" ? "[내보내기]에서 YOLO·COCO로 받아 다른 탐지 도구에서 쓸 수 있습니다" : "[내보내기]로 구간 표를 받아 두세요");
+    if (sc === "segments")                                  // studio에 아직 없는 과제: 내보내기로 안내
+      return LB().showMessage("구간 정답으로 학습하는 '구간 분할' 과제는 아직 studio에 없습니다", "[내보내기]로 구간 표를 받아 두세요");
     await saveNow();
     useInStudio(cur.id);
     LB().showMessage("studio를 새 탭에서 열어 이 정답으로 학습 데이터를 불러옵니다", "라벨링은 이 탭에서 계속할 수 있습니다", "", true);

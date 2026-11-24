@@ -6,7 +6,7 @@
 "use strict";
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
-const PY_FILES = ["__init__.py", "analysis.py", "blocks.py", "codegen.py", "core.py", "data.py", "graph.py", "jobs.py",
+const PY_FILES = ["__init__.py", "analysis.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "graph.py", "jobs.py",
   "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
 const DATA_FILES = ["data/digits8.npz", "data/pneumonia28.npz"];
 const E = () => window.DLEngine;
@@ -142,7 +142,8 @@ function activations(body) {
   const out = net.predict(x);
   x.dispose();
   let pred;
-  if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; }
+  if (d.task === "detection") pred = `상자 ${E().detDecode(out, 0, d.det, E().DET.show).length}개 찾음`;
+  else if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; }
   else pred = out[0];
   return { index: i, label: s.label, prediction: pred, input: s.input, values, order: s.order };
 }
@@ -221,7 +222,7 @@ function preview(body) {                               // ③ 블록 미리보�
   try {
     const vals = net.trace(x);
     if (!(body.node in vals)) throw { message: "이 블록의 값을 찾을 수 없음", hint: "블록을 다시 고르세요" };
-    const label = d.task === "classification" ? d.classes[d.y_train[0]] : d.y_train[0];
+    const label = d.task === "detection" ? `상자 ${d.det.train[0].length}개` : d.task === "classification" ? d.classes[d.y_train[0]] : d.y_train[0];
     return { node: body.node, value: E().thin(vals[body.node]), trained, label };
   } finally { x.dispose(); if (!trained) net.dispose(); }
 }

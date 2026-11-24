@@ -93,6 +93,19 @@ T_RESNET2D = {"id": "resnet2d", "name": "작은 ResNet",
               "blocks": [_c2(16), BN, P2, {"type": "repeat", "times": 2, "body": [_res(_c2(16), BN, P2)]}, GAP2, OUT]}
 
 
+T_DET_SMALL = {"id": "det_small", "name": "작은 탐지 모델",
+               "desc": "3×3 필터로 모양을 찾으며 그림을 세 번 줄여 8칸 격자로 만든 뒤, 칸마다 '사물이 있나·상자·종류'를 맞히는 "
+                       "YOLO 첫 버전식 모델",
+               "when": "처음 시작할 때. 배경이 단순한 작은 그림(부품·결함 위치)에서 빠르게 학습",
+               "blocks": [_c2(16), P2, P2D, _c2(32), P2, P2D, _c2(32), P2, P2D, _c2(32), P2, OUT]}
+
+T_DET_RES = {"id": "det_res", "name": "깊은 탐지 모델",
+             "desc": "작은 탐지 모델에 BatchNorm과 지름길(Residual)을 더해 더 깊게 쌓아, 더 크고 복잡한 모양도 보는 모델",
+             "when": "작은 탐지 모델로 부족할 때. 학습이 2–3배 오래 걸림",
+             "blocks": [_c2(16), BN, P2, P2D, _c2(32), BN, P2, P2D, _res(_c2(32), BN, P2), _c2(64), BN, P2, P2D,
+                        _res(_c2(64), BN, P2), OUT]}
+
+
 def _soon(id_, name, input_, examples_text, desc):
     return {"id": id_, "name": name, "input": input_, "available": False, "desc": desc,
             "examples_text": examples_text}
@@ -134,6 +147,15 @@ CATALOG = [
           "templates": [T_MLP]},
          _soon("reg_multi", "여러 값 동시 예측", "tabular", "공정 조건으로 두께·강도·수율을 한 번에 예측",
                "숫자 여러 개를 한 모델로 예측"),
+     ]},
+    {"id": "detection", "name": "객체 탐지", "icon": "🎯",
+     "desc": "그림 속 사물이 어디에 있는지 상자로 찾고 종류를 맞힙니다",
+     "subtasks": [
+         {"id": "det_img", "name": "이미지 객체 탐지", "input": "image", "available": True, "task": "detection",
+          "desc": "그림 한 장에서 사물마다 위치(상자)와 종류를 찾음. 정답은 라벨링에서 상자·다각형·원으로 그림",
+          "examples_text": "부품 위치 찾기·개수 세기, 표면 결함 위치 표시, 현미경 사진에서 세포 찾기",
+          "example_data": [["parts_det", "부품 위치 찾기 — 원형·사각 (제조, 64×64)"]],
+          "templates": [T_DET_SMALL, T_DET_RES]},
      ]},
     {"id": "anomaly", "name": "이상 탐지", "icon": "🚨",
      "desc": "정상 데이터만으로 학습해, 평소와 다른 데이터를 찾아냅니다",

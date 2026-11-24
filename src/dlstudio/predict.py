@@ -138,9 +138,41 @@ def _read_images(d, folder: str) -> tuple:
     return names, np.asarray(X), (labels if known else None)
 
 
-def table(d, names: list, out: np.ndarray, labels) -> dict:
-    """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자."""
+SHOW_PICS = 24             # 탐지: 화면에 그림으로 보이는 수
+
+
+def _table_det(d, names: list, out: np.ndarray, X) -> dict:
+    """탐지: 그림마다 찾은 상자 (점수 0.5 이상). CSV는 상자마다 한 줄, 위치는 그림 크기에 대한 0–1 비율 (왼쪽 위 기준)."""
+    from dlstudio.detect import SHOW_SCORE, decode
+    G, K = d.n_out.grid, d.n_out.n_cls
+    cls = [str(c) for c in d.classes]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["그림", "클래스", "점수", "x", "y", "너비", "높이"])
+    rows, counts = [], {c: 0 for c in cls}
+    for i, nm in enumerate(names):
+        bs = decode(out[i], G, K, SHOW_SCORE)
+        for b in bs:
+            counts[cls[b[0]]] += 1
+            w.writerow([nm, cls[b[0]]] + [f"{v:.4f}" for v in b[1:]])
+        if not bs:
+            w.writerow([nm, "", "", "", "", "", ""])
+        if i < SHOW_ROWS:
+            rows.append({"name": nm, "boxes": [[int(b[0])] + [round(float(v), 4) for v in b[1:]] for b in bs]})
+    pics = [] if X is None else [{"name": names[i], "values": np.round(d.raw(np.asarray(X[i], dtype=np.float64)), 3).tolist()}
+                                 for i in range(min(SHOW_PICS, len(names)))]
+    n_boxes = sum(counts.values())
+    summary = {"n": len(names), "task": "detection", "counts": counts, "n_boxes": n_boxes, "score": SHOW_SCORE,
+               "no_box": sum(1 for r in rows if not r["boxes"])}
+    return {"summary": summary, "rows": rows, "shown": min(len(names), SHOW_ROWS), "csv": "\ufeff" + buf.getvalue(),
+            "has_label": False, "pics": pics}
+
+
+def table(d, names: list, out: np.ndarray, labels, X=None) -> dict:
+    """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌)."""
     out = np.asarray(out, dtype=np.float64).reshape(len(names), -1)
+    if d.task == "detection":
+        return _table_det(d, names, out, X)
     cls = d.task == "classification"
     rows, summary = [], {"n": len(names), "task": d.task}
     buf = io.StringIO()
@@ -187,6 +219,8 @@ def table(d, names: list, out: np.ndarray, labels) -> dict:
 
 def new_data_kinds(d) -> list:
     """이 모델에 넣을 수 있는 새 데이터 종류 (화면이 단추를 고름): series(시계열 폴더) · folder(그림 폴더) · csv · rows(직접)."""
+    if d.task == "detection":
+        return ["folder"]
     if d.source.get("series_folder"):
         return ["series", "csv"]
     if d.image:

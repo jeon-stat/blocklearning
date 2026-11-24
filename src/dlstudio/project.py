@@ -100,13 +100,17 @@ def export_torch(model, data, path: str) -> dict:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         traced = torch.jit.trace(m, example, check_trace=False)
-    cls = data.task == "classification"
-    info = {"format": "dlstudio-model", "task": data.task, "classes": [str(c) for c in data.classes] if cls else [],
+    cls, det = data.task == "classification", data.task == "detection"
+    info = {"format": "dlstudio-model", "task": data.task, "classes": [str(c) for c in data.classes] if cls or det else [],
             "n_features": int(data.X_train.shape[1]), "features": list(data.features or []),
             "image": list(data.image) if data.image else None,
             "input": ("행 하나 = 그림 하나를 흑백 0–1 값으로 펼친 픽셀 (높이×너비)" if data.image
                       else "행 하나 = 샘플 하나. 학습 CSV와 같은 열 순서의 원래 값 (정답 열 빼고)"),
-            "output": "클래스마다 점수 (가장 큰 것이 예측, 순서는 classes)" if cls else "예측값 (원래 단위)"}
+            "output": "클래스마다 점수 (가장 큰 것이 예측, 순서는 classes)" if cls else
+            (f"격자 {data.n_out.grid}×{data.n_out.grid} 칸마다 값 {data.n_out.per_cell}개 (있음·가운데 x·y·너비·높이의 제곱근·클래스 점수)를 "
+             "(값, 세로, 가로) 순서로 펼친 것 — DL studio의 dlstudio.detect.decode로 상자를 풂") if det else "예측값 (원래 단위)"}
+    if det:
+        info["grid"], info["per_cell"] = data.n_out.grid, data.n_out.per_cell
     with warnings.catch_warnings():                          # 새 torch는 TorchScript를 낡았다고 알리지만 가장 널리 읽힘
         warnings.simplefilter("ignore")
         torch.jit.save(traced, str(path), _extra_files={"studio.json": json.dumps(info, ensure_ascii=False)})
