@@ -8,7 +8,7 @@
 "use strict";
 
 // 구글 클라우드 콘솔에서 만든 OAuth 클라이언트 ID (공개돼도 되는 값, 비밀번호 아님). 비어 있으면 드라이브는 '준비 중'
-const GOOGLE_CLIENT_ID = "";
+const GOOGLE_CLIENT_ID = "159159621123-6hakqofb5e8o68dt3olbiucbl3q4qsq1.apps.googleusercontent.com";
 // 이 앱이 만든 파일만 보는 권한. 사용자의 다른 드라이브 파일·Gmail·계정에는 닿지 않음 (넓히지 말 것)
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const ROOT_NAME = "DL studio";
