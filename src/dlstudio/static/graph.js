@@ -1,0 +1,1426 @@
+// DL studio 모델 편집기: 층(상자)을 선으로 이은 그래프. 자리는 자동으로 위→아래 (갈래는 옆으로, 건너뛰는 선은 옆으로 돌아감).
+// 그래프 JSON(v2): {version: 2, nodes: [{id, type, ...설정, inputs: [id...]}]}. 입력 노드 id "input", Repeat 묶음 안의 입력 "in".
+// 앞부분은 순수 함수(자동 배치·편집 동작·글자)라 node로 시험하고, 뒷부분(mount)이 화면을 그린다.
+(function () {          // 감싸서 이름이 전역으로 새지 않게 (app.js와 같은 전역 공간을 씀)
+"use strict";
+
+const BOX_W = 236, BOX_H = 50, MERGE_W = 104, MERGE_H = 30, GAP_Y = 34, GAP_X = 30, DUMMY_W = 14, HEAD = 30, PAD = 16,
+  MARGIN = 24, IN_W = 14, IN_H = 10, ACT_D = 64, SNAP = 48, GAP_H = 60;
+
+const TYPES = {
+  conv: { cat: "cnn", name: "Conv1D", desc: "짧은 구간의 모양(패턴)을 찾아 채널(filter)로 나눔",
+    make: () => ({ type: "conv", channels: 16, kernel: 3, stride: 1 }) },
+  pool: { cat: "cnn", name: "AvgPool1D", desc: "이웃 값을 평균 내어 길이를 줄임. 계산이 가벼워짐", make: () => ({ type: "pool", size: 2 }) },
+  conv2d: { cat: "cnn", name: "Conv2D", desc: "작은 네모(3×3 등) 필터로 그림의 획·모서리 같은 모양을 찾음",
+    make: () => ({ type: "conv2d", channels: 8, kernel: 3, stride: 1 }) },
+  pool2d: { cat: "cnn", name: "AvgPool2D", desc: "2×2 칸을 평균 내어 그림 크기를 절반으로", make: () => ({ type: "pool2d", size: 2 }) },
+  global_avg2d: { cat: "cnn", name: "GlobalAvgPool2D", desc: "채널마다 그림 전체를 평균 내어 값 하나로", make: () => ({ type: "global_avg2d" }) },
+  global_avg: { cat: "cnn", name: "GlobalAvgPool1D", desc: "채널마다 모든 시점을 평균 내어 값 하나로", make: () => ({ type: "global_avg" }) },
+  last_step: { cat: "cnn", name: "LastTimestep", desc: "채널마다 마지막 시점 값만 남김 (TCN식 분류)", make: () => ({ type: "last_step" }) },
+  bn: { cat: "cnn", name: "BatchNorm", desc: "값 크기를 고르게 맞춤. 학습이 안정됨", make: () => ({ type: "bn" }) },
+  act: { cat: "act", name: "Activation", desc: "꺾임(비선형)을 넣음. 잘 모르겠으면 ReLU",
+    make: () => ({ type: "act", kind: "relu" }) },
+  se: { cat: "struct", name: "SE block", desc: "채널마다 중요도를 배워 곱함 (Squeeze-and-Excitation, 채널 주의)",
+    make: () => ({ type: "se", ratio: 4, act: "relu" }) },
+  dropout: { cat: "struct", name: "Dropout", desc: "학습 때 일부 값을 무작위로 꺼서 과적합을 막음 (예측 때는 없음)",
+    make: () => ({ type: "dropout", rate: 0.2 }) },
+  flatten: { cat: "struct", name: "Flatten", desc: "(channels, length)를 한 줄로 펼침 (Dense 앞)", make: () => ({ type: "flatten" }) },
+  dense: { cat: "struct", name: "Dense", desc: "모든 값을 섞어 정한 개수(units)로 (Linear)", make: () => ({ type: "dense", units: 16 }) },
+  add: { cat: "merge", name: "Add (+)", desc: "들어온 값들을 더함 (모양이 같아야 함). 잔차·건너뛰는 연결", make: () => ({ type: "add" }) },
+  concat: { cat: "merge", name: "Concat", desc: "들어온 값들을 채널 방향으로 이어 붙임 (길이가 같아야 함). 갈래 합치기",
+    make: () => ({ type: "concat" }) },
+  lstm: { cat: "rnn", name: "LSTM", desc: "시점을 차례로 읽으며 기억. Input 바로 아래에만",
+    make: () => ({ type: "lstm", hidden: 16, layers: 1 }) },
+  simple_rnn: { cat: "rnn", name: "SimpleRNN", desc: "가장 단순한 순환 층. Input 바로 아래에만",
+    make: () => ({ type: "simple_rnn", hidden: 16, layers: 1 }) },
+  gru: { cat: "rnn", name: "GRU", desc: "LSTM보다 가벼운 순환 층. Input 바로 아래에만", make: () => ({ type: "gru", hidden: 16, layers: 1 }) },
+  output: { cat: "out", name: "Output", desc: "classification이면 클래스 수, regression이면 값 하나", make: () => ({ type: "output" }) },
+};
+const ACT_NAMES = { relu: "ReLU", sigmoid: "Sigmoid", tanh: "Tanh", leaky_relu: "LeakyReLU", gelu: "GELU",
+  silu: "SiLU / Swish", elu: "ELU", mish: "Mish", softplus: "Softplus" };
+const RNN_NAMES = { lstm: "LSTM", gru: "GRU", simple_rnn: "SimpleRNN" };
+const ACTS = [["relu", "ReLU (추천)"], ["leaky_relu", "LeakyReLU"], ["gelu", "GELU"], ["silu", "SiLU / Swish"], ["elu", "ELU"],
+  ["mish", "Mish"], ["softplus", "Softplus"], ["sigmoid", "Sigmoid"], ["tanh", "Tanh"]];
+const TABULAR_TYPES = ["dense", "act", "bn", "dropout", "add", "output"];     // 표 데이터: 시간 축이 없어 Conv·RNN을 못 씀
+const IMAGE_ONLY = ["conv2d", "pool2d", "global_avg2d"];
+const IMAGE_TYPES = IMAGE_ONLY.concat(["bn", "act", "dropout", "flatten", "dense", "add", "concat", "output"]);
+function paletteTypes(input) {
+  const all = Object.keys(TYPES).filter((t) => t !== "output");
+  if (input === "tabular") return all.filter((t) => TABULAR_TYPES.includes(t));
+  if (input === "image") return all.filter((t) => IMAGE_TYPES.includes(t));
+  return all.filter((t) => !IMAGE_ONLY.includes(t));
+}
+const CATS = [["cnn", "Convolution (CNN)"], ["act", "Activation"], ["merge", "합치기 (Merge)"], ["rnn", "Recurrent (RNN)"], ["struct", "Structure"]];
+
+// ------------------------------------------------------------ 순수 함수: 그래프 다루기
+const clone = (x) => JSON.parse(JSON.stringify(x));
+const isMerge = (n) => n && (n.type === "add" || n.type === "concat");
+const insOf = (n) => (n && Array.isArray(n.inputs) ? n.inputs : []);
+const nodesOf = (g) => (g && Array.isArray(g.nodes) ? g.nodes : []);
+
+function eachNode(nodes, fn, parent = null) {             // 모든 노드 (묶음 안 포함): fn(node, list, parent)
+  for (const n of nodes || []) {
+    if (!n || typeof n !== "object") continue;
+    fn(n, nodes, parent);
+    if (n.body && Array.isArray(n.body.nodes)) eachNode(n.body.nodes, fn, n);
+  }
+}
+function findNode(g, id) {                                // → {node, list, parent} 또는 null
+  let f = null;
+  eachNode(nodesOf(g), (n, list, parent) => { if (n.id === id && !f) f = { node: n, list, parent }; });
+  return f;
+}
+const entryOf = (parent) => (parent ? "in" : "input");
+function newId(g) {
+  let m = 0;
+  eachNode(nodesOf(g), (n) => { const r = /^n(\d+)$/.exec(n.id || ""); if (r) m = Math.max(m, Number(r[1])); });
+  return "n" + (m + 1);
+}
+function idMaker(g) {                                     // 같은 편집 안에서 여러 개 만들 때
+  let m = Number(newId(g).slice(1));
+  return () => "n" + m++;
+}
+const users = (list, id) => list.filter((n) => insOf(n).includes(id));
+function ancestors(list, id) {                            // id에 닿는(위쪽) 모든 노드 id
+  const map = new Map(list.map((n) => [n.id, n])), out = new Set(), stack = [id];
+  while (stack.length) {
+    const k = stack.pop();
+    if (out.has(k)) continue;
+    out.add(k);
+    const n = map.get(k);
+    if (n) stack.push(...insOf(n));
+  }
+  return out;
+}
+function replaceInput(n, from, to) {                      // n.inputs에서 from을 to로 (첫 번째만)
+  const i = insOf(n).indexOf(from);
+  if (i >= 0) n.inputs[i] = to;
+}
+
+function insertOnEdge(g0, from, to, node) {
+  const g = clone(g0), f = findNode(g, to);
+  if (!f || !insOf(f.node).includes(from)) return g;
+  const n = Object.assign({}, node, { id: node.id || newId(g), inputs: [from] });
+  replaceInput(f.node, from, n.id);
+  f.list.splice(f.list.indexOf(f.node), 0, n);
+  return g;
+}
+function connect(g0, from, to) {                          // → {graph, error}
+  const g = clone(g0), f = findNode(g, to);
+  if (!f || f.node.type === "input") return { graph: g0, error: "Input에는 선을 이을 수 없습니다" };
+  const entry = entryOf(f.parent);
+  if (from !== entry && !f.list.some((n) => n.id === from)) return { graph: g0, error: "같은 묶음 안의 층끼리만 이을 수 있습니다" };
+  const src = f.list.find((n) => n.id === from);
+  if (src && src.type === "output") return { graph: g0, error: "출력 뒤에는 이을 수 없습니다" };
+  if (from === to || ancestors(f.list, from).has(to)) return { graph: g0, error: "아래에서 위로는 이을 수 없습니다 (선이 돌게 됨)" };
+  const t = f.node;
+  if (insOf(t).includes(from)) return { graph: g0, error: "이미 이어져 있습니다" };
+  if (isMerge(t)) t.inputs = insOf(t).concat([from]);        // 합치기 상자: 입력을 더함
+  else t.inputs = [from];                                     // 보통 층: 기존 선을 새 선으로 바꿈
+  return { graph: g, error: null };
+}
+// 출력 동그라미를 빈 곳에 놓고 층을 고름: from 뒤에 이어진 새 층 → {graph, id}
+function addConnected(g0, from, node, pos) {
+  const g = clone(g0), f = findNode(g, from);
+  if (!f) return { graph: g0, id: null };
+  const n = Object.assign({}, node, { id: newId(g), inputs: [from] });
+  if (validPos(pos)) n.pos = [Math.max(0, Math.round(pos[0])), Math.max(0, Math.round(pos[1]))];
+  f.list.splice(f.list.indexOf(f.node) + 1, 0, n);
+  return { graph: g, id: n.id };
+}
+// 입력 동그라미를 빈 곳에 놓고 층을 고름: to 앞을 채우는 새 층 (합치기 상자면 입력을 더함) → {graph, id}
+function addFeeding(g0, to, node, pos) {
+  const g = clone(g0), f = findNode(g, to);
+  if (!f || f.node.type === "input") return { graph: g0, id: null };
+  const n = Object.assign({}, node, { id: newId(g), inputs: [] });
+  if (validPos(pos)) n.pos = [Math.max(0, Math.round(pos[0])), Math.max(0, Math.round(pos[1]))];
+  f.list.splice(f.list.indexOf(f.node), 0, n);
+  f.node.inputs = isMerge(f.node) ? insOf(f.node).concat([n.id]) : [n.id];
+  return { graph: g, id: n.id };
+}
+function removeNode(g0, id) {
+  const f0 = findNode(g0, id);
+  if (!f0 || f0.node.type === "input" || f0.node.type === "output") return g0;
+  const g = clone(g0), f = findNode(g, id), rep = insOf(f.node)[0];
+  for (const u of users(f.list, id)) {
+    u.inputs = u.inputs.map((x) => (x === id ? rep : x)).filter((x) => x !== undefined);
+    if (isMerge(u)) u.inputs = u.inputs.filter((x, i) => u.inputs.indexOf(x) === i);
+  }
+  f.list.splice(f.list.indexOf(f.node), 1);
+  return g;
+}
+function removeEdge(g0, from, to) {
+  const g = clone(g0), f = findNode(g, to);
+  if (!f) return g0;
+  const i = insOf(f.node).indexOf(from);
+  if (i >= 0) f.node.inputs.splice(i, 1);
+  return g;
+}
+// 고른 노드들이 "입구 하나·출구 하나"인 묶음인지: → {source, exit, list} 또는 null
+function singleEntryExit(g, ids) {
+  if (!ids || !ids.length) return null;
+  const fs = ids.map((id) => findNode(g, id));
+  if (fs.some((f) => !f || f.node.type === "input" || f.node.type === "output") || fs.some((f) => f.list !== fs[0].list)) return null;
+  const list = fs[0].list, sel = new Set(ids);
+  const ext = new Set();
+  for (const f of fs) for (const x of insOf(f.node)) if (!sel.has(x)) ext.add(x);
+  if (ext.size !== 1) return null;
+  const outside = list.filter((n) => !sel.has(n.id));
+  const exits = ids.filter((id) => outside.some((n) => insOf(n).includes(id)));
+  const sinks = ids.filter((id) => !list.some((n) => sel.has(n.id) && insOf(n).includes(id)));
+  if (exits.length > 1 || sinks.length !== 1 || (exits.length === 1 && exits[0] !== sinks[0])) return null;
+  return { source: [...ext][0], exit: sinks[0], list, parent: fs[0].parent };
+}
+function wrapResidual(g0, ids, shapes) {
+  const s0 = singleEntryExit(g0, ids);
+  if (!s0) return g0;
+  const g = clone(g0), s = singleEntryExit(g, ids), mk = idMaker(g);
+  const a = (shapes || {})[s.source], b = (shapes || {})[s.exit];
+  let sc = s.source;
+  const scNode = [];
+  if (a && b && JSON.stringify(a) !== JSON.stringify(b)) {
+    sc = mk();
+    if (b.length === 1) scNode.push({ id: sc, type: "dense", units: b[0], inputs: [s.source] });
+    else {
+      const ratio = a.length === b.length ? Math.round(a[1] / b[1]) : 1;
+      scNode.push({ id: sc, type: b.length === 3 ? "conv2d" : "conv", channels: b[0], kernel: 1, stride: ratio === 2 ? 2 : 1,
+        inputs: [s.source] });
+    }
+  }
+  const add = { id: mk(), type: "add", inputs: [s.exit, sc] };
+  for (const u of s.list) if (!ids.includes(u.id)) if (u.inputs) u.inputs = u.inputs.map((x) => (x === s.exit ? add.id : x));
+  const at = s.list.findIndex((n) => n.id === s.exit) + 1;
+  s.list.splice(at, 0, ...scNode, add);
+  return g;
+}
+function wrapRepeat(g0, ids) {
+  if (!singleEntryExit(g0, ids)) return g0;
+  const g = clone(g0), s = singleEntryExit(g, ids), id = newId(g);
+  const body = s.list.filter((n) => ids.includes(n.id)).map((n) => Object.assign({}, n, { inputs: insOf(n).map((x) => (x === s.source ? "in" : x)) }));
+  const rep = { id, type: "repeat", times: 2, inputs: [s.source], body: { nodes: body } };
+  const at = s.list.findIndex((n) => ids.includes(n.id));
+  for (const u of s.list) if (!ids.includes(u.id)) if (u.inputs) u.inputs = u.inputs.map((x) => (x === s.exit ? id : x));
+  for (let i = s.list.length - 1; i >= 0; i--) if (ids.includes(s.list[i].id)) s.list.splice(i, 1);
+  s.list.splice(at, 0, rep);
+  return g;
+}
+function unwrap(g0, id) {
+  const f0 = findNode(g0, id);
+  if (!f0 || f0.node.type !== "repeat" || !f0.node.body) return g0;
+  const g = clone(g0), f = findNode(g, id), r = f.node, src = insOf(r)[0];
+  const body = r.body.nodes || [];
+  const sinks = body.filter((n) => !body.some((m) => insOf(m).includes(n.id)));
+  const exit = sinks.length ? sinks[sinks.length - 1].id : src;
+  const back = body.map((n) => Object.assign({}, n, { inputs: insOf(n).map((x) => (x === "in" ? src : x)) }));
+  for (const u of f.list) {
+    if (u === r || !u.inputs) continue;
+    u.inputs = u.inputs.map((x) => (x === id ? exit : x));
+    if (isMerge(u)) u.inputs = u.inputs.filter((x, i) => u.inputs.indexOf(x) === i);   // 몸체가 비었으면 같은 값 둘이 됨
+  }
+  f.list.splice(f.list.indexOf(r), 1, ...back);
+  return g;
+}
+function splitBranch(g0, ids, newNode) {                  // 같은 입구에서 갈래 하나를 더 만들고 Concat
+  if (!singleEntryExit(g0, ids)) return g0;
+  const g = clone(g0), s = singleEntryExit(g, ids), mk = idMaker(g);
+  const lane = Object.assign({}, newNode, { id: mk(), inputs: [s.source] });
+  const cat = { id: mk(), type: "concat", inputs: [s.exit, lane.id] };
+  for (const u of s.list) if (!ids.includes(u.id)) if (u.inputs) u.inputs = u.inputs.map((x) => (x === s.exit ? cat.id : x));
+  s.list.splice(s.list.findIndex((n) => n.id === s.exit) + 1, 0, lane, cat);
+  return g;
+}
+function copyNodes(g, ids) {
+  const s = singleEntryExit(g, ids);
+  if (!s) return null;
+  return { nodes: clone(s.list.filter((n) => ids.includes(n.id))), source: s.source, exit: s.exit };
+}
+function pasteAfter(g0, id, clip) {                       // → {graph, ids}
+  const f0 = findNode(g0, id);
+  if (!clip || !f0 || f0.node.type === "output") return { graph: g0, ids: [] };
+  const g = clone(g0), f = findNode(g, id), mk = idMaker(g), map = {};
+  eachNode(clip.nodes, (n) => { map[n.id] = mk(); });
+  const remap = (nodes, top) => nodes.map((n) => {
+    const m = Object.assign({}, n, { id: map[n.id], inputs: insOf(n).map((x) => (top && x === clip.source ? id : map[x] || x)) });
+    if (n.body) m.body = { nodes: remap(n.body.nodes || [], false) };
+    return m;
+  });
+  const added = remap(clone(clip.nodes), true);
+  const exit = map[clip.exit];
+  for (const u of users(f.list, id)) replaceInput(u, id, exit);
+  f.list.splice(f.list.indexOf(f.node) + 1, 0, ...added);
+  return { graph: g, ids: added.map((n) => n.id) };
+}
+function setParam(g0, id, key, value) {
+  const g = clone(g0), f = findNode(g, id);
+  if (f) f.node[key] = value;
+  return g;
+}
+// ---- 화면 위치 (pos: 판 위 왼쪽 위 [x, y], 맨 위 층위 상자만. 모델에는 영향 없음)
+const validPos = (p) => Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === "number" && isFinite(v));
+function setPos(g0, id, pos) {
+  const g = clone(g0), f = findNode(g, id);
+  if (f && validPos(pos)) f.node.pos = [Math.round(pos[0]), Math.round(pos[1])];   // 음수도 됨 (희망 위치, 배치가 판 안으로 맞춤)
+  return g;
+}
+function clearPos(g0) {
+  const g = clone(g0);
+  eachNode(nodesOf(g), (n) => { delete n.pos; });
+  return g;
+}
+const stripPos = clearPos;
+// 상자 크기 (보기용, 모델과 상관없음): 고른 상자들에 한 번에. null이면 기본 크기
+const SIZE_MIN = [60, 24], SIZE_MAX = [600, 400];
+function setSize(g0, ids, size) {
+  const g = clone(g0);
+  for (const id of ids) {
+    const f = findNode(g, id);
+    if (!f || f.node.type === "repeat") continue;
+    if (!size) { delete f.node.size; continue; }
+    f.node.size = [0, 1].map((k) => Math.max(SIZE_MIN[k], Math.min(SIZE_MAX[k], Math.round(Number(size[k]) || 0))));
+  }
+  return g;
+}
+function stripView(g0) {                                  // 모델 비교용: 화면용 값(위치·크기·줄바꿈)을 뺀 그래프
+  const g = clone(g0);
+  eachNode(nodesOf(g), (n) => { delete n.pos; delete n.size; delete n.brk; });
+  return g;
+}
+// 줄바꿈 (보기용): 이 상자부터 다음 줄(가로면 아래, 세로면 오른쪽)로
+function setBreak(g0, id, on) {
+  const g = clone(g0), f = findNode(g, id);
+  if (f) { if (on) f.node.brk = true; else delete f.node.brk; }
+  return g;
+}
+function addFree(g0, node, pos) {                         // 선과 먼 곳에 놓음: 아직 안 이어진 상자
+  const g = clone(g0), n = Object.assign({}, node, { id: node.id || newId(g), inputs: [] });
+  if (validPos(pos)) n.pos = [Math.max(0, Math.round(pos[0])), Math.max(0, Math.round(pos[1]))];
+  g.nodes.push(n);
+  return g;
+}
+function moveNode(g0, id, from, to) {                     // 놓인 상자를 다른 선(from → to) 사이로 옮김 → {graph, error}
+  const f = findNode(g0, id), t = findNode(g0, to);
+  if (!f || f.node.type === "input" || f.node.type === "output") return { graph: g0, error: "Input·Output은 옮길 수 없습니다" };
+  if (from === id || to === id) return { graph: g0, error: "제자리입니다" };
+  if (!t || !insOf(t.node).includes(from)) return { graph: g0, error: "그 선을 찾을 수 없습니다" };
+  if (t.list !== f.list) return { graph: g0, error: "묶음 안팎으로는 옮길 수 없습니다 (같은 묶음 안의 선으로)" };
+  const node = clone(f.node);
+  delete node.pos;
+  return { graph: insertOnEdge(removeNode(g0, id), from, to, node), error: null };
+}
+const SHORT_ACT = { relu: "ReLU", sigmoid: "Sigmoid", tanh: "Tanh", leaky_relu: "LReLU",
+  gelu: "GELU", silu: "SiLU", elu: "ELU", mish: "Mish", softplus: "Softplus" };
+function shortLabel(b) { return b.type === "act" ? SHORT_ACT[b.kind] || "Act" : label(b); }
+// 점 p에서 선분 a-b까지 거리
+function segDist(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+  const t = L2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)) : 0;
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+// 끌어 놓을 선: SNAP(48px) 안에서 가장 가까운 선. skip(e) → true면 빼기
+function nearestEdge(edges, p, maxDist = SNAP, skip = null) {
+  let best = null;
+  for (const e of edges) {
+    if (e.kind === "exit" || (skip && skip(e))) continue;
+    for (let i = 0; i + 1 < e.points.length; i++) {
+      const d = segDist(p, e.points[i], e.points[i + 1]);
+      if (d <= maxDist && (!best || d < best.d)) best = { e, d };
+    }
+  }
+  return best ? best.e : null;
+}
+
+// 되돌리기 기록: push(바꾸기 전 상태), undo(지금) → 이전 상태 또는 null, redo(지금) → 다음 상태 또는 null
+function history(limit = 100) {
+  const back = [], fwd = [];
+  return {
+    push(state) { back.push(clone(state)); if (back.length > limit) back.shift(); fwd.length = 0; },
+    undo(cur) { if (!back.length) return null; fwd.push(clone(cur)); return back.pop(); },
+    redo(cur) { if (!fwd.length) return null; back.push(clone(cur)); return fwd.pop(); },
+    canUndo: () => back.length > 0, canRedo: () => fwd.length > 0,
+  };
+}
+
+function label(b, summary) {
+  switch (b.type) {
+    case "input": return "Input";
+    case "conv": return `Conv1D · ${b.channels} filters · k=${b.kernel}` + (b.stride === 2 ? " · stride 2" : "") +
+      ((b.dilation || 1) > 1 ? ` · dilation ${b.dilation}` : "") + (b.padding === "valid" ? " · valid" : "") +
+      ((b.groups || 1) > 1 ? ` · groups ${b.groups}` : "");
+    case "last_step": return "LastTimestep";
+    case "se": return `SE block · ratio ${b.ratio}`;
+    case "dropout": return `Dropout · ${b.rate}`;
+    case "flatten": return "Flatten";
+    case "pool": return `AvgPool1D · pool ${b.size}`;
+    case "conv2d": return `Conv2D · ${b.channels} filters · ${b.kernel}×${b.kernel}` + (b.stride === 2 ? " · stride 2" : "") +
+      (b.padding === "valid" ? " · valid" : "");
+    case "pool2d": return `AvgPool2D · pool ${b.size || 2}`;
+    case "global_avg2d": return "GlobalAvgPool2D";
+    case "global_avg": return "GlobalAvgPool1D";
+    case "bn": return "BatchNorm";
+    case "act": return ACT_NAMES[b.kind] || "Activation";
+    case "dense": return `Dense · ${b.units} units`;
+    case "add": return "Add (+)";
+    case "concat": return "Concat";
+    case "lstm": case "gru": case "simple_rnn": {
+      const n = b.layers || 1;
+      return `${RNN_NAMES[b.type]} · ${b.hidden} units` + (n > 1 ? ` × ${n} layers` : "");
+    }
+    case "repeat": return `Repeat × ${b.times}`;
+    case "output":
+      if (!summary) return "Output";
+      if (summary.task !== "classification") return "Output · regression";
+      {
+        const names = summary.classes.join(" · ");           // 클래스가 많으면 상자를 넘지 않게 개수만
+        return `Output · classification (${names.length > 24 ? `${summary.classes.length} classes` : names})`;
+      }
+    default: return String(b.type);
+  }
+}
+
+// ------------------------------------------------------------ 순수 함수: 자동 배치
+const validSize = (s) => Array.isArray(s) && s.length === 2 && s.every((v) => typeof v === "number" && v > 0 && isFinite(v));
+const NARROW = [132, 66], MERGE_NW = 80;                 // 가로 방향 기본: 좁고 조금 높게 (옆으로 덜 길어짐)
+const sizeOfDefault = (n, dir) => {
+  if (validSize(n.size)) return n.type === "act" ? [Math.min(...n.size), Math.min(...n.size)] : n.size.slice();
+  if (n.type === "act") return [ACT_D, ACT_D];
+  if (isMerge(n)) return [dir === "h" ? MERGE_NW : MERGE_W, MERGE_H];
+  return dir === "h" ? NARROW.slice() : [BOX_W, BOX_H];
+};
+// 글자 폭 어림 (한글 등은 2칸)
+const textUnits = (t) => [...String(t)].reduce((s, ch) => s + (ch.charCodeAt(0) > 0x2e80 ? 2 : 1), 0);
+function fitText(t, w) {                                   // 폭 w(px)에 맞게 줄이고 '…'
+  const max = Math.floor((w - 14) / 6.5);
+  if (textUnits(t) <= max) return t;
+  let out = "";
+  for (const ch of String(t)) { if (textUnits(out + ch) > max - 1) break; out += ch; }
+  return out + "…";
+}
+// 상자 안 이름: 넓으면 한 줄, 좁으면 '종류' / '설정' 두 줄 (넘치면 '…')
+function labelLines(n, summary, w) {
+  const full = label(n, summary);
+  if (w >= 190) return [full];
+  const i = full.indexOf(" · ");
+  return i < 0 ? [fitText(full, w)] : [fitText(full.slice(0, i), w), fitText(full.slice(i + 3), w)];
+}
+
+// 한 층위(맨 위 또는 묶음 몸체)를 배치. 좌표는 이 층위의 (0, 0)에서.
+// 층 배치(위→아래)를 늘 지킨다: 같은 층 상자는 겹치지 않게 옆으로 밀고, 선은 층 사이로만 지나가 짧고 아래로만 간다.
+// 사용자가 옮긴 위치(pos)는 '희망': 가로는 그 자리(겹치면 옆으로 비킴), 세로는 그 높이에 맞는 층으로 내려감(위 상자보다 위로는 못 감).
+function layoutScope(nodes, entryId, sizeOf, opts = {}) {
+  const GY = opts.dir === "h" ? GAP_H : GAP_Y;            // 층 사이 간격 (가로는 동그라미·화살표가 보이게 넓게)
+  const list = (nodes || []).filter((n) => n && typeof n === "object" && typeof n.id === "string");
+  const items = new Map();                                // id → {id, node, w, h, ax, layer, preds: [], succ: [], dummy}
+  const inner = new Map();                                // repeat id → 안쪽 배치
+  const add = (id, node, w, h, ax) => items.set(id, { id, node, w, h, ax: ax === undefined ? w / 2 : ax, layer: 0, preds: [], succ: [], dummy: !node });
+  if (entryId === "in") add("in", null, IN_W, IN_H), (items.get("in").entry = true);
+  for (const n of list) {
+    if (items.has(n.id)) continue;
+    if (n.type === "repeat") {
+      const L = layoutScope(n.body && n.body.nodes, "in", sizeOf, opts);
+      inner.set(n.id, L);
+      const en = L.entries[0];
+      if (opts.dir === "h") {                                     // 가로 방향: (돌려 계산하는 좌표에서) 머리글은 옆축 앞쪽
+        const cross = L.width + 2 * PAD + HEAD, w = Math.max(BOX_H, cross), off = HEAD + PAD + (w - cross) / 2;
+        L.off = [off, PAD];
+        add(n.id, n, w, L.height + 2 * PAD, en ? off + en.x + en.w / 2 : w / 2);
+      } else {
+        const w = Math.max(BOX_W, L.width + 2 * PAD);             // 가로 기준: 묶음 안 입구 (줄이 곧게 이어지게)
+        L.off = [(w - L.width) / 2, HEAD];
+        add(n.id, n, w, L.height + HEAD + PAD, en ? L.off[0] + en.x + en.w / 2 : w / 2);
+      }
+    } else {
+      const [w, h] = sizeOf(n);
+      add(n.id, n, w, h);
+    }
+  }
+  const realIns = (it) => (it.node ? [...new Set(insOf(it.node))].filter((x) => items.has(x) && x !== it.id) : []);
+  const hint = (it) => (it.node && validPos(it.node.pos) ? it.node.pos : null);
+  const out = list.find((n) => n.type === "output");
+  // 1. 층 번호: 가장 긴 경로 (순환은 끊음). lower(id): 이 층보다 위로는 안 감
+  const assign = (lower) => {
+    const memo = new Map(), visiting = new Set();
+    const layerOf = (id) => {
+      if (memo.has(id)) return memo.get(id);
+      if (visiting.has(id)) return 0;
+      visiting.add(id);
+      let v = lower(id);
+      for (const p of realIns(items.get(id))) v = Math.max(v, layerOf(p) + 1);
+      visiting.delete(id);
+      memo.set(id, v);
+      return v;
+    };
+    for (const id of items.keys()) items.get(id).layer = layerOf(id);
+    if (out) {
+      const mx = Math.max(0, ...[...items.values()].filter((it) => it.id !== out.id).map((it) => it.layer));
+      if (items.get(out.id).layer <= mx) items.get(out.id).layer = mx + 1;
+    }
+  };
+  assign(() => 0);
+  // 2. 세로 희망: 자연 배치의 줄 높이로 '몇 번째 줄'인지 정해 그 층 아래로만
+  if ([...items.values()].some((it) => hint(it) && hint(it)[1] > 0)) {
+    const top = rowTops([...items.values()]);
+    const pitch = BOX_H + GY;
+    const layerAt = (y) => {
+      let l = 0;
+      while (l + 1 < top.length && top[l + 1] - GY / 2 <= y) l++;
+      const last = top.length - 1;
+      return l === last && y > top[last] + pitch ? last + Math.round((y - top[last]) / pitch) : l;
+    };
+    assign((id) => { const h = hint(items.get(id)); return h ? layerAt(h[1]) : 0; });
+  }
+  // 3. 선과 보이지 않는 점(dummy): 두 층 이상 건너는 선은 사이 층마다 자리를 차지해 상자와 겹치지 않음
+  const edges = [];
+  for (const it of [...items.values()]) {
+    if (it.dummy) continue;
+    for (const u of realIns(it)) {
+      const a = items.get(u), chainIds = [u];
+      if (it.layer > a.layer + 1) {
+        for (let k = a.layer + 1; k < it.layer; k++) {
+          const d = `${u}>${it.id}#${k}`;
+          add(d, null, DUMMY_W, 0);
+          items.get(d).layer = k;
+          chainIds.push(d);
+        }
+      }
+      chainIds.push(it.id);
+      for (let k = 0; k + 1 < chainIds.length; k++) {
+        const p = items.get(chainIds[k]), q = items.get(chainIds[k + 1]);
+        if (q.layer > p.layer) { p.succ.push(q.id); q.preds.push(p.id); }
+      }
+      edges.push({ from: u, to: it.id, chain: chainIds });
+    }
+  }
+  // 4. 층 안 순서: 깊이 우선(첫 입력을 따라감) → 무게중심 정렬
+  const maxL = Math.max(0, ...[...items.values()].map((it) => it.layer));
+  const rows = Array.from({ length: maxL + 1 }, () => []);
+  const placed = new Set();
+  const prio = (p, q) => {                                // p의 다음 중 q의 우선순위: 첫 입력 직선 < 다른 직선 < 건너뛰기
+    const qi = items.get(q);
+    if (qi.dummy) return 2;
+    return insOf(qi.node)[0] === p ? 0 : 1;
+  };
+  const visit = (id) => {
+    if (placed.has(id)) return;
+    placed.add(id);
+    const it = items.get(id);
+    rows[it.layer].push(id);
+    [...it.succ].sort((a, b) => prio(id, a) - prio(id, b)).forEach(visit);
+  };
+  [...items.values()].filter((it) => !it.preds.length).forEach((it) => visit(it.id));
+  for (const it of items.values()) visit(it.id);
+  const pos = new Map();
+  const index = () => rows.forEach((r) => r.forEach((id, i) => pos.set(id, i)));
+  index();
+  const bary = (ids) => (ids.length ? ids.reduce((s, x) => s + pos.get(x), 0) / ids.length : null);
+  const sortRow = (row, key) => {
+    const k = row.map((id, i) => [id, key(id), i]);
+    k.forEach((x) => { if (x[1] === null) x[1] = pos.get(x[0]); });
+    k.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
+    row.splice(0, row.length, ...k.map((x) => x[0]));
+  };
+  for (let iter = 0; iter < 4; iter++) {
+    for (let l = 1; l <= maxL; l++) sortRow(rows[l], (id) => bary(items.get(id).preds));
+    index();
+    for (let l = maxL - 1; l >= 0; l--) sortRow(rows[l], (id) => bary(items.get(id).succ));
+    index();
+  }
+  // 5. 가로: 각 상자를 첫 입력(또는 희망 위치)의 가운데에 맞추고, 겹치면 오른쪽으로 밂
+  const firstPred = (it) => {
+    if (it.dummy) return it.preds[0];
+    const p0 = insOf(it.node)[0];
+    return it.preds.find((p) => p === p0 || p.startsWith(`${p0}>${it.id}#`)) || it.preds[0];
+  };
+  // 희망 위치가 있으면 줄마다 '가려는 가로 위치'(희망 위치 또는 첫 입력의 가운데) 순으로 세운 뒤 놓음:
+  // 따라가는 상자와 건너뛰는 선이 줄마다 같은 쪽에 있어 선이 엇갈리지 않음
+  const place = (useHints, auto) => {
+    const cx = new Map();
+    rows.forEach((r) => {
+      const wantOf = (id) => {
+        const it = items.get(id), h = useHints && hint(it), f = firstPred(it);
+        return h ? h[0] + it.ax : f !== undefined && cx.has(f) ? cx.get(f) : null;
+      };
+      if (useHints) {
+        const w = new Map(r.map((id) => [id, wantOf(id)]));
+        const k = r.map((id, i) => [id, w.get(id) !== null ? w.get(id) : auto.get(id), i]);
+        k.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
+        r.splice(0, r.length, ...k.map((x) => x[0]));
+      }
+      let cursor = -Infinity;
+      for (const id of r) {
+        const it = items.get(id), want = wantOf(id);
+        const c = Math.max(want !== null ? want : it.ax, cursor + GAP_X + it.ax);
+        cx.set(id, c);
+        cursor = c + it.w - it.ax;
+      }
+    });
+    return cx;
+  };
+  let cx = place(false);
+  if ([...items.values()].some((it) => hint(it))) {
+    cx = place(true, cx);
+    index();
+  }
+  // 6. 세로: 줄마다 가장 높은 상자 기준
+  const rowTop = rowTops([...items.values()]), rowH = rows.map((r) => Math.max(0, ...r.map((id) => items.get(id).h)));
+  const minX = Math.min(0, ...[...items.values()].map((it) => cx.get(it.id) - it.ax));
+  const box = (it) => ({ x: cx.get(it.id) - it.ax - minX, y: rowTop[it.layer] + (rowH[it.layer] - it.h) / 2, w: it.w, h: it.h, ax: it.ax });
+  const res = { nodes: [], groups: [], edges: [], entries: [], width: 0, height: 0 };
+  const entryAt = new Map();                              // 묶음 id → 묶음 안 입구 가운데
+  for (const it of items.values()) {
+    const b = box(it);
+    if (it.entry) { res.entries.push({ x: b.x, y: b.y, w: b.w, h: b.h, anc: [] }); continue; }
+    if (it.dummy) continue;
+    res.nodes.push(Object.assign({ id: it.id, layer: it.layer, ox: -minX, oy: 0, anc: [] }, b));   // ox: 희망 위치(pos)의 기준점 (왼쪽 끝 보정 포함)
+    if (inner.has(it.id)) {
+      const L = inner.get(it.id), ox = b.x + L.off[0], oy = b.y + L.off[1];
+      const up = (o) => ({ anc: [it.id].concat(o.anc || []) });           // 바깥 묶음부터 안쪽 묶음까지
+      res.groups.push({ id: it.id, x: b.x, y: b.y, w: b.w, h: b.h, anc: [] });
+      for (const n of L.nodes) res.nodes.push(Object.assign({}, n, { x: n.x + ox, y: n.y + oy, ox: n.ox + ox, oy: n.oy + oy, inGroup: n.inGroup || it.id }, up(n)));
+      for (const gr of L.groups) res.groups.push(Object.assign({}, gr, { x: gr.x + ox, y: gr.y + oy }, up(gr)));
+      for (const e of L.edges) res.edges.push(Object.assign({}, e, { points: e.points.map(([px, py]) => [px + ox, py + oy]) }, up(e)));
+      L.entries.forEach((en, k) => {
+        const m = Object.assign({}, en, { x: en.x + ox, y: en.y + oy }, up(en));
+        res.entries.push(m);
+        if (k === 0) entryAt.set(it.id, [m.x + m.w / 2, m.y + m.h / 2]);
+      });
+      const body = (it.node.body && it.node.body.nodes) || [];        // 출구(몸체에서 아무도 안 쓰는 노드) → 묶음 아래 가운데
+      const sinks = body.filter((n) => n && !body.some((m) => insOf(m).includes(n.id)));
+      const ex = sinks.length && L.nodes.find((n) => n.id === sinks[sinks.length - 1].id);
+      if (ex) {
+        const sx = ex.x + ox + ex.ax, sy = ex.y + oy + ex.h, gx = b.x + b.ax, gb = b.y + b.h;
+        const pts = sx === gx ? [[sx, sy], [gx, gb]] : [[sx, sy], [sx, gb - PAD / 2], [gx, gb - PAD / 2], [gx, gb]];
+        res.edges.push({ from: ex.id, to: it.id, kind: "exit", points: pts, anc: [it.id] });
+      }
+    }
+  }
+  // 7. 선: 아래로 → 줄 사이 높이에서 가로 → 아래로 (dummy를 따라 옆으로 돌아감)
+  for (const e of edges) {
+    const its = e.chain.map((id) => items.get(id));
+    const pts = [];
+    const first = box(its[0]);
+    pts.push([first.x + first.ax, first.y + first.h]);
+    if (its[its.length - 1].layer <= its[0].layer) {         // 순환 등: 바로 잇기
+      const t = box(its[its.length - 1]);
+      pts.push([t.x + t.ax, t.y]);
+    } else {
+      for (let k = 1; k < its.length; k++) {
+        const prev = its[k - 1], cur = its[k], b = box(cur), midY = rowTop[prev.layer] + rowH[prev.layer] + GY / 2;
+        const en = !cur.dummy && entryAt.get(cur.id);
+        const x = en ? en[0] : b.x + b.ax;
+        pts.push([pts[pts.length - 1][0], midY], [x, midY]);
+        pts.push(cur.dummy ? [x, rowTop[cur.layer] + rowH[cur.layer]] : en ? [x, en[1]] : [x, b.y]);
+      }
+    }
+    const uniq = pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
+    const clean = uniq.filter((p, i) => i === 0 || i === uniq.length - 1 ||                // 일직선 가운데 점 빼기
+      !((uniq[i - 1][0] === p[0] && p[0] === uniq[i + 1][0]) || (uniq[i - 1][1] === p[1] && p[1] === uniq[i + 1][1])));
+    res.edges.push({ from: e.from, to: e.to, points: clean });
+  }
+  const xs = [0], ys = [0];
+  for (const o of res.nodes.concat(res.groups, res.entries)) { xs.push(o.x + o.w); ys.push(o.y + o.h); }
+  for (const e of res.edges) for (const [x, y] of e.points) { xs.push(x); ys.push(y); }
+  res.width = Math.max(...xs);
+  res.height = Math.max(...ys);
+  return res;
+
+  function rowTops(its) {                                 // 층마다 위쪽 y (가장 높은 상자 기준 + 간격)
+    const L = Math.max(0, ...its.map((it) => it.layer)), h = Array(L + 1).fill(0);
+    for (const it of its) h[it.layer] = Math.max(h[it.layer], it.h);
+    const t = [];
+    let y = 0;
+    h.forEach((v, l) => { t[l] = y; y += v + GY; });
+    return t;
+  }
+}
+
+// 선 그리기: 꺾인선(ortho) 또는 꺾이는 곳을 둥글게(curve)
+function edgePath(pts, style) {
+  if (style !== "curve" || pts.length < 3) return pts.map((p, i) => `${i ? "L" : "M"}${p[0]} ${p[1]}`).join(" ");
+  let d = `M${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [a, b, c] = [pts[i - 1], pts[i], pts[i + 1]];
+    const r = Math.min(16, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2, Math.hypot(c[0] - b[0], c[1] - b[1]) / 2);
+    const u = (q) => { const L2 = Math.hypot(q[0] - b[0], q[1] - b[1]) || 1; return [b[0] + (q[0] - b[0]) * r / L2, b[1] + (q[1] - b[1]) * r / L2]; };
+    const p1 = u(a), p2 = u(c);
+    d += ` L${p1[0]} ${p1[1]} Q${b[0]} ${b[1]} ${p2[0]} ${p2[1]}`;
+  }
+  const z = pts[pts.length - 1];
+  return d + ` L${z[0]} ${z[1]}`;
+}
+
+// 줄바꿈: 흐름축(이 좌표계의 y)을 층 경계에서 끊어 다음 줄을 옆축(x)으로 옮김. 직접(brk) 또는 자동(wrap: 한 줄 최대 길이).
+// 줄 사이를 잇는 선은 '되돌아가는 선'(나가서 줄 사이 길로, 다음 줄 첫머리 앞에서 들어감)으로 다시 그림
+const WRAP_GAP = 44;
+function wrapRows(L, g, wrapLen) {
+  const top = L.nodes.filter((n) => !n.anc.length);
+  const range = new Map();
+  for (const n of top) {
+    const r = range.get(n.layer) || [Infinity, -Infinity];
+    range.set(n.layer, [Math.min(r[0], n.y), Math.max(r[1], n.y + n.h)]);
+  }
+  const layers = [...range.keys()].sort((a, b) => a - b);
+  if (layers.length < 2) return L;
+  const brk = new Set();
+  for (const n of nodesOf(g)) {
+    const t = n && n.brk && top.find((x) => x.id === n.id);
+    if (t && t.layer !== layers[0]) brk.add(t.layer);
+  }
+  if (wrapLen > 0) {                                       // 자동: 한 줄이 길이를 넘으면 그 층부터 다음 줄
+    let start = range.get(layers[0])[0];
+    for (const l of layers.slice(1)) {
+      if (brk.has(l)) start = range.get(l)[0];
+      else if (range.get(l)[1] - start > wrapLen) { brk.add(l); start = range.get(l)[0]; }
+    }
+  }
+  if (!brk.size) return L;
+  const segOfLayer = (l) => [...brk].filter((b) => b <= l).length;
+  const seg = new Map(top.map((n) => [n.id, segOfLayer(n.layer)]));
+  const segOf = (o) => seg.get(o.anc && o.anc.length ? o.anc[0] : o.id);
+  const nSeg = brk.size + 1;
+  const crossing = (e) => !(e.anc && e.anc.length) && segOf({ id: e.from }) !== segOf({ id: e.to }) && seg.has(e.from) && seg.has(e.to);
+  // 줄마다 흐름 시작과 옆축 범위
+  const S = Array.from({ length: nSeg }, () => ({ y0: Infinity, x0: Infinity, x1: -Infinity }));
+  const grow = (k, x0, x1, y0) => { const s = S[k]; s.x0 = Math.min(s.x0, x0); s.x1 = Math.max(s.x1, x1); if (y0 !== undefined) s.y0 = Math.min(s.y0, y0); };
+  for (const n of L.nodes) grow(segOf(n), n.x, n.x + n.w, n.anc.length ? undefined : n.y);
+  for (const o of L.groups.concat(L.entries)) grow(segOf(o), o.x, o.x + o.w);
+  for (const e of L.edges) if (!crossing(e) && segOf({ id: e.from, anc: e.anc }) !== undefined) for (const [x] of e.points) grow(segOf({ id: e.from, anc: e.anc }), x, x);
+  let cross = 0;
+  const shift = S.map((s, k) => {
+    const d = [cross - s.x0, S[0].y0 - s.y0];
+    cross += s.x1 - s.x0 + WRAP_GAP;
+    return d;
+  });
+  const mv = (o, k) => { const [dx, dy] = shift[k]; o.x += dx; o.y += dy; if (o.ox !== undefined) { o.ox += dx; o.oy += dy; } };
+  for (const n of L.nodes) mv(n, segOf(n));
+  for (const o of L.groups.concat(L.entries)) mv(o, segOf(o));
+  const lanes = new Map();
+  for (const e of L.edges) {
+    if (crossing(e)) continue;
+    const k = segOf({ id: e.from, anc: e.anc });
+    if (k === undefined) continue;
+    e.points = e.points.map(([x, y]) => [x + shift[k][0], y + shift[k][1]]);
+  }
+  for (const e of L.edges) {                                // 줄 사이 선: 나가서 → 줄 사이 길 → 다음 줄 첫머리 앞 → 들어감
+    if (!crossing(e)) continue;
+    const a = L.nodes.find((n) => n.id === e.from && !n.anc.length), b = L.nodes.find((n) => n.id === e.to && !n.anc.length);
+    const en = L.entries.find((x) => x.anc && x.anc.length === 1 && x.anc[0] === e.to);
+    const s = [a.x + a.ax, a.y + a.h], t = en ? [en.x + en.w / 2, en.y + en.h / 2] : [b.x + b.ax, b.y];
+    const kb = segOf(b), used = lanes.get(kb) || 0;
+    lanes.set(kb, used + 1);
+    const lane = shift[kb][0] + S[kb].x0 - WRAP_GAP / 2 + ((used % 5) - 2) * 6;
+    const out = s[1] + 12, inn = t[1] - 12 - (used % 3) * 4;
+    e.points = [s, [s[0], out], [lane, out], [lane, inn], [t[0], inn], t];
+    e.wrap = true;
+  }
+  const xs = [0], ys = [0];
+  for (const o of L.nodes.concat(L.groups, L.entries)) { xs.push(o.x + o.w); ys.push(o.y + o.h); }
+  for (const e of L.edges) for (const [x, y] of e.points) { xs.push(x); ys.push(y); }
+  L.width = Math.max(...xs);
+  L.height = Math.max(...ys);
+  return L;
+}
+
+// opts.edge: "ortho"(꺾인선, 기본) | "curve"(곡선). opts.dir: "v"(위→아래, 기본) | "h"(왼쪽→오른쪽). opts.wrap: 자동 줄바꿈 길이(px)
+// 가로는 x·y를 바꿔 같은 배치(겹침 없음·짧은 화살표)를 계산한 뒤 돌려놓음. ax는 늘 '옆축' 기준점(세로면 가로, 가로면 세로)
+function layoutGraph(g, sizeOf = null, opts = {}) {
+  opts = opts || {};
+  const h = opts.dir === "h";
+  sizeOf = sizeOf || ((n) => sizeOfDefault(n, h ? "h" : "v"));
+  const swapPos = (nodes) => (nodes || []).map((n) => {
+    if (!n || typeof n !== "object") return n;
+    const m = Object.assign({}, n);
+    if (validPos(n.pos)) m.pos = [n.pos[1], n.pos[0]];
+    if (n.body && Array.isArray(n.body.nodes)) m.body = Object.assign({}, n.body, { nodes: swapPos(n.body.nodes) });
+    return m;
+  });
+  const L = wrapRows(layoutScope(h ? swapPos(nodesOf(g)) : nodesOf(g), "input", h ? (n) => sizeOf(n).slice().reverse() : sizeOf, opts),
+    g, opts.wrap ? opts.wrap - 2 * MARGIN : 0);
+  const mv = (o) => Object.assign({}, o, { x: o.x + MARGIN, y: o.y + MARGIN }, o.ox !== undefined ? { ox: o.ox + MARGIN, oy: o.oy + MARGIN } : {});
+  const t = (o) => (h ? Object.assign({}, o, { x: o.y, y: o.x, w: o.h, h: o.w }, o.ox !== undefined ? { ox: o.oy, oy: o.ox } : {}) : o);
+  const res = {
+    nodes: L.nodes.map(mv).map(t),
+    groups: L.groups.map(mv).map(t),
+    edges: L.edges.map((e) => Object.assign({}, e, { points: e.points.map(([x, y]) => (h ? [y + MARGIN, x + MARGIN] : [x + MARGIN, y + MARGIN])) })),
+    entries: L.entries.map(mv).map(t),
+    width: (h ? L.height : L.width) + 2 * MARGIN, height: (h ? L.width : L.height) + 2 * MARGIN, dir: h ? "h" : "v",
+  };
+  res.nodes.sort((a, b) => a.anc.length - b.anc.length || a.layer - b.layer || (h ? a.x - b.x || a.y - b.y : a.y - b.y || a.x - b.x));
+  return res;
+}
+
+// 고른 상자들을 바로 위 상자(첫 입력)와 가운데를 맞춤 → 화살표가 수직. 위에 있는 것부터 차례로
+function alignToParent(g0, ids, opts) {
+  let g = g0;
+  const h = opts && opts.dir === "h", flow = (n) => (h ? n.x : n.y);
+  const ys = layoutGraph(g, undefined, opts).nodes;
+  const order = ids.filter((id) => ys.some((n) => n.id === id)).sort((a, b) => flow(ys.find((n) => n.id === a)) - flow(ys.find((n) => n.id === b)));
+  for (const id of order) {
+    const L = layoutGraph(g, undefined, opts), n = L.nodes.find((x) => x.id === id), f = findNode(g, id);
+    const src = f && insOf(f.node)[0];
+    if (!n || src === undefined) continue;
+    let pc;                                                   // 위(가로면 왼쪽) 상자의 옆축 가운데
+    if (src === "in") {
+      const grp = n.anc[n.anc.length - 1], en = L.entries.find((x) => x.anc[x.anc.length - 1] === grp);
+      if (!en) continue;
+      pc = h ? en.y + en.h / 2 : en.x + en.w / 2;
+    } else {
+      const p = L.nodes.find((x) => x.id === src);
+      if (!p) continue;
+      pc = (h ? p.y : p.x) + p.ax;
+    }
+    // 흐름축은 0 = 바로 다음 층 (짧은 화살표)
+    g = setPos(g, id, h ? [0, pc - n.ax - n.oy] : [pc - n.ax - n.ox, 0]);
+  }
+  return g;
+}
+
+// ------------------------------------------------------------ 화면
+const LOOSE = ["입력이 연결되지 않음", "출력까지 이어지지 않음", "합칠 입력이 2개 이상"];   // 아직 선을 안 이은 것
+const COLORS = { input: "gray", cnn: "teal", act: "purple", rnn: "coral", struct: "gray", out: "coral", merge: "add" };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtShape = (s) => (!s ? "" : `(${s.join(", ")})`);
+// 이미지면 기본 Conv를 Conv2D로
+function forInput(n, input) {
+  if (input !== "image") return n;
+  if (n.type === "conv") return { type: "conv2d", channels: n.channels, kernel: 3, stride: 1 };
+  if (n.type === "pool") return { type: "pool2d", size: 2 };
+  if (n.type === "global_avg") return { type: "global_avg2d" };
+  return n;
+}
+
+function mount(els, opts) {
+  // els: {canvas, palette, settings}; opts: {onChange(graph), getSummary(), getInput(), onHint(msg), onHistory(canUndo, canRedo)}
+  let graph = { version: 2, nodes: [{ id: "input", type: "input" }] }, sel = new Set(), selEdge = null, shapes = {}, issues = {}, L = null;
+  let dropEdge = null, clip = null, edgeStyle = "ortho", flowDir = "v", autoWrap = false;
+  // 자동 줄바꿈 길이: 보이는 판의 흐름 방향 길이
+  const lopts = () => ({ edge: edgeStyle, dir: flowDir,
+    wrap: autoWrap ? (flowDir === "h" ? els.canvas.clientWidth : els.canvas.clientHeight) - 30 : 0 });
+  const hist = history();
+  const input = () => (opts.getInput ? opts.getInput() : "timeseries");
+  const hint = (msg) => opts.onHint && opts.onHint(msg);
+  const emit = () => opts.onChange(clone(graph));
+  function set(g) {                                  // 대표 모델 바꾸기 등: 되돌리기 가능
+    if (nodesOf(graph).length > 1 && JSON.stringify(g) !== JSON.stringify(graph)) hist.push(graph);
+    graph = clone(g); sel = new Set(); selEdge = null; draw();
+  }
+  function get() { return clone(graph); }
+  function change(g, newSel) {                       // newSel: id 목록 또는 undefined(그대로)
+    if (JSON.stringify(g) === JSON.stringify(graph)) return draw();
+    hist.push(graph);
+    graph = g;
+    issues = {};                                     // 예전 그래프의 문제 표시는 바로 지움 (새 검사 결과가 오면 다시)
+    if (newSel !== undefined) { sel = new Set(newSel); selEdge = null; }
+    for (const id of [...sel]) if (!findNode(graph, id)) sel.delete(id);
+    draw(); emit();
+  }
+  function undo() { const p = hist.undo(graph); if (p) { graph = p; sel = new Set(); selEdge = null; draw(); emit(); } return !!p; }
+  function redo() { const p = hist.redo(graph); if (p) { graph = p; sel = new Set(); selEdge = null; draw(); emit(); } return !!p; }
+  function decorate(checked) {
+    shapes = (checked && checked.shapes) || {};
+    issues = {};
+    for (const i of (checked && checked.issues) || []) (issues[i.node] = issues[i.node] || []).push(i);
+    draw();
+  }
+  function select(id) { sel = new Set(id ? [id] : []); selEdge = null; draw(); }
+  const selIds = () => [...sel].filter((id) => findNode(graph, id));
+  const outputNode = () => nodesOf(graph).find((n) => n.type === "output");
+
+  function draw() {
+    const summary = opts.getSummary();
+    L = layoutGraph(graph, undefined, lopts());
+    const top = (o) => (o.anc && o.anc.length ? ` data-anc="${esc(o.anc.join(" "))}"` : "");
+    // 판: 보이는 칸을 다 채우고, 오른쪽·아래로 여유를 둬서 어디로든 끌어 둘 수 있게
+    const W = Math.max(L.width + 240, els.canvas.clientWidth - 24), H = Math.max(L.height + 240, els.canvas.clientHeight - 24);   // 판 안쪽 여백(8px×2) 빼고
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="flow-svg">` +
+      `<defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
+      `<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round"/></marker></defs>`;
+    for (const gr of L.groups) {
+      const n = findNode(graph, gr.id).node, on = sel.has(gr.id), bad = issues[gr.id];
+      s += `<g class="fg${on ? " sel" : ""}${bad ? " bad" : ""}" data-node="${esc(gr.id)}"${top(gr)}>` +
+        `<rect x="${gr.x}" y="${gr.y}" width="${gr.w}" height="${gr.h}" rx="12" class="grp"/>` +
+        `<rect x="${gr.x}" y="${gr.y}" width="${gr.w}" height="${HEAD - 4}" rx="12" class="grp-head"><title>묶음 머리를 끌면 묶음째 옮김</title></rect>` +
+        `<text x="${gr.x + 12}" y="${gr.y + 18}" class="glabel">${esc(label(n))}${shapes[gr.id] ? "  " + esc(fmtShape(shapes[gr.id])) : ""}${bad ? "  ⚠ " + esc(bad[0].message) : ""}</text>` +
+        port(L.nodes.find((n) => n.id === gr.id) || gr) + `</g>`;
+    }
+    for (const e of L.edges) {
+      const d = edgePath(e.points, edgeStyle);
+      if (e.kind === "exit") { s += `<path d="${d}" class="edge exit"${top(e)}/>`; continue; }     // 묶음 출구 → 묶음 아래
+      const to = findNode(graph, e.to), skip = to && insOf(to.node)[0] !== e.from;
+      const on = selEdge && selEdge.from === e.from && selEdge.to === e.to;
+      const key = esc(`${e.from}>${e.to}`);
+      const into = L.groups.some((gr) => gr.id === e.to);         // 묶음으로 들어가는 선은 안쪽 입구 점까지 이어짐 (화살촉 없음)
+      s += `<path d="${d}" class="edge${skip ? " skip" : ""}${on ? " sel" : ""}"${into ? "" : ' marker-end="url(#fa)"'} data-from="${esc(e.from)}" data-to="${esc(e.to)}"${top(e)}/>` +
+        `<path d="${d}" class="edge-hit" data-edge="${key}"${top(e)}/>`;
+    }
+    for (const en of L.entries) s += `<circle cx="${en.x + en.w / 2}" cy="${en.y + en.h / 2}" r="4" class="entry"${top(en)}><title>묶음의 입력</title></circle>`;
+    for (const bx of L.nodes) {
+      if (L.groups.some((gr) => gr.id === bx.id)) continue;
+      const n = findNode(graph, bx.id).node, on = sel.has(bx.id);
+      // 아직 선을 안 이은 것뿐이면 오류가 아니라 '선을 이어 주세요' (회색 점선)
+      const loose = issues[bx.id] && issues[bx.id].every((i) => LOOSE.some((w) => i.message.includes(w)));
+      const bad = issues[bx.id] && (loose ? [{ message: "선을 이어 주세요" }] : issues[bx.id]);
+      const T = TYPES[n.type] || {}, cls = `fb${on ? " sel" : ""}${loose ? " loose" : bad ? " bad" : ""}`;
+      const head = `<g class="${cls}" data-node="${esc(bx.id)}"${top(bx)}>`, cx = bx.x + bx.w / 2, cy = bx.y + bx.h / 2;
+      if (isMerge(n)) {
+        s += head + `<title>${esc(bad ? bad[0].message : fmtShape(shapes[bx.id]))}</title>` +
+          `<rect x="${bx.x}" y="${bx.y}" width="${bx.w}" height="${bx.h}" rx="15" class="box c-add"/>` +
+          `<text x="${cx}" y="${cy}" class="t1">${esc(label(n))}${bad ? " ⚠" : ""}</text>` + port(bx) + `</g>`;
+        continue;
+      }
+      if (n.type === "act") {                                  // 활성화는 원
+        s += head + `<title>${esc(label(n))}${bad ? " — " + esc(bad[0].message) : ""}</title>` +
+          `<circle cx="${cx}" cy="${cy}" r="${bx.w / 2}" class="box c-purple"/>` +
+          `<text x="${cx}" y="${cy - 7}" class="t1">${esc(shortLabel(n))}${bad ? " ⚠" : ""}</text>` +
+          `<text x="${cx}" y="${cy + 10}" class="t3">${esc(fmtShape(shapes[bx.id]))}</text>` + port(bx) + `</g>`;
+        continue;
+      }
+      const color = n.type === "input" ? "gray" : COLORS[T.cat] || "gray", narrow = bx.w < 190;
+      const inShape = summary && fmtShape(summary.image ? [1].concat(summary.image) : [1, summary.length]);
+      const subFull = n.type === "input"
+        ? (!summary ? "데이터를 먼저 불러오세요" : narrow ? inShape : `${inShape}  channels × ${summary.image ? "height × width" : "length"}`)
+        : bad ? bad[0].message : fmtShape(shapes[bx.id]);
+      const lines = labelLines(n, summary, bx.w), sub = narrow ? fitText(subFull, bx.w) : subFull;
+      const warn = bad && !loose ? " ⚠" : "";
+      const text = lines.length === 1
+        ? `<text x="${cx}" y="${cy - 8}" class="t1">${esc(lines[0])}${warn}</text><text x="${cx}" y="${cy + 9}" class="t2">${esc(sub)}</text>`
+        : `<text x="${cx}" y="${cy - 16}" class="t1">${esc(lines[0])}${warn}</text><text x="${cx}" y="${cy}" class="t2b">${esc(lines[1])}</text>` +
+          `<text x="${cx}" y="${cy + 16}" class="t2">${esc(sub)}</text>`;
+      const brkMark = n.brk ? `<text x="${bx.x + 8}" y="${bx.y + 11}" class="brk">↵</text>` : "";   // 여기서 줄바꿈
+      s += head + `<title>${esc(label(n, summary))} — ${esc(subFull)}</title>` + brkMark +
+        `<rect x="${bx.x}" y="${bx.y}" width="${bx.w}" height="${bx.h}" rx="10" class="box c-${color}"/>` + text + port(bx) + `</g>`;
+    }
+    for (const bx of L.nodes) {                      // 고른 상자 크기 손잡이 (끌면 고른 상자 모두 같은 크기로)
+      if (!sel.has(bx.id) || L.groups.some((gr) => gr.id === bx.id)) continue;
+      s += `<rect class="rsz" data-rsz="${esc(bx.id)}" x="${bx.x + bx.w - 7}" y="${bx.y + bx.h - 7}" width="11" height="11" rx="2"><title>끌어서 크기 바꾸기 (고른 상자 모두)</title></rect>`;
+    }
+    s += `<rect id="band" class="band" style="display:none"/><path id="drop-edge" class="drop" style="display:none" fill="none"/>` +
+      `<line id="wire" class="wire" style="display:none"/><g id="snap"></g>`;
+    els.canvas.innerHTML = s + "</svg>";
+    drawSettings();
+    if (opts.onHistory) opts.onHistory(hist.canUndo(), hist.canRedo());
+  }
+  function port(bx) {                                // 소켓: 위 = 입력, 아래 = 출력. 끌어서 다른 상자에 놓으면 선, 빈 곳에 놓으면 층 고르기
+    const f = findNode(graph, bx.id), t = f ? f.node.type : "", a = bx.ax === undefined ? (L.dir === "h" ? bx.h : bx.w) / 2 : bx.ax;
+    const [ix, iy, ox, oy] = L.dir === "h" ? [bx.x, bx.y + a, bx.x + bx.w, bx.y + a] : [bx.x + a, bx.y, bx.x + a, bx.y + bx.h];
+    let s = "";
+    if (t !== "input") s += `<circle cx="${ix}" cy="${iy}" r="5" class="port in" data-inport="${esc(bx.id)}"><title>입력: 끌어서 위 상자에 놓으면 선을 이음 (빈 곳에 놓으면 앞에 넣을 층을 고름)</title></circle>`;
+    if (t !== "output") s += `<circle cx="${ox}" cy="${oy}" r="5" class="port" data-port="${esc(bx.id)}"><title>출력: 끌어서 아래 상자에 놓으면 선을 이음 (빈 곳에 놓으면 이어서 만들 층을 고름)</title></circle>`;
+    return s;
+  }
+
+  function field(lab, inp) { return `<label class="fld"><span>${lab}</span>${inp}</label>`; }
+  function numberInput(k, v, min, max) { return `<input type="number" data-k="${k}" value="${esc(v)}" min="${min}" max="${max}" step="1">`; }
+  function selectInput(k, v, options) {
+    return `<select data-k="${k}">${options.map(([val, txt]) => `<option value="${val}"${String(v) === String(val) ? " selected" : ""}>${esc(txt)}</option>`).join("")}</select>`;
+  }
+  const KEYS = `<p class="muted keys"><b>마우스만으로:</b> 왼쪽 목록에서 끌어 판에 놓기 (선 근처면 그 사이로) · 상자를 끌어 옮기기 (선 근처면 그 사이로, 여러 개 고른 채 끌면 함께) · ` +
+    `상자 위·아래 동그라미를 끌어 다른 상자에 놓으면 선 (기존 선은 바뀜), 빈 곳에 놓으면 층을 골라 바로 이어서 만듦 · <b>오른쪽 클릭</b>: 복사·삭제·감싸기·정렬·줄바꿈·선 지우기·층 넣기<br>` +
+    `키보드도 됨: ` +
+    `여러 개 고르기: 빈 곳에서 끌어서 네모, 또는 Shift+클릭 · Ctrl+C 복사 · Ctrl+X 잘라내기 · Ctrl+V 붙여넣기 · Ctrl+D 복제 · Delete 삭제 · Ctrl+Z 되돌리기 · Ctrl+Y 다시 하기 · Esc 선택 해제</p>`;
+
+  function drawSettings() {
+    const summary = opts.getSummary();
+    if (selEdge) {
+      const a = findNode(graph, selEdge.from), b = findNode(graph, selEdge.to);
+      els.settings.innerHTML = `<h4>선</h4><p class="muted">${esc(a ? label(a.node, summary) : "묶음 입력")} → ${esc(b ? label(b.node, summary) : "")}</p>` +
+        `<div class="acts"><button data-a="del-edge" class="danger">선 지우기</button></div>` + KEYS;
+      return;
+    }
+    const ids = selIds();
+    if (!ids.length) {
+      els.settings.innerHTML = `<p class="muted">왼쪽 목록의 층을 끌어서 선 위에 놓으세요. 상자를 누르면 여기서 설정을 바꿉니다.</p>` + KEYS;
+      return;
+    }
+    if (ids.length > 1) {
+      const ok = !!singleEntryExit(graph, ids);
+      els.settings.innerHTML = `<h4>${ids.length}개 선택</h4>` +
+        (ok ? `<p class="muted">입구 하나·출구 하나인 묶음입니다</p>` : `<p class="muted">감싸기·복사는 입구 하나·출구 하나로 이어진 층들만 됩니다</p>`) +
+        `<div class="acts"><button data-a="wrap-res"${ok ? "" : " disabled"}>Residual로 감싸기</button><button data-a="wrap-rep"${ok ? "" : " disabled"}>Repeat로 감싸기</button>` +
+        `<button data-a="split"${ok ? "" : " disabled"}>갈래로 나누기</button><button data-a="copy"${ok ? "" : " disabled"}>복사</button>` +
+        `<button data-a="dup"${ok ? "" : " disabled"}>복제</button><button data-a="del" class="danger">삭제</button></div>` + sizeFields(ids) + KEYS;
+      return;
+    }
+    const b = findNode(graph, ids[0]).node, T = TYPES[b.type] || {};
+    if (b.type === "input") {
+      els.settings.innerHTML = `<h4>Input</h4><p class="muted">② 데이터 단계에서 불러온 데이터입니다${summary ? ` (length ${summary.length})` : ""}.</p>` + KEYS;
+      return;
+    }
+    let f = "";
+    if (b.type === "conv") f = field("Filters (채널 수: 많을수록 정확, 느림)", numberInput("channels", b.channels, 1, 256)) +
+      field("Kernel size (한 번에 보는 칸 수)", selectInput("kernel", b.kernel, [1, 3, 5, 7, 9, 11, 15].map((v) => [v, v]))) +
+      field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (길이 절반)"]])) +
+      field("Dilation (칸 사이를 띄워 넓게 봄, TCN)", selectInput("dilation", b.dilation || 1, [1, 2, 4, 8, 16, 32].map((v) => [v, v]))) +
+      field("Padding", selectInput("padding", b.padding || "same", [["same", "same (길이 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]])) +
+      field("Groups (filters·들어오는 채널을 나누는 수, 같으면 depthwise)", numberInput("groups", b.groups || 1, 1, 256));
+    if (b.type === "pool") f = field("Pool size", selectInput("size", b.size, [[2, "2"], [4, "4"]]));
+    if (b.type === "conv2d") f = field("Filters (채널 수: 많을수록 정확, 느림)", numberInput("channels", b.channels, 1, 256)) +
+      field("Kernel size (한 번에 보는 네모 크기)", selectInput("kernel", b.kernel, [1, 3, 5, 7].map((v) => [v, `${v}×${v}`]))) +
+      field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (크기 절반)"]])) +
+      field("Padding", selectInput("padding", b.padding || "same", [["same", "same (크기 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]]));
+    if (b.type === "act") f = field("Function", selectInput("kind", b.kind, ACTS));
+    if (b.type === "se") f = field("Ratio (줄이는 비율: 채널 ÷ ratio)", selectInput("ratio", b.ratio, [2, 4, 8, 16].map((v) => [v, v]))) +
+      field("안쪽 activation", selectInput("act", b.act || "relu", [["relu", "ReLU"], ["sigmoid", "Sigmoid"], ["tanh", "Tanh"]]));
+    if (b.type === "dropout") f = field("Rate (끄는 비율)", selectInput("rate", b.rate, [0.1, 0.2, 0.3, 0.5].map((v) => [v, v])));
+    if (b.type === "dense") f = field("Units (출력 개수)", numberInput("units", b.units, 1, 1024));
+    if (b.type === "lstm" || b.type === "gru" || b.type === "simple_rnn") f = field("Units (hidden size)", numberInput("hidden", b.hidden, 1, 256)) +
+      field("Layers", numberInput("layers", b.layers || 1, 1, 3));
+    if (b.type === "repeat") f = field("Repeat count", numberInput("times", b.times, 1, 10));
+    if (isMerge(b)) {
+      f = field("합치는 방법", selectInput("type", b.type, [["add", "Add (+): 더하기, 모양이 같아야 함"], ["concat", "Concat: 채널로 이어 붙이기"]])) +
+        `<div class="fld"><span>들어오는 선 (Concat은 이 순서로 붙임)</span><ol class="ins">${insOf(b).map((x, i) => {
+          const src = findNode(graph, x);
+          return `<li>${esc(src ? label(src.node, summary) : x === "in" ? "묶음 입력" : x)} <span class="muted">${esc(fmtShape(shapes[x]))}</span> <button data-a="in-del" data-i="${i}" title="이 선 지우기">×</button></li>`;
+        }).join("")}</ol></div>`;
+    }
+    const isOutput = b.type === "output";
+    const btns = isOutput ? "" : `<div class="acts"><button data-a="copy">복사</button><button data-a="dup">복제</button>` +
+      `<button data-a="del" class="danger">삭제</button>` + (b.type === "repeat" ? `<button data-a="unwrap">묶음 풀기</button>` : "") +
+      `<button data-a="wrap-res">Residual로 감싸기</button><button data-a="wrap-rep">Repeat로 감싸기</button><button data-a="split">갈래로 나누기</button></div>`;
+    const bad = issues[b.id] || [];
+    els.settings.innerHTML = `<h4>${esc(label(b, summary))}</h4><p class="muted">${esc(T.desc || (b.type === "repeat" ? "안의 층을 여러 번 쌓음 (가중치는 따로)" : ""))}</p>${f}${btns}` +
+      sizeFields(ids) +
+      bad.map((i) => `<p class="err">${esc(i.message)}<br>→ ${esc(i.hint)}</p>`).join("") +
+      (isOutput ? `<p class="muted">분류·회귀는 ① 과제에서 고릅니다. 출력 개수는 데이터에 맞춰 정해집니다.</p>` : "") + KEYS;
+  }
+
+  function sizeFields(ids) {                         // 상자 크기 (보기용): 고른 상자 모두에 한 번에
+    const boxes = ids.map((id) => L.nodes.find((n) => n.id === id)).filter((n) => n && !L.groups.some((gr) => gr.id === n.id));
+    if (!boxes.length) return "";
+    return `<div class="fld size-fld"><span>상자 크기 (보기용${boxes.length > 1 ? ` · ${boxes.length}개 모두` : ""})</span>` +
+      `<div class="row"><label>가로 <input type="number" data-size="w" value="${esc(Math.round(boxes[0].w))}" min="${SIZE_MIN[0]}" max="${SIZE_MAX[0]}" step="10"></label>` +
+      `<label>세로 <input type="number" data-size="h" value="${esc(Math.round(boxes[0].h))}" min="${SIZE_MIN[1]}" max="${SIZE_MAX[1]}" step="5"></label>` +
+      `<button data-a="size-reset">기본 크기로</button></div><span class="muted">고른 상자 오른쪽 아래 네모를 끌어도 됨</span></div>`;
+  }
+  function drawPalette() {
+    const allowed = paletteTypes(input());
+    const groups = input() === "tabular" ? [[null, "Layers (표 데이터)"]] : CATS;
+    let h = "";
+    for (const [cat, name] of groups) {
+      const items = Object.entries(TYPES).filter(([t, T]) => (cat === null || T.cat === cat) && allowed.includes(t));
+      if (!items.length) continue;
+      h += `<div class="pcat">${name}</div>`;
+      for (const [t, T] of items) h += `<div class="pitem p-${T.cat}" data-t="${t}" title="끌어서 판 위에 놓기 (선 근처면 그 선 사이로)"><b>${esc(T.name)}</b><span>${esc(T.desc)}</span></div>`;
+    }
+    els.palette.innerHTML = h;
+  }
+
+  // ---------------- 편집 동작
+  function removeSel() {
+    if (selEdge) return change(removeEdge(graph, selEdge.from, selEdge.to), []);
+    let g = graph;
+    for (const id of selIds()) g = removeNode(g, id);
+    if (g === graph) return hint("Input·Output은 지울 수 없습니다");
+    change(g, []);
+  }
+  function copySel(cut) {
+    const ids = selIds().filter((id) => { const n = findNode(graph, id).node; return n.type !== "input" && n.type !== "output"; });
+    if (!ids.length) return hint("복사할 층을 먼저 고르세요");
+    const c = copyNodes(graph, ids);
+    if (!c) return hint("입구 하나·출구 하나로 이어진 층들만 복사할 수 있습니다");
+    clip = c;
+    if (cut) { let g = graph; for (const id of ids) g = removeNode(g, id); change(g, []); }
+    hint(`${ids.length}개 ${cut ? "잘라냄" : "복사함"} · Ctrl+V로 붙여넣기 (고른 상자 바로 뒤)`);
+  }
+  function paste(c) {
+    if (!c) return hint("붙여넣을 것이 없습니다 (먼저 Ctrl+C)");
+    const ids = selIds();
+    const s = ids.length > 1 ? singleEntryExit(graph, ids) : null;
+    const after = s ? s.exit : ids.length === 1 ? ids[0] : (insOf(outputNode())[0] || "input");
+    const r = pasteAfter(graph, after, c);
+    if (!r.ids.length) return hint("출력 뒤에는 붙일 수 없습니다");
+    change(r.graph, r.ids);
+  }
+  function act(a, extra) {
+    const ids = selIds();
+    if (a === "del-edge" || a === "del") return removeSel();
+    if (a === "copy") return copySel(false);
+    if (a === "dup") { const c = copyNodes(graph, ids); return c ? paste(c) : hint("입구 하나·출구 하나로 이어진 층들만 복제할 수 있습니다"); }
+    if (a === "unwrap") return change(unwrap(graph, ids[0]), []);
+    if (a === "size-reset") return change(setSize(graph, ids, null), ids);
+    if (a === "in-del") { const n = findNode(graph, ids[0]).node; return change(removeEdge(graph, insOf(n)[Number(extra.i)], n.id)); }
+    if (!singleEntryExit(graph, ids)) return hint("입구 하나·출구 하나로 이어진 층들만 감쌀 수 있습니다");
+    if (a === "wrap-res") return change(wrapResidual(graph, ids, Object.assign({ input: summaryShape() }, shapes)), []);
+    if (a === "wrap-rep") return change(wrapRepeat(graph, ids), []);
+    if (a === "split") return change(splitBranch(graph, ids, forInput({ type: "conv", channels: 8, kernel: 5, stride: 1 }, input())), []);
+  }
+  function summaryShape() {
+    const sm = opts.getSummary();
+    return sm ? (sm.image ? [1].concat(sm.image) : [1, sm.length]) : null;
+  }
+
+  // ---------------- 마우스로 끌기: 왼쪽 목록 → 판, 상자 옮기기, 선 잇기, 네모 고르기
+  // 선 근처(48px)에 놓으면 그 선 사이로 들어가고, 아니면 놓은 자리에 둠 (판 위 자유 배치)
+  function svgPoint(e) {
+    const svg = els.canvas.querySelector("svg");
+    if (!svg || !svg.getScreenCTM()) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const q = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return [q.x, q.y];
+  }
+  const overCanvas = (e) => {
+    const r = els.canvas.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  };
+  function showDrop(edge) {
+    dropEdge = edge;
+    const p = els.canvas.querySelector("#drop-edge");
+    if (!p) return;
+    if (!edge) { p.style.display = "none"; return; }
+    p.style.display = "";
+    p.setAttribute("d", edge.points.map((q, i) => `${i ? "L" : "M"}${q[0]} ${q[1]}`).join(" "));
+  }
+  let drag = null, band = null, wire = null, skipClick = false, ghost = null;
+  function ignoreNextClick() {                       // 끌기 직후 브라우저가 보내는 click 하나만 버림 (안 오면 바로 풀림)
+    skipClick = true;
+    setTimeout(() => { skipClick = false; }, 0);
+  }
+  function movedGraph(d, p) {                         // 끈 상자들을 판 위 그 자리로 옮긴 그래프 (희망 위치)
+    let g = graph;
+    for (const id of d.ids) {
+      const bx = L.nodes.find((n) => n.id === id);
+      if (bx) g = setPos(g, id, [bx.x + p[0] - d.x0 - bx.ox, bx.y + p[1] - d.y0 - bx.oy]);
+    }
+    return g;
+  }
+  function showSnap(g, ids) {                         // 놓으면 실제로 들어갈 자리 (겹치지 않게 맞춘 뒤)
+    const el = els.canvas.querySelector("#snap");
+    if (!el) return;
+    if (!g) { el.innerHTML = ""; return; }
+    const L2 = layoutGraph(g, undefined, lopts());
+    el.innerHTML = L2.nodes.filter((n) => ids.includes(n.id))
+      .map((n) => `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="${n.w === n.h ? n.w / 2 : 10}" class="snap"/>`).join("");
+  }
+  function setGhost(text, e) {
+    if (!ghost) { ghost = document.createElement("div"); ghost.className = "drag-ghost"; document.body.appendChild(ghost); }
+    ghost.textContent = text;
+    ghost.style.left = `${e.clientX + 14}px`;
+    ghost.style.top = `${e.clientY + 10}px`;
+  }
+  function clearGhost() { if (ghost) ghost.remove(); ghost = null; els.canvas.classList.remove("dragging"); }
+
+  els.palette.addEventListener("mousedown", (e) => {
+    const it = e.target.closest("[data-t]");
+    if (!it || e.button !== 0) return;
+    drag = { kind: "palette", type: it.dataset.t, el: it, x0: e.clientX, y0: e.clientY, moved: false };
+    e.preventDefault();                                          // 글자 고르기 막기
+  });
+  els.canvas.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const p = svgPoint(e);
+    const rz = e.target.closest("[data-rsz]");
+    if (rz && p) {
+      const bx = L.nodes.find((n) => n.id === rz.dataset.rsz);
+      drag = { kind: "size", id: bx.id, x0: p[0], y0: p[1], bx, ids: selIds().filter((id) => !L.groups.some((gr) => gr.id === id)) };
+      e.preventDefault();
+      return;
+    }
+    const ip = e.target.closest("[data-inport]");
+    if (ip && p) { wire = { to: ip.dataset.inport, x0: p[0], y0: p[1] }; e.preventDefault(); return; }
+    const pt = e.target.closest("[data-port]");
+    if (pt && p) { wire = { from: pt.dataset.port, x0: p[0], y0: p[1] }; e.preventDefault(); return; }
+    const g = e.target.closest("[data-node]");
+    if (g && p) {
+      const id = g.dataset.node, isGroup = g.classList.contains("fg");
+      if (isGroup && !e.target.closest(".grp-head, .glabel")) return;       // 묶음은 머리로만 끌기 (안쪽 빈 곳은 네모 고르기 없음)
+      const ids = sel.has(id) && sel.size > 1 ? selIds() : [id];
+      drag = { kind: "node", id, ids, x0: p[0], y0: p[1], moved: false };
+      e.preventDefault();
+      return;
+    }
+    if (e.target.closest("[data-edge]")) return;
+    if (p) band = { x0: p[0], y0: p[1], x1: p[0], y1: p[1], moved: false };
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (drag && drag.kind === "palette") {
+      drag.moved = drag.moved || Math.abs(e.clientX - drag.x0) + Math.abs(e.clientY - drag.y0) > 4;
+      if (!drag.moved) return;
+      els.canvas.classList.add("dragging");
+      const p = overCanvas(e) && L ? svgPoint(e) : null;
+      const edge = p ? nearestEdge(L.edges, p) : null;
+      if (edge !== dropEdge) showDrop(edge);
+      setGhost(`${TYPES[drag.type].name} — ${!p ? "판 위에 놓으세요" : edge ? "이 선 사이에 넣기" : "여기에 두기 (선은 나중에 이음)"}`, e);
+      return;
+    }
+    if (drag && drag.kind === "size") {
+      const p = svgPoint(e), el = els.canvas.querySelector("#snap");
+      if (!p || !el) return;
+      const w = Math.max(SIZE_MIN[0], drag.bx.w + p[0] - drag.x0), h = Math.max(SIZE_MIN[1], drag.bx.h + p[1] - drag.y0);
+      drag.size = [w, h];
+      el.innerHTML = `<rect x="${drag.bx.x}" y="${drag.bx.y}" width="${w}" height="${h}" rx="10" class="snap"/>`;
+      return;
+    }
+    if (drag && drag.kind === "node") {
+      const p = svgPoint(e);
+      if (!p) return;
+      const dx = p[0] - drag.x0, dy = p[1] - drag.y0;
+      drag.moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 5;
+      if (!drag.moved) return;
+      const id = drag.id, ids = drag.ids;
+      const hit = (el) => ids.includes(el.dataset.node) || (el.dataset.anc || "").split(" ").some((a) => ids.includes(a));
+      for (const el of els.canvas.querySelectorAll("[data-node], [data-anc]")) el.setAttribute("transform", hit(el) ? `translate(${dx} ${dy})` : "");
+      const n = findNode(graph, id).node, fixed = ids.length > 1 || n.type === "input" || n.type === "output";   // 여럿이면 자리만 옮김
+      const edge = fixed ? null : nearestEdge(L.edges, p, SNAP, (ed) => ed.from === id || ed.to === id || (ed.anc || []).includes(id));
+      if (edge !== dropEdge) showDrop(edge);
+      showSnap(edge ? null : movedGraph(drag, p), ids);
+      return;
+    }
+    if (wire) {
+      const p = svgPoint(e), w = els.canvas.querySelector("#wire");
+      if (!p || !w) return;
+      w.style.display = "";
+      w.setAttribute("x1", wire.x0); w.setAttribute("y1", wire.y0); w.setAttribute("x2", p[0]); w.setAttribute("y2", p[1]);
+      return;
+    }
+    if (!band) return;
+    const p = svgPoint(e), r = els.canvas.querySelector("#band");
+    if (!p || !r) return;
+    band.x1 = p[0]; band.y1 = p[1];
+    band.moved = band.moved || Math.abs(band.x1 - band.x0) + Math.abs(band.y1 - band.y0) > 6;
+    if (!band.moved) return;
+    r.style.display = "";
+    r.setAttribute("x", Math.min(band.x0, band.x1)); r.setAttribute("y", Math.min(band.y0, band.y1));
+    r.setAttribute("width", Math.abs(band.x1 - band.x0)); r.setAttribute("height", Math.abs(band.y1 - band.y0));
+  });
+  document.addEventListener("mouseup", (e) => {
+    if (drag && drag.kind === "palette") {
+      const d = drag, edge = dropEdge;
+      drag = null;
+      clearGhost();
+      showDrop(null);
+      if (!d.moved) {                                            // 누르기만 함: 안내
+        d.el.classList.add("nudge");
+        setTimeout(() => d.el.classList.remove("nudge"), 600);
+        return hint("층은 끌어서 판 위에 놓으세요 (선 근처면 그 선 사이로 들어감)");
+      }
+      const p = overCanvas(e) ? svgPoint(e) : null;
+      if (!p) return;
+      const node = forInput(TYPES[d.type].make(), input()), nid = newId(graph);
+      if (edge) {
+        change(insertOnEdge(graph, edge.from, edge.to, Object.assign({ id: nid }, node)), [nid]);
+        if (isMerge(node)) hint("합치기 상자는 입력이 2개 이상이어야 합니다: 다른 상자의 동그라미를 끌어 이 상자에 놓으세요");
+      } else {
+        const [w, h] = sizeOfDefault(node, flowDir), o = L.nodes.find((n) => !n.anc.length) || { ox: 0, oy: 0 };
+        change(addFree(graph, Object.assign({ id: nid }, node), [p[0] - w / 2 - o.ox, p[1] - h / 2 - o.oy]), [nid]);
+        hint("아직 이어지지 않은 상자입니다: 위 상자 아래의 동그라미를 끌어 이 상자에 놓으세요");
+      }
+      return;
+    }
+    if (drag && drag.kind === "size") {
+      const d = drag;
+      drag = null;
+      ignoreNextClick();
+      if (!d.size) return draw();
+      return change(setSize(graph, d.ids, d.size), d.ids);
+    }
+    if (drag && drag.kind === "node") {
+      const d = drag, edge = dropEdge;
+      drag = null;
+      showDrop(null);
+      if (!d.moved) return;                                      // 누르기만 함: click에서 고름
+      ignoreNextClick();
+      const p = svgPoint(e);
+      if (edge) {
+        const r = moveNode(graph, d.id, edge.from, edge.to);
+        if (r.error) { hint(r.error); return draw(); }
+        return change(r.graph, [d.id]);
+      }
+      if (!p) return draw();
+      return change(movedGraph(d, p), d.ids);                    // 판 위 그 자리로 (겹치면 옆으로, 세로는 층에 맞춤)
+    }
+    if (wire) {
+      const w = wire, out = w.from !== undefined;
+      wire = null;
+      ignoreNextClick();
+      const target = e.target.closest && e.target.closest("[data-node]");
+      const ww = els.canvas.querySelector("#wire");
+      if (ww) ww.style.display = "none";
+      const p = svgPoint(e);
+      if (target) {                                  // 상자에 놓음: 선 잇기 (보통 층은 기존 선을 바꿈)
+        const tid = target.dataset.node;
+        if (tid === (out ? w.from : w.to)) return;
+        const r = out ? connect(graph, w.from, tid) : connect(graph, tid, w.to);
+        if (r.error) return hint(r.error);
+        return change(r.graph, [out ? tid : w.to]);
+      }
+      if (!p || !overCanvas(e) || Math.hypot(p[0] - w.x0, p[1] - w.y0) < 12) return;
+      layerMenu(e, (t) => {                          // 빈 곳에 놓음: 층을 골라 바로 이어서 만듦
+        const node = forInput(TYPES[t].make(), input()), [nw, nh] = sizeOfDefault(node, flowDir);
+        const ref = L.nodes.find((n) => n.id === (out ? w.from : w.to)) || { ox: 0, oy: 0 };
+        const pos = [p[0] - nw / 2 - ref.ox, p[1] - nh / 2 - ref.oy];
+        const r = out ? addConnected(graph, w.from, node, pos) : addFeeding(graph, w.to, node, pos);
+        if (r.id) change(r.graph, [r.id]);
+      });
+      return;
+    }
+    if (!band) return;
+    const b = band;
+    band = null;
+    const r = els.canvas.querySelector("#band");
+    if (r) r.style.display = "none";
+    if (!b.moved) return;
+    ignoreNextClick();                                          // 끈 뒤 따라오는 click이 선택을 지우지 않게
+    const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+    sel = new Set(L.nodes.filter((n) => n.x >= x0 && n.y >= y0 && n.x + n.w <= x1 && n.y + n.h <= y1).map((n) => n.id)
+      .filter((id) => { const n = findNode(graph, id); return n && n.node.type !== "input" && n.node.type !== "output"; }));
+    // 묶음째 고른 경우 안쪽 노드는 빼기
+    for (const gr of L.groups) if (sel.has(gr.id)) for (const n of L.nodes) if (n.inGroup === gr.id) sel.delete(n.id);
+    selEdge = null;
+    draw();
+  });
+  els.canvas.addEventListener("click", (e) => {
+    if (skipClick) { skipClick = false; return; }
+    const ed = e.target.closest("[data-edge]");
+    if (ed) { const [from, to] = ed.dataset.edge.split(">"); sel = new Set(); selEdge = { from, to }; return draw(); }
+    const g = e.target.closest("[data-node]");
+    if (!g) return select(null);
+    const id = g.dataset.node;
+    if (e.shiftKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); selEdge = null; return draw(); }
+    select(id);
+  });
+  // ---------------- 오른쪽 클릭 메뉴, 층 고르기 메뉴 (키보드 없이)
+  const menu = document.createElement("div");
+  menu.id = "ctx-menu";
+  menu.hidden = true;
+  document.body.appendChild(menu);
+  let menuItems = [];
+  function openMenu(e, items, cls = "") {
+    menuItems = items;
+    menu.className = `ctx-menu ${cls}`;
+    menu.innerHTML = items.map((it, i) => (it.sep ? "<hr>" : it.title ? `<div class="ctx-title">${esc(it.title)}</div>`
+      : `<button data-i="${i}"${it.disabled ? " disabled" : ""}${it.danger ? ' class="danger"' : ""}>${esc(it.label)}</button>`)).join("");
+    menu.hidden = false;
+    menu.style.left = `${Math.max(4, Math.min(e.clientX, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(4, Math.min(e.clientY, innerHeight - menu.offsetHeight - 8))}px`;
+  }
+  const closeMenu = () => { menu.hidden = true; };
+  menu.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-i]");
+    if (!b || b.disabled) return;
+    const it = menuItems[Number(b.dataset.i)];
+    closeMenu();
+    it.fn();
+  });
+  document.addEventListener("mousedown", (ev) => { if (!menu.hidden && !menu.contains(ev.target)) closeMenu(); }, true);
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeMenu(); });
+  els.canvas.addEventListener("scroll", closeMenu);
+  function layerMenu(e, pick) {
+    const allowed = paletteTypes(input()), items = [];
+    for (const [cat, name] of CATS) {
+      const ts = allowed.filter((t) => TYPES[t].cat === cat);
+      if (!ts.length) continue;
+      items.push({ title: name });
+      for (const t of ts) items.push({ label: TYPES[t].name, fn: () => pick(t) });
+    }
+    openMenu(e, items, "layers");
+  }
+  els.canvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const p = svgPoint(e);
+    if (!p) return;
+    const g = e.target.closest("[data-node]"), ed = e.target.closest("[data-edge]");
+    if (g) {
+      const id = g.dataset.node, n = findNode(graph, id).node, fixed = n.type === "input" || n.type === "output";
+      if (!sel.has(id)) { sel = new Set([id]); selEdge = null; draw(); }
+      const many = selIds().length > 1;
+      return openMenu(e, [
+        { title: many ? `${selIds().length}개 고름` : label(n, opts.getSummary()) },
+        { label: many ? "위 상자와 가운데 맞추기 (고른 것 모두)" : "위 상자와 가운데 맞추기", fn: () => autoLayout(), disabled: n.type === "input" },
+        ...(!n.anc && L.nodes.some((x) => x.id === id && !x.anc.length) && n.type !== "input"
+          ? [{ label: n.brk ? "줄바꿈 풀기" : `여기서 줄바꿈 (${flowDir === "h" ? "아래 줄로" : "오른쪽 칸으로"})`,
+            fn: () => change(setBreak(graph, id, !n.brk), [id]) }] : []),
+        { label: "복사", fn: () => copySel(false), disabled: fixed },
+        { label: "복제 (바로 뒤에)", fn: () => act("dup"), disabled: fixed },
+        { label: "이 뒤에 붙여넣기", fn: () => paste(clip), disabled: !clip || n.type === "output" },
+        { sep: true },
+        { label: "Residual로 감싸기", fn: () => act("wrap-res"), disabled: fixed },
+        { label: "Repeat로 감싸기", fn: () => act("wrap-rep"), disabled: fixed },
+        { label: "갈래로 나누기", fn: () => act("split"), disabled: fixed || input() === "tabular" },
+        ...(n.type === "repeat" ? [{ label: "묶음 풀기", fn: () => act("unwrap") }] : []),
+        { sep: true },
+        { label: "삭제", fn: () => removeSel(), danger: true, disabled: fixed },
+      ]);
+    }
+    if (ed) {
+      const [from, to] = ed.dataset.edge.split(">");
+      sel = new Set(); selEdge = { from, to }; draw();
+      return openMenu(e, [
+        { title: "선" },
+        { label: "이 선에 층 넣기…", fn: () => layerMenu(e, (t) => {
+          const nid = newId(graph);
+          change(insertOnEdge(graph, from, to, Object.assign({ id: nid }, forInput(TYPES[t].make(), input()))), [nid]);
+        }) },
+        { label: "선 지우기", fn: () => change(removeEdge(graph, from, to), []), danger: true },
+      ]);
+    }
+    select(null);
+    openMenu(e, [
+      { title: "판" },
+      { label: "여기에 층 추가…", fn: () => layerMenu(e, (t) => {
+        const node = forInput(TYPES[t].make(), input()), [nw, nh] = sizeOfDefault(node, flowDir), o = L.nodes.find((n) => !n.anc.length) || { ox: 0, oy: 0 };
+        const nid = newId(graph);
+        change(addFree(graph, Object.assign({ id: nid }, node), [p[0] - nw / 2 - o.ox, p[1] - nh / 2 - o.oy]), [nid]);
+      }) },
+      { label: "붙여넣기", fn: () => paste(clip), disabled: !clip },
+      { label: "전체 자동 정렬", fn: () => autoLayout() },
+    ]);
+  });
+
+  els.settings.addEventListener("change", (e) => {
+    if (e.target.dataset.size) {                     // 크기 칸: 고른 상자 모두
+      const w = Number(els.settings.querySelector('[data-size="w"]').value), h = Number(els.settings.querySelector('[data-size="h"]').value);
+      return change(setSize(graph, selIds(), [w, h]), selIds());
+    }
+    const k = e.target.dataset.k, ids = selIds();
+    if (!k || ids.length !== 1) return;
+    const raw = e.target.value;
+    const v = raw !== "" && !isNaN(Number(raw)) ? Number(raw) : raw;   // same·valid·relu 같은 글자 값은 그대로
+    change(setParam(graph, ids[0], k, v));
+  });
+  els.settings.addEventListener("click", (e) => {
+    const a = e.target.dataset.a;
+    if (a) act(a, e.target.dataset);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!els.canvas.offsetParent || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;   // 모델 화면에서만
+    const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    let done = true;
+    if ((e.key === "Delete" || e.key === "Backspace") && (sel.size || selEdge)) removeSel();
+    else if (ctrl && k === "z" && !e.shiftKey) { if (!undo()) hint("더 되돌릴 것이 없습니다"); }
+    else if (ctrl && (k === "y" || (k === "z" && e.shiftKey))) { if (!redo()) hint("다시 할 것이 없습니다"); }
+    else if (ctrl && k === "c") copySel(false);
+    else if (ctrl && k === "x") copySel(true);
+    else if (ctrl && k === "v") paste(clip);
+    else if (ctrl && k === "d") act("dup");
+    else if (ctrl && k === "a") { sel = new Set(nodesOf(graph).filter((n) => n.type !== "input" && n.type !== "output").map((n) => n.id)); selEdge = null; draw(); }
+    else if (e.key === "Escape") select(null);
+    else done = false;
+    if (done) e.preventDefault();
+  });
+  drawPalette();
+  draw();
+  function autoLayout() {                            // 고른 상자가 있으면 바로 위 상자와 가운데 맞춤, 없으면 전체 자동 정렬
+    const ids = selIds().filter((id) => findNode(graph, id).node.type !== "input");
+    if (ids.length) { change(alignToParent(graph, ids, lopts()), ids); return hint(`고른 ${ids.length}개를 바로 ${flowDir === "h" ? "왼쪽" : "위"} 상자와 가운데 맞췄습니다`); }
+    change(clearPos(graph));
+    hint("자동 정렬했습니다 (판 위에 옮겨 둔 위치를 지움). 상자를 고르고 누르면 그 상자만 위 상자와 가운데 맞춤");
+  }
+  function setEdgeStyle(v) { edgeStyle = v === "curve" ? "curve" : "ortho"; draw(); }
+  function setWrap(on) { autoWrap = !!on; draw(); }
+  function setFlowDir(v, fromUser) {                 // 방향을 바꾸면 옮겨 둔 위치는 지움 (축이 바뀌어 뜻이 달라짐, 되돌리기 됨)
+    flowDir = v === "h" ? "h" : "v";
+    let had = false;
+    eachNode(nodesOf(graph), (n) => { if (n.pos) had = true; });
+    if (fromUser && had) { change(clearPos(graph)); hint("방향을 바꿔 옮겨 둔 위치를 지웠습니다 (되돌리기로 살릴 수 있음)"); }
+    else draw();
+  }
+  window.addEventListener("resize", () => { if (els.canvas.offsetParent) draw(); });
+  return { set, get, decorate, select, redraw: draw, redrawPalette: drawPalette, undo, redo, autoLayout, setEdgeStyle, setFlowDir, setWrap };
+}
+
+const API = { mount, fmtShape, forInput, labelLines, setBreak, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,
+  singleEntryExit, wrapResidual, wrapRepeat, unwrap, splitBranch, copyNodes, pasteAfter, setParam, newId, findNode, history, clone };
+if (typeof module !== "undefined") module.exports = API;
+if (typeof window !== "undefined") window.StudioGraph = API;
+})();

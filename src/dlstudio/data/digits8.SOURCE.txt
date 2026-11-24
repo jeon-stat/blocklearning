@@ -1,0 +1,6 @@
+digits8.npz: 손글씨 숫자 8×8 (1,797장, 픽셀 값 0–16, 정답 0–9)
+
+출처: Optical Recognition of Handwritten Digits (E. Alpaydin, C. Kaynak), UCI Machine Learning Repository
+https://archive.ics.uci.edu/dataset/80
+라이선스: Creative Commons Attribution 4.0 International (CC BY 4.0)
+scikit-learn의 load_digits()가 내는 배열을 그대로 저장함 (X: uint8 (1797, 64), y: uint8 (1797,))

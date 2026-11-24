@@ -1,0 +1,12 @@
+pneumonia28.npz: 흉부 X-ray 정상·폐렴 28×28 흑백 (1,200장: 정상 600, 폐렴 600, 픽셀 0–255, 정답 0 정상 · 1 폐렴)
+
+출처: PneumoniaMNIST (MedMNIST v2), https://medmnist.com/ , https://doi.org/10.5281/zenodo.10519652
+  파일 pneumoniamnist.npz (4.2 MB, md5 28209eda62fecd6e6a2d98b1501bb15f)의 train·val·test를 합친 5,856장에서
+  클래스마다 600장을 무작위(numpy seed 0)로 골라 펼쳐 저장함.
+라이선스: Creative Commons Attribution 4.0 International (CC BY 4.0)
+인용:
+  Yang J, Shi R, Wei D, Liu Z, Zhao L, Ke B, Pfister H, Ni B. MedMNIST v2: A large-scale lightweight benchmark
+  for 2D and 3D biomedical image classification. Scientific Data 10(1):41, 2023. doi:10.1038/s41597-022-01721-8
+  원본: 소아 흉부 X-ray 5,856장 (Kermany et al., "Identifying Medical Diagnoses and Treatable Diseases by
+  Image-Based Deep Learning", Cell 172(5), 2018)
+의료 진단용이 아님 (MedMNIST: "NOT intended for clinical use").
