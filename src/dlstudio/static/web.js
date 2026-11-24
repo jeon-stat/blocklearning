@@ -325,7 +325,7 @@ function afterApp() {
     const el = $(id);
     if (!el) continue;
     el.readOnly = true;
-    el.placeholder = id === "series-label-file" ? "정답 표 (선택) — 단추로 고르기" : "옆 단추로 고르세요 (브라우저 안에서만 읽음)";
+    el.placeholder = id === "series-label-file" ? "정답 표 (선택) — 단추로 고르기" : "단추로 고르세요 (브라우저 안에서만 읽음)";
   }
   const wrapBtn = (btnId, inputId, opts, label) => {
     const b = $(btnId);

@@ -59,24 +59,28 @@
   <section id="step-data" class="panel" hidden>
     <h2>② 데이터 넣기 <span id="data-task-name" class="tag"></span></h2>
     <p class="lead" id="data-guide">한 행이 샘플 하나인 CSV를 고르거나 (값 열 + 마지막 열이 정답), 예시 데이터로 시작하세요.</p>
-    <div class="row">
-      <span id="example-btns"></span>
-      <span class="or">또는</span>
-      <input id="csv-path" class="path" placeholder="C:\data\ecg.csv">
-      <button id="btn-csv">CSV 불러오기</button>
-    </div>
-    <div id="dropzone" class="dropzone" hidden>또는 CSV 파일을 이 화면에 끌어다 놓으세요</div>
-    <details id="csv-format" class="fmt"><summary>CSV는 어떤 모양이어야 하나요?</summary><div id="csv-format-body"></div></details>
-    <div class="row" id="image-row" hidden>
-      <input id="folder-path" class="path" placeholder="C:\data\사진 (안에 클래스별 하위 폴더)">
-      <label>크기 <select id="folder-size"><option value="8">8×8</option><option value="16">16×16</option><option value="28" selected>28×28</option><option value="32">32×32</option></select></label>
-      <button id="btn-folder">폴더 불러오기</button>
-    </div>
-    <div class="row" id="series-row" hidden>
-      <span class="or">또는 샘플마다 CSV 하나인 폴더</span>
-      <input id="series-path" class="path" placeholder="C:\data\사이클 (사이클·환자마다 CSV 하나)">
-      <input id="series-label-file" class="path short" placeholder="정답 표 CSV (선택: 파일이름, 정답)">
-      <button id="btn-series-scan">폴더 살펴보기</button>
+    <div class="sec-title"><h3>예시 데이터로 시작</h3><span class="muted">처음이면 예시로 한 번 해 보세요</span></div>
+    <div id="example-btns" class="ex-grid"></div>
+    <div class="sec-title"><h3>내 데이터 넣기</h3><span class="muted">데이터는 이 PC 밖으로 나가지 않습니다</span></div>
+    <div class="src-grid">
+      <div class="src-card" id="csv-card">
+        <div class="src-head"><b>CSV 파일</b><span>한 행 = 샘플 하나, 마지막 열 = 정답</span></div>
+        <div class="src-row"><input id="csv-path" class="path" placeholder="C:\data\ecg.csv"><button id="btn-csv">CSV 불러오기</button></div>
+        <div id="dropzone" class="dropzone" hidden>또는 CSV 파일을 이 화면에 끌어다 놓으세요</div>
+        <details id="csv-format" class="fmt"><summary>CSV는 어떤 모양이어야 하나요?</summary><div id="csv-format-body"></div></details>
+      </div>
+      <div class="src-card" id="image-row" hidden>
+        <div class="src-head"><b>이미지 폴더</b><span>클래스마다 하위 폴더 (예: 사진/양품, 사진/불량)</span></div>
+        <div class="src-row"><input id="folder-path" class="path" placeholder="C:\data\사진 (안에 클래스별 하위 폴더)"></div>
+        <div class="src-row"><label class="inline">크기 <select id="folder-size"><option value="8">8×8</option><option value="16">16×16</option><option value="28" selected>28×28</option><option value="32">32×32</option></select></label>
+          <span class="grow"></span><button id="btn-folder">폴더 불러오기</button></div>
+      </div>
+      <div class="src-card" id="series-row" hidden>
+        <div class="src-head"><b>시계열 폴더</b><span>샘플(사이클·환자)마다 CSV 하나</span></div>
+        <div class="src-row"><input id="series-path" class="path" placeholder="C:\data\사이클 (사이클·환자마다 CSV 하나)"></div>
+        <div class="src-row"><input id="series-label-file" class="path" placeholder="정답 표 CSV (선택: 파일이름, 정답)"></div>
+        <div class="src-row"><span class="grow"></span><button id="btn-series-scan">폴더 살펴보기</button></div>
+      </div>
     </div>
     <div class="box series-box" id="series-box" hidden>
       <div id="series-info" class="series-info"></div>
@@ -100,6 +104,7 @@
     </details>
     <ul id="data-issues" class="issues"></ul>
     <div id="data-summary" hidden>
+      <div class="sec-title"><h3>불러온 데이터</h3></div>
       <div id="auto-task" class="auto-task" hidden></div>
       <div class="cards" id="data-cards"></div>
       <p class="muted split-note">학습 샘플로 모델을 가르치고, 학습에 쓰지 않고 남겨 둔 <b>시험 샘플</b>로 처음 보는 데이터도 맞히는지 잽니다. 나누는 비율은 위 [더 보기]의 시험 비율.</p>

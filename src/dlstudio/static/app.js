@@ -313,7 +313,7 @@ function renderDataGuide() {
   const ts = (sub && sub.input === "timeseries") || any;     // 샘플마다 CSV 하나인 폴더: 시계열 과제에서만
   $("series-row").hidden = !ts;
   if (!ts) $("series-box").hidden = true;
-  $("csv-path").placeholder = WEB ? "옆 단추로 CSV 파일을 고르세요 (브라우저 안에서만 읽음)" : img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
+  $("csv-path").placeholder = WEB ? "단추로 CSV 파일 고르기" : img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
   st.examples = sub && !st.autoTask ? sub.example_data : allExamples();
   renderExamples();
   $("csv-format-body").innerHTML = csvFormat(any ? null : sub);
@@ -364,11 +364,15 @@ $("auto-task").onclick = (e) => {
   const hit = findSub(st.sub.input === "tabular" ? "timeseries" : "tabular", st.summary.task);
   if (hit) chooseTemplate(hit[0], hit[1], hit[1].templates[0]).then(() => onData(st.summary));
 };
-function renderExamples() {                             // 불러온 예시는 ✓ 표시, 데이터가 없을 때만 눈에 띄게
-  $("example-btns").innerHTML = (st.examples || []).map(([k, name]) => {
+function renderExamples() {                             // 예시 카드: 이름 + (분야 · 과제), 불러온 것은 ✓
+  $("example-btns").innerHTML = (st.examples || []).map(([k, label]) => {
+    const [main, sub] = label.split(" · ");
+    const m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(main), name = m ? m[1] : main;
+    const meta = [m ? m[2] : "", sub || ""].filter(Boolean).join(" · ");
     const sel = st.summary && st.dataSrc === k;
-    return `<button class="${sel ? "ex-sel" : st.summary ? "" : "primary"}" data-ex="${esc(k)}">${sel ? "✓ " : ""}예시: ${esc(name)}</button>`;
-  }).join(" ");
+    return `<button class="ex-card${sel ? " sel" : ""}" data-ex="${esc(k)}"><span class="ex-name">${esc(name)}</span>` +
+      `<span class="ex-meta">${esc(meta)}</span>${sel ? `<span class="ex-check">✓ 불러옴</span>` : ""}</button>`;
+  }).join("");
 }
 function csvFormat(sub) {                                // CSV 모양 예시 (작은 표)
   const kind = sub ? sub.input : "timeseries", reg = sub && sub.task === "regression";
