@@ -114,6 +114,7 @@ function startTrain(body) {
     W.mod.set_trained(W.studio, JSON.stringify(body.graph), JSON.stringify(body.settings || {}), JSON.stringify(result));
     job.result = result;
     job.state = "done";
+    changed("train");
   }).catch((e) => {
     job.state = job.cancelled ? "cancelled" : "failed";
     job.error = `${e.name || "Error"}: ${e.message || e}`;
@@ -172,7 +173,8 @@ function projectSave(body) {
   return { ok: true, file: name };
 }
 function projectOpen(body) {
-  const r = wrapped(W.mod.open_project(W.studio, body.path));
+  const r = wrapped(W.mod.record_open(W.studio, body.path, body.data_path || ""));
+  W.openedName = r.name || "";
   if (W.trained) { W.trained.net.dispose(); W.trained = null; }
   W.data = null;
   if (r.state) {
@@ -183,6 +185,34 @@ function projectOpen(body) {
     W.trained = { net, plan: r.plan, graph: r.response.graph, settings: r.response.train_settings || {}, results: r.response.results || {} };
   }
   return r.response;
+}
+
+// ------------------------------------------------------------ 바뀜 알림 (자동 저장이 듣는 곳)
+const listeners = [];
+function changed(kind) { for (const f of listeners) { try { f(kind); } catch (e) { console.error(e); } } }
+
+// 지금 작업을 기록 바이트로 (store.js가 브라우저 보관함·구글 드라이브에 씀). 데이터가 없거나 모델이 없으면 null
+// opts.withData: 데이터를 프로젝트 파일 안에 함께 (내보내기), opts.dataCopy: 데이터 사본(data.zip)도 따로 만듦 (데이터가 바뀐 때만)
+function recordBytes(name, opts = {}) {
+  if (!W.studio || !W.studio.data) return null;
+  const st = W.trained ? stateForPython(W.trained.net) : null;
+  try {
+    const out = { project: bytesOf(W.mod.record_project(W.studio, st, name || "", !!opts.withData)) };
+    if (opts.dataCopy) out.data = bytesOf(W.mod.data_zip(W.studio));
+    return out;
+  } catch (e) {
+    const err = pyError(e);
+    if (/저장할 모델이 없음/.test(err.message)) return null;
+    throw err;
+  } finally { if (st) st.destroy(); }
+}
+// 기록 바이트 → 열기 (화면용 응답). data는 없어도 됨 (예시 데이터, 또는 프로젝트 zip 안에 데이터가 있음)
+async function openRecord(project, data) {
+  await ready;
+  W.py.FS.mkdirTree("/work");
+  W.py.FS.writeFile("/work/open.dlstudio", project);
+  if (data && data.length) W.py.FS.writeFile("/work/open.zip", data);
+  return api("/api/project/open", { path: "/work/open.dlstudio", data_path: data && data.length ? "/work/open.zip" : "" });
 }
 
 // ------------------------------------------------------------ api: 화면이 부르는 곳
@@ -200,6 +230,10 @@ async function api(path, body) {
     if (path.startsWith("/api/label/")) throw { message: "라벨링 작업실은 웹 버전에 아직 없음", hint: "내 PC에서 python -m dlstudio로 실행하면 쓸 수 있습니다" };
     if (path === "/api/data/load") clearTrained();
     const r = pyCall(method, path, body);
+    if (method === "POST") {
+      if (path === "/api/data/load") changed("data");
+      else if (path === "/api/model/check" || path === "/api/task/select") changed("model");
+    }
     if (path === "/api/state" && W.trained) Object.assign(r, { trained: true, trained_graph: W.trained.graph, results: W.trained.results });
     return r;
   } catch (e) {
@@ -275,6 +309,8 @@ function afterApp() {
   document.body.classList.add("web");
 }
 
-window.DLS_WEB = { api, afterApp, ready, writeFiles,
+window.DLS_WEB = { api, afterApp, ready, writeFiles, recordBytes, openRecord,
+  onChange: (f) => listeners.push(f), hasData: () => !!(W.studio && W.studio.data), openedName: () => W.openedName || "",
+  download,
   pickProject: async () => { const f = await pick({ accept: ".dlstudio,.zip" }); return f.length ? writeFiles(f) : null; } };
 })();

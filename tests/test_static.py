@@ -217,9 +217,10 @@ def test_code_dialog_exists():
 def test_web_version_files():
     """웹 버전(GitHub Pages): 저장소 맨 위 index.html이 화면을 불러 Pyodide·TF.js·엔진·다리·화면 순서로 부름."""
     root = STATIC.parents[2]
-    html = (root / "index.html").read_text(encoding="utf-8")
     assert (root / ".nojekyll").exists()
-    assert 'src/dlstudio/static/index.html' in html and "pyodide" in html and "tfjs@" in html
+    assert 'src/dlstudio/static/boot.js' in (root / "index.html").read_text(encoding="utf-8")
+    html = (STATIC / "boot.js").read_text(encoding="utf-8")
+    assert 'index.html' in html and "pyodide" in html and "tfjs@" in html
     order = [html.find(f'"{f}"') for f in ("engine.js", "web.js", "graph.js", "app.js")]
     assert all(i >= 0 for i in order) and order == sorted(order)
     web = (STATIC / "web.js").read_text(encoding="utf-8")
@@ -229,3 +230,23 @@ def test_web_version_files():
     listed = set(re.findall(r'"(\w+\.py)"', web))
     assert {p.name for p in src.glob("*.py")} - {"server.py", "cli.py", "__main__.py"} <= listed   # 웹에서 쓰는 모듈은 모두 불러옴
     assert "window.DLS_WEB" in (STATIC / "app.js").read_text(encoding="utf-8")
+
+
+def test_web_storage_and_security():
+    """웹 버전 보관·보안: drive.file 권한만, 출입증은 저장소에 안 남김, CSP·SRI, 개인정보처리방침."""
+    root = STATIC.parents[2]
+    store = (STATIC / "store.js").read_text(encoding="utf-8")
+    scopes = set(re.findall(r"https://www\.googleapis\.com/auth/[\w.]+", store))
+    assert scopes == {"https://www.googleapis.com/auth/drive.file"}
+    assert "localStorage" not in store and "sessionStorage" not in store          # 토큰을 남기지 않음
+    html = (root / "index.html").read_text(encoding="utf-8")
+    csp = re.search(r'Content-Security-Policy" content="([^"]+)"', html).group(1)
+    connect = re.search(r"connect-src ([^;]+)", csp).group(1).split()
+    assert set(connect) <= {"'self'", "https://cdn.jsdelivr.net", "https://www.googleapis.com", "https://oauth2.googleapis.com",
+                            "https://accounts.google.com"}
+    assert "<script>" not in html                                                # 인라인 스크립트 없음
+    boot = (STATIC / "boot.js").read_text(encoding="utf-8")
+    assert boot.count("sha384-") == 2 and "integrity" in boot
+    for f in ("engine.js", "store.js", "web.js", "graph.js", "app.js", "projects.js"):
+        assert f'"{f}"' in boot, f
+    assert (root / "privacy.html").exists() and "drive.file" in (root / "privacy.html").read_text(encoding="utf-8")

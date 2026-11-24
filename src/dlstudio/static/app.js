@@ -579,21 +579,23 @@ $("btn-save").onclick = async () => {
   if (!path) return;
   try { await api("/api/project/save", { path }); showMessage(`저장했음: ${path}`, "", "", true); } catch (e) { showError(e); }
 };
+function applyOpened(r) {                                // 연 프로젝트를 화면에 (과제·데이터·모델·학습 결과)
+  applySelection(r.selection);
+  onData(r.summary);
+  setGraph(r.graph);
+  st.graphJson = sig(r.graph);
+  st.trained = r.trained;
+  st.trainedJson = r.trained ? st.graphJson : "";
+  st.trainedGraph = r.trained ? r.graph : null;
+  if (r.trained && r.results && r.results.metric_name) { renderTrainResult(r.results); $("sample-box").hidden = false; showSample(); }
+  scheduleCheck();
+  go("model");
+}
 $("btn-open").onclick = async () => {
   const path = WEB ? await window.DLS_WEB.pickProject() : prompt("열 프로젝트 파일 경로 (.dlstudio)");
   if (!path) return;
   try {
-    const r = await api("/api/project/open", { path });
-    applySelection(r.selection);
-    onData(r.summary);
-    setGraph(r.graph);
-    st.graphJson = sig(r.graph);
-    st.trained = r.trained;
-    st.trainedJson = r.trained ? st.graphJson : "";
-    st.trainedGraph = r.trained ? r.graph : null;
-    if (r.trained && r.results && r.results.metric_name) { renderTrainResult(r.results); $("sample-box").hidden = false; }
-    scheduleCheck();
-    go("model");
+    applyOpened(await api("/api/project/open", { path }));
     showMessage(`열었음: ${WEB ? path.split("/").pop() : path}`, "", "", true);
   } catch (e) { showError(e); }
 };

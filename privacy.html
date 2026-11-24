@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>DL studio 개인정보처리방침</title>
+<style>
+  :root { --text: #1d2330; --muted: #6b7280; --line: #e3e6eb; --bg: #ffffff; --accent: #2f6fde; }
+  @media (prefers-color-scheme: dark) { :root { --text: #e6e8ec; --muted: #9aa3ae; --line: #2d333b; --bg: #15181d; --accent: #7aa7ff; } }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.7 "Pretendard", "Malgun Gothic", system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; } h2 { font-size: 19px; margin: 32px 0 8px; border-top: 1px solid var(--line); padding-top: 20px; }
+  .muted { color: var(--muted); font-size: 14px; } a { color: var(--accent); } code { font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+<h1>DL studio 개인정보처리방침</h1>
+<p class="muted">시행일: 2026년 11월 24일 · 서비스: <a href="./">https://jeon-stat.github.io/dl-studio/</a></p>
+
+<p>DL studio(이하 "서비스")는 브라우저에서 블록을 이어 딥러닝 모델을 만들고 학습하는 도구입니다. 서비스에는 운영자의 서버가 없습니다. 모든 계산은 이용자의 브라우저 안에서 이루어지며, 운영자는 이용자의 데이터·프로젝트·구글 계정 정보를 받거나 보관하지 않습니다.</p>
+
+<h2>1. 처리하는 정보</h2>
+<ul>
+  <li><b>이용자가 고른 데이터 파일과 프로젝트</b>: 이용자의 브라우저 안에서만 읽고 계산합니다. 저장은 이용자가 고른 곳에만 합니다 — 이 브라우저 안 보관함(IndexedDB) 또는 이용자 본인의 구글 드라이브.</li>
+  <li><b>구글 계정 연결(선택)</b>: 구글 드라이브에 저장하기를 고르면, 구글 로그인 창(accounts.google.com)에서 로그인하고 서비스는 구글이 발급한 접근 토큰(약 1시간 유효)을 브라우저 메모리에만 둡니다. 비밀번호는 서비스에 전달되지 않습니다. 토큰은 저장하지 않으며, 로그아웃하거나 창을 닫으면 사라집니다.</li>
+</ul>
+
+<h2>2. 구글 사용자 데이터의 사용</h2>
+<ul>
+  <li>요청하는 권한은 <code>https://www.googleapis.com/auth/drive.file</code> 하나입니다. 이 권한으로는 <b>서비스가 만든 파일과 폴더만</b> 볼 수 있으며, 이용자의 다른 드라이브 파일·Gmail·연락처·계정 정보에는 접근할 수 없습니다.</li>
+  <li>서비스는 이용자 드라이브에 <code>DL studio</code> 폴더와 프로젝트별 하위 폴더를 만들고, 그 안에 프로젝트 파일(<code>project.dlstudio</code>)과 데이터 사본(<code>data.zip</code>)을 저장·읽기·이름 바꾸기·휴지통으로 옮기기만 합니다.</li>
+  <li>구글 사용자 데이터를 운영자나 제3자에게 전송·판매·공유하지 않으며, 광고·분석·모델 학습(서비스 운영자의 AI 학습 포함)에 사용하지 않습니다. 구글 API에서 받은 정보의 사용은 <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>의 제한된 사용(Limited Use) 요건을 따릅니다.</li>
+</ul>
+
+<h2>3. 외부 서비스</h2>
+<ul>
+  <li>화면과 계산 프로그램(Pyodide, TensorFlow.js)은 GitHub Pages와 jsDelivr CDN에서 받아 옵니다. 이 과정에서 이들 업체가 일반적인 접속 기록(IP 주소 등)을 남길 수 있습니다. 이용자의 데이터는 이들에게 보내지 않습니다.</li>
+  <li>쿠키·광고·접속 분석 도구를 쓰지 않습니다.</li>
+</ul>
+
+<h2>4. 보관과 삭제</h2>
+<ul>
+  <li>이 브라우저 보관함의 프로젝트: 서비스의 [내 프로젝트]에서 지우거나, 브라우저의 사이트 데이터 삭제로 지울 수 있습니다.</li>
+  <li>구글 드라이브의 프로젝트: [내 프로젝트]에서 지우면 드라이브 휴지통으로 옮겨지며, 드라이브에서 영구 삭제할 수 있습니다. 서비스의 접근 권한은 <a href="https://myaccount.google.com/connections">구글 계정 → 서드 파티 연결</a>에서 언제든 해제할 수 있습니다.</li>
+</ul>
+
+<h2>5. 문의</h2>
+<p>이 방침이나 서비스에 대한 문의는 <a href="https://github.com/jeon-stat/dl-studio/issues">GitHub 이슈</a>로 남겨 주세요.</p>
+
+<h2>English summary</h2>
+<p>DL studio runs entirely in your browser and has no backend server. If you choose to save to Google Drive, it requests only the <code>drive.file</code> scope, creates a "DL studio" folder with one subfolder per project, and reads or writes only the files it created. Access tokens are kept in memory only. No data is sent to the operator or third parties, and Google user data is not used for advertising, analytics, or model training. Use of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.</p>
+</main>
+</body>
+</html>
