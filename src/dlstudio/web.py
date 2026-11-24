@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import re
+import zipfile
 
 import numpy as np
 
@@ -171,3 +174,134 @@ def open_project(studio: Studio, path: str) -> dict:
     res = {"graph": pr["graph"], "summary": d.summary(), "train_settings": pr["train_settings"], "results": pr["results"],
            "trained": state is not None, "selection": studio.selection}
     return {"response": _clean(res), "state": state, "plan": plan_}
+
+
+# ------------------------------------------------------------ 프로젝트 기록 (브라우저 보관함·구글 드라이브)
+# 기록 = 프로젝트 파일(project.dlstudio: 그래프·설정·결과·가중치, 자주 저장) + 데이터 사본(data.zip: 고른 파일들, 데이터를 바꿀 때만).
+# 고른 파일은 Pyodide 안의 /data/u<번호>/...에 있다 → 데이터 출처의 경로는 "@data/u<번호>/..."로 적어 두고, 열 때 새 자리로 바꾼다.
+DATA_DIR = "/data"                                       # Pyodide 안에서 고른 파일을 두는 곳 (시험은 바꿔 씀)
+_MARK = "@data/"
+
+
+def _root_re():
+    return re.compile("^" + re.escape(DATA_DIR) + r"/(u\d+)(/|$)")
+
+
+def _walk_strings(obj, fn):
+    if isinstance(obj, dict):
+        return {k: _walk_strings(v, fn) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_walk_strings(v, fn) for v in obj]
+    return fn(obj) if isinstance(obj, str) else obj
+
+
+def _data_roots(source: dict) -> list:
+    roots = set()
+    rx = _root_re()
+    _walk_strings(source, lambda v: roots.add(rx.match(v).group(1)) if rx.match(v) else v)
+    return sorted(roots)
+
+
+def _portable_source(source: dict) -> dict:
+    rx = _root_re()
+    return _walk_strings(source, lambda v: rx.sub(lambda m: _MARK + m.group(1) + m.group(2), v))
+
+
+def data_zip(studio: Studio) -> bytes:
+    """지금 데이터의 파일들(고른 파일·폴더) → zip 바이트 (예시 데이터면 빈 바이트)."""
+    d = studio.need_data()
+    roots = _data_roots(d.source)
+    if not roots:
+        return b""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as z:     # 그림·CSV는 대개 이미 압축이 잘 안 됨
+        for r in roots:
+            base = f"{DATA_DIR}/{r}"
+            for dirpath, _, files in os.walk(base):
+                for f in files:
+                    full = os.path.join(dirpath, f)
+                    z.write(full, f"{r}/{os.path.relpath(full, base)}".replace(os.sep, "/"))
+    return buf.getvalue()
+
+
+def record_project(studio: Studio, state, name: str = "", with_data: bool = False) -> bytes:
+    """프로젝트 파일 바이트. 데이터 경로는 옮길 수 있게(@data/...). with_data면 데이터 사본도 zip 안 data/에 (내보내기용)."""
+    from dlstudio.project import save_project
+    d = studio.need_data()
+    graph = studio.model_graph if state is not None and studio.model_graph else studio.graph
+    if not graph:
+        raise UserError("저장할 모델이 없음", "③ 모델 단계에서 층을 놓으세요")
+    extra = {}
+    if with_data:
+        raw = data_zip(studio)
+        if raw:
+            with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                extra = {f"data/{n}": z.read(n) for n in z.namelist()}
+    buf = io.BytesIO()
+    save_project(buf, graph, _portable_source(d.source), studio.train_settings,
+                 _arrays(state) if state is not None else None, studio.results, studio.selection, extra, name)
+    return buf.getvalue()
+
+
+_n_open = [0]
+
+
+@_wrap
+def record_open(studio: Studio, project_path: str, data_path: str = "") -> dict:
+    """프로젝트 기록 열기: 데이터 사본(따로 받은 data.zip 또는 프로젝트 zip 안 data/)을 새 자리에 풀고, 출처를 그 자리로 바꿔 불러옴.
+    돌려줌: 화면용 응답 + 가중치 + 엔진용 계획 + 프로젝트 이름."""
+    from dlstudio.project import open_project as _open
+    try:
+        pr = _open(project_path)
+    except (ValueError, KeyError) as e:
+        raise UserError(f"프로젝트 파일을 읽을 수 없음: {e}", "DL studio에서 저장한 .dlstudio 파일을 고르세요") from None
+    _n_open[0] += 1
+    root = f"{DATA_DIR}/r{_n_open[0]}"
+    root_n = os.path.normpath(root)
+    files = 0
+    sources = []
+    if data_path:
+        sources.append(("", zipfile.ZipFile(data_path)))
+    with zipfile.ZipFile(project_path) as pz:
+        if any(n.startswith("data/") for n in pz.namelist()):
+            sources.append(("data/", zipfile.ZipFile(io.BytesIO(open(project_path, "rb").read()))))
+    for prefix, z in sources:
+        with z:
+            for n in z.namelist():
+                if not n.startswith(prefix) or n.endswith("/") or n == prefix:
+                    continue
+                rel = n[len(prefix):]
+                target = os.path.normpath(os.path.join(root, rel))
+                if not target.startswith(root_n + os.sep):
+                    continue                                    # zip 안의 ../ 같은 경로는 무시
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "wb") as f:
+                    f.write(z.read(n))
+                files += 1
+    uses_copy = []                                          # 출처가 데이터 사본(@data/...)을 가리키는지
+    src = _walk_strings(pr["data_source"], lambda v: (uses_copy.append(1), root + "/" + v[len(_MARK):])[1] if v.startswith(_MARK) else v)
+    if src.get("example"):
+        studio.load_source(src)
+    elif files or uses_copy:
+        if not files:
+            raise UserError("이 프로젝트의 데이터 사본이 없음", "② 데이터에서 같은 데이터를 고른 뒤 다시 저장하세요")
+        studio.load_source(src)
+    elif studio.data is None:
+        raise UserError("이 프로젝트의 데이터를 먼저 불러오세요", "② 데이터에서 같은 데이터를 고른 뒤 다시 여세요")
+    d = studio.data
+    studio.graph = pr["graph"]
+    studio.train_settings, studio.results, studio.selection = pr["train_settings"], pr["results"], pr["selection"]
+    state, plan_ = None, None
+    if pr["state_dict"] is not None:
+        plan_ = codegen.plan_dict(pr["graph"], d.length, d.n_out, d.image)
+        want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"]}
+        if {k: list(v.shape) for k, v in pr["state_dict"].items()} != want:
+            raise UserError("프로젝트의 모델이 지금 데이터와 맞지 않음", "프로젝트를 저장할 때와 같은 데이터를 불러오세요")
+        state = {k: {"shape": list(v.shape), "data": np.asarray(v).ravel().tolist(), "int": bool(np.issubdtype(v.dtype, np.integer))}
+                 for k, v in pr["state_dict"].items()}
+        studio.model_graph = pr["graph"]
+    else:
+        studio.model_graph = None
+    res = {"graph": pr["graph"], "summary": d.summary(), "train_settings": pr["train_settings"], "results": pr["results"],
+           "trained": state is not None, "selection": studio.selection}
+    return {"response": _clean(res), "state": state, "plan": plan_, "name": pr.get("name", "")}

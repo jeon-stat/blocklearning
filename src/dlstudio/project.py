@@ -13,14 +13,17 @@ FORMAT, VERSION = "dlstudio", 1
 
 
 def save_project(path, graph: dict, data_source: dict, train_settings: dict, model, results: dict,
-                 selection: dict = None) -> None:
-    """path: 파일 경로 또는 쓸 수 있는 파일(BytesIO). model: torch 모델, 또는 가중치 dict(이름 → 배열, 웹 버전)."""
+                 selection: dict = None, extra_files: Optional[dict] = None, name: str = "") -> None:
+    """path: 파일 경로 또는 쓸 수 있는 파일(BytesIO). model: torch 모델, 또는 가중치 dict(이름 → 배열, 웹 버전).
+    extra_files: zip에 함께 넣을 {이름: 바이트} (웹 버전의 데이터 사본 data/...). name: 프로젝트 이름."""
     if isinstance(path, (str, Path)):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    meta = {"format": FORMAT, "version": VERSION, "graph": graph, "data_source": data_source,
+    meta = {"format": FORMAT, "version": VERSION, "name": name, "graph": graph, "data_source": data_source,
             "train_settings": train_settings, "results": results, "selection": selection}
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(meta, ensure_ascii=False, indent=1))
+        for arc, raw in (extra_files or {}).items():
+            z.writestr(arc, raw)
         if model is not None:                        # 가중치: PyTorch state_dict 이름 그대로 .npz (torch 없이도 읽음)
             from dlstudio.codegen import save_npz
             buf = io.BytesIO()
@@ -43,6 +46,7 @@ def open_project(path: str) -> dict:
     except zipfile.BadZipFile:
         raise ValueError("DL studio 프로젝트 파일이 아님 (zip이 아님)") from None
     return {"graph": meta["graph"], "data_source": meta["data_source"], "train_settings": meta["train_settings"],
+            "name": meta.get("name", ""),
             "results": meta.get("results", {}), "selection": meta.get("selection"), "state_dict": state}
 
 

@@ -301,20 +301,7 @@ class Studio:
         if not os.path.isfile(b["path"]):
             raise UserError(f"파일을 찾을 수 없음: {b.get('path')}", "프로젝트 파일(.dlstudio)의 전체 경로를 넣으세요")
         pr = open_project(b["path"])
-        src = dict(pr["data_source"])
-        load = {k: src[k] for k in ("normalize", "test_ratio", "seed") if k in src}
-        if src.get("example"):
-            summary = self.api_data_load(dict(load, example=src["example"]))["summary"]
-        elif src.get("folder"):
-            summary = self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 28), task=src.get("task", "auto"),
-                                              label_file=src.get("label_file"), only_labeled=src.get("only_labeled")))["summary"]
-        elif src.get("series_folder"):
-            summary = self.api_data_load(dict(load, task=src.get("task", "auto"),
-                                              **{k: src.get(k) for k in ("series_folder", "column", "length",
-                                                                         "resample", "label_file", "only_labeled")}))["summary"]
-        else:
-            summary = self.api_data_load(dict(load, path=src.get("path"), label_col=src.get("label_col"),
-                                              image_width=src.get("image_width"), task=src.get("task", "auto")))["summary"]
+        summary = self.load_source(pr["data_source"])
         from dlstudio.graph import model_from_saved
         self.graph = pr["graph"]
         self.train_settings, self.results, self.selection = pr["train_settings"], pr["results"], pr["selection"]
@@ -323,6 +310,22 @@ class Studio:
             self.model, self.model_graph = m.eval(), pr["graph"]
         return {"graph": pr["graph"], "summary": summary, "train_settings": pr["train_settings"],
                 "results": pr["results"], "trained": self.model is not None, "selection": self.selection}
+
+    def load_source(self, source: dict) -> dict:
+        """프로젝트에 적힌 데이터 출처(예시·CSV·이미지 폴더·시계열 폴더)를 다시 불러와 요약을 돌려줌."""
+        src = dict(source)
+        load = {k: src[k] for k in ("normalize", "test_ratio", "seed") if k in src}
+        if src.get("example"):
+            return self.api_data_load(dict(load, example=src["example"]))["summary"]
+        if src.get("folder"):
+            return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 28), task=src.get("task", "auto"),
+                                           label_file=src.get("label_file"), only_labeled=src.get("only_labeled")))["summary"]
+        if src.get("series_folder"):
+            return self.api_data_load(dict(load, task=src.get("task", "auto"),
+                                           **{k: src.get(k) for k in ("series_folder", "column", "length",
+                                                                      "resample", "label_file", "only_labeled")}))["summary"]
+        return self.api_data_load(dict(load, path=src.get("path"), label_col=src.get("label_col"),
+                                       image_width=src.get("image_width"), task=src.get("task", "auto")))["summary"]
 
     def api_project_export(self, b: dict) -> dict:
         from dlstudio.project import export_torch

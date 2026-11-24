@@ -126,3 +126,96 @@ def test_plan_reports_graph_problem():
     s = _studio_with_example()
     r = json.loads(web.plan(s, json.dumps({"version": 2, "nodes": [{"id": "input", "type": "input"}]})))
     assert r["status"] == 400 and r["body"]["error"]["message"]
+
+
+# ---------------------------------------------------------------- 프로젝트 기록 (브라우저 보관함·구글 드라이브)
+
+@pytest.fixture
+def data_dir(tmp_path, monkeypatch):
+    d = str(tmp_path / "data").replace("\\", "/")
+    monkeypatch.setattr(web, "DATA_DIR", d)
+    return d
+
+
+def _csv_studio(data_dir):
+    import os
+    os.makedirs(f"{data_dir}/u7", exist_ok=True)
+    rng = np.random.default_rng(0)
+    rows = ["a,b,c,d,y"] + [",".join(f"{v:.3f}" for v in rng.normal(size=4)) + f",{'정상' if i % 2 else '이상'}" for i in range(40)]
+    with open(f"{data_dir}/u7/내데이터.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(rows))
+    s = web.WebStudio()
+    code, body = s.call("POST", "/api/data/load", {"path": f"{data_dir}/u7/내데이터.csv"})
+    assert code == 200, body
+    return s
+
+
+def _dense_graph():
+    return {"version": 2, "nodes": [{"id": "input", "type": "input"}, {"id": "d", "type": "dense", "units": 5, "inputs": ["input"]},
+                                    {"id": "a", "type": "act", "kind": "relu", "inputs": ["d"]}, {"id": "o", "type": "output", "inputs": ["a"]}]}
+
+
+@pytest.mark.parametrize("together", [False, True])
+def test_record_roundtrip_with_data_copy(tmp_path, data_dir, together):
+    """CSV를 고른 프로젝트: 프로젝트 파일 + 데이터 사본으로 저장 → 새 페이지에서 열면 데이터째 돌아옴 (경로는 새 자리로)."""
+    s = _csv_studio(data_dir)
+    g = _dense_graph()
+    s.call("POST", "/api/model/check", {"graph": g})
+    net = build_graph_model(g, s.data.length, s.data.n_out, seed=2)
+    web.set_trained(s, json.dumps(g), json.dumps({"epochs": 4}), json.dumps({"test_metric": 0.6}))
+    proj = web.record_project(s, _state_js(net), "내 프로젝트", with_data=together)
+    meta = json.loads(zipfile.ZipFile(io.BytesIO(proj)).read("project.json"))
+    assert meta["name"] == "내 프로젝트" and meta["data_source"]["path"] == "@data/u7/내데이터.csv"
+    pp = tmp_path / "p.dlstudio"
+    pp.write_bytes(proj)
+    dp = ""
+    if not together:
+        raw = web.data_zip(s)
+        assert zipfile.ZipFile(io.BytesIO(raw)).namelist() == ["u7/내데이터.csv"]
+        (tmp_path / "data.zip").write_bytes(raw)
+        dp = str(tmp_path / "data.zip")
+    s2 = web.WebStudio()
+    r = json.loads(web.record_open(s2, str(pp), dp))
+    assert r["status"] == 200, r
+    b = r["body"]
+    assert b["name"] == "내 프로젝트" and b["response"]["trained"] and b["response"]["summary"]["n_train"] + b["response"]["summary"]["n_test"] == 40
+    assert s2.data.source["path"].startswith(data_dir + "/r") and s2.data.source["path"].endswith("u7/내데이터.csv")
+    assert np.allclose(s2.data.X_train, s.data.X_train)
+    w = b["state"]["mods.m_d.1.weight"]
+    assert np.allclose(np.array(w["data"]).reshape(w["shape"]), net.state_dict()["mods.m_d.1.weight"].numpy())
+
+
+def test_record_example_project_needs_no_data(tmp_path, data_dir):
+    s = _studio_with_example()
+    g = _graph()
+    s.call("POST", "/api/model/check", {"graph": g})
+    assert web.data_zip(s) == b""
+    pp = tmp_path / "e.dlstudio"
+    pp.write_bytes(web.record_project(s, None, "예시"))
+    r = json.loads(web.record_open(web.WebStudio(), str(pp), ""))
+    assert r["status"] == 200 and r["body"]["state"] is None and r["body"]["response"]["graph"] == g
+
+
+def test_record_missing_data_copy_is_explained(tmp_path, data_dir):
+    s = _csv_studio(data_dir)
+    s.call("POST", "/api/model/check", {"graph": _dense_graph()})
+    pp = tmp_path / "p.dlstudio"
+    pp.write_bytes(web.record_project(s, None))
+    r = json.loads(web.record_open(web.WebStudio(), str(pp), ""))
+    assert r["status"] == 400 and "데이터 사본" in r["body"]["error"]["message"]
+
+
+def test_record_open_ignores_paths_outside(tmp_path, data_dir):
+    """데이터 사본 zip 안의 ../ 경로는 풀지 않음 (다른 곳에 파일을 쓰지 못하게)."""
+    s = _csv_studio(data_dir)
+    s.call("POST", "/api/model/check", {"graph": _dense_graph()})
+    pp = tmp_path / "p.dlstudio"
+    pp.write_bytes(web.record_project(s, None))
+    evil = io.BytesIO()
+    with zipfile.ZipFile(evil, "w") as z:
+        z.writestr("u7/내데이터.csv", open(f"{data_dir}/u7/내데이터.csv", "rb").read())
+        z.writestr("../../escape.txt", b"x")
+    (tmp_path / "evil.zip").write_bytes(evil.getvalue())
+    r = json.loads(web.record_open(web.WebStudio(), str(pp), str(tmp_path / "evil.zip")))
+    assert r["status"] == 200
+    assert not (tmp_path / "escape.txt").exists() and not (tmp_path.parent / "escape.txt").exists()
