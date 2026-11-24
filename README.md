@@ -58,7 +58,7 @@ pred = [info["classes"][i] for i in scores.argmax(1)]    # 분류. 회귀면 sco
 |---|---|---|
 | 만드는 코드 | `StudioModel(nn.Module)` + `train()` + 실행 예 | `build_model()` (함수형 API) + `train()` + 실행 예 |
 | 입력 모양 | 채널 먼저 `(샘플 수, 1, 길이)` · 이미지 `(샘플 수, 1, 높이, 너비)` · 순환 층 `(샘플 수, 길이, 1)` | 채널 마지막 `(샘플 수, 길이, 1)` · 이미지 `(샘플 수, 높이, 너비, 1)` |
-| 학습한 가중치 | 학습한 모델이면 [파일로 저장] 때 `<이름>_weights.pt`도 저장, 코드가 불러옴 (studio와 출력이 같음, 시험으로 확인) | 들어 있지 않음 → `train()`으로 새로 학습 |
+| 학습한 가중치 | 학습한 모델이면 [파일로 저장] 때 `<이름>_weights.npz`도 저장, 코드가 불러옴 (studio와 출력이 같음, 시험으로 확인) | 들어 있지 않음 → `train()`으로 새로 학습 |
 
 TensorFlow 코드는 문법과 구조(층 이름·모양 계산)를 시험으로 확인했지만, 이 PC에서 TensorFlow를 실행해 보지는 못했습니다 (`tests/test_codegen.py`의 Keras 시험은 TensorFlow가 설치된 환경에서만 돎).
 

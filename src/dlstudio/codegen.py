@@ -29,6 +29,7 @@ class Step:
     in_shape: tuple
     out_shape: tuple
     key: str                       # 예: "mods.m_b0" · "mods.m_R.1.m_c"
+    node: str = ""                 # 그래프의 노드 id (Repeat 안이면 안쪽 id)
 
 
 @dataclass
@@ -38,6 +39,7 @@ class Plan:
     in_shape: tuple = ()
     out: str = ""
     n_out: int = 1
+    aliases: dict = field(default_factory=dict)      # Repeat 노드 id → 마지막 반복의 출구 이름
 
 
 def _ident(nid: str, used: set) -> str:
@@ -75,10 +77,11 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
                     cur = walk(body, s, cur, f"{suffix}_r{i}", f"{key_prefix}{_key(k)}.{i}.")
                     s = tuple(c.shapes[body.exit])
                 names[k], shapes[k] = cur, s
+                plan.aliases[k] = cur
                 continue
             nm = _ident(k + suffix, used)
             out = tuple(c.shapes[k])
-            plan.steps.append(Step(nm, t, _config(n), [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k)))
+            plan.steps.append(Step(nm, t, _config(n), [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k), k))
             names[k], shapes[k] = nm, out
         return names[scope.exit]
 
@@ -276,25 +279,80 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
         "    model = StudioModel().eval()",
     ]
     if weights_file:
-        lines += [f'    model.load_state_dict(torch.load("{weights_file}"))       # DL studio에서 학습한 가중치']
+        lines += ["    import numpy as np",
+                  f'    model.load_state_dict({{k: torch.from_numpy(v) for k, v in np.load("{weights_file}").items()}})   # DL studio에서 학습한 가중치']
     lines += [f"    x = torch.randn({ex_shape})", "    with torch.no_grad():",
               f"        print(model(x).shape)       # torch.Size([4, {plan.n_out}])", ""]
     return "\n".join(lines)
 
 
-def torch_state_dict(net, graph: dict, length: int, n_out: int, image: tuple = None) -> dict:
-    """studio 모델(GraphNet)의 가중치 → 생성한 PyTorch 코드(StudioModel)의 이름으로."""
+def code_state(state: dict, graph: dict, length: int, n_out: int, image: tuple = None) -> dict:
+    """studio 가중치(GraphNet state_dict 이름: mods.m_<id>...) → 생성한 PyTorch 코드(StudioModel)의 이름. 값은 그대로."""
     plan = make_plan(graph, length, n_out, image)
     pairs = sorted(_key_map(plan), key=lambda p: -len(p[0]))
     out = {}
-    for k, v in net.state_dict().items():
+    for k, v in state.items():
         for src, dst in pairs:
             if k.startswith(src + "."):
-                out[dst + k[len(src):]] = v.detach().clone()
+                out[dst + k[len(src):]] = v
                 break
         else:
             raise KeyError(f"가중치 {k}를 코드 이름으로 옮길 수 없음")
     return out
+
+
+def torch_state_dict(net, graph: dict, length: int, n_out: int, image: tuple = None) -> dict:
+    """studio 모델(GraphNet)의 가중치 → 생성한 PyTorch 코드(StudioModel)의 이름으로."""
+    return {k: v.detach().clone() for k, v in code_state(net.state_dict(), graph, length, n_out, image).items()}
+
+
+def save_npz(state: dict, file) -> None:
+    """가중치 dict(이름 → 배열·텐서) → .npz (numpy만 있으면 읽음, torch 형식에 기대지 않음)."""
+    import numpy as np
+    arrays = {k: (v.detach().cpu().numpy() if hasattr(v, "detach") else np.asarray(v)) for k, v in state.items()}
+    np.savez(file, **arrays)
+
+
+def param_specs(step: Step) -> list:
+    """층 하나의 가중치 [(studio 이름, 모양, 종류)]. 종류: weight(학습) · buffer(BatchNorm 통계) · count.
+    이름·모양은 PyTorch(GraphNet)와 같다 — 웹 엔진(TF.js)이 이대로 만들어 PyTorch로 그대로 내보낸다."""
+    b, t, k, ins = step.cfg, step.type, step.key, step.in_shape
+    w = lambda name, *shape: (f"{k}.{name}", list(shape), "weight")
+    if t == "conv":
+        return [w("weight", b["channels"], ins[0] // b.get("groups", 1), b["kernel"]), w("bias", b["channels"])]
+    if t == "conv2d":
+        return [w("weight", b["channels"], ins[0], b["kernel"], b["kernel"]), w("bias", b["channels"])]
+    if t == "bn":
+        C = ins[0]
+        return [w("weight", C), w("bias", C), (f"{k}.running_mean", [C], "buffer"), (f"{k}.running_var", [C], "buffer"),
+                (f"{k}.num_batches_tracked", [], "count")]
+    if t in ("dense", "output"):
+        units = step.out_shape[0]
+        kk = k + (".1" if len(ins) >= 2 else "")
+        return [(f"{kk}.weight", [units, _prod(ins)], "weight"), (f"{kk}.bias", [units], "weight")]
+    if t in RNN_TYPES:
+        G, H = {"lstm": 4, "gru": 3, "simple_rnn": 1}[t], b["hidden"]
+        out = []
+        for layer in range(b.get("layers", 1)):
+            inp = 1 if layer == 0 else H
+            out += [(f"{k}.rnn.weight_ih_l{layer}", [G * H, inp], "weight"), (f"{k}.rnn.weight_hh_l{layer}", [G * H, H], "weight"),
+                    (f"{k}.rnn.bias_ih_l{layer}", [G * H], "weight"), (f"{k}.rnn.bias_hh_l{layer}", [G * H], "weight")]
+        return out
+    if t == "se":
+        C = ins[0]
+        h = max(1, C // b.get("ratio", 4))
+        return [w("fc1.weight", h, C), w("fc1.bias", h), w("fc2.weight", C, h), w("fc2.bias", C)]
+    return []
+
+
+def plan_dict(graph: dict, length: int, n_out: int, image: tuple = None) -> dict:
+    """웹 엔진용 계획 (JSON): 층 순서·설정·모양·가중치 이름과 모양, 학습 파라미터 수."""
+    plan = make_plan(graph, length, n_out, image)
+    steps = [{"name": s.name, "type": s.type, "cfg": s.cfg, "inputs": s.inputs, "in_shape": list(s.in_shape),
+              "out_shape": list(s.out_shape), "node": s.node, "key": s.key, "params": [list(p) for p in param_specs(s)]} for s in plan.steps]
+    n_params = sum(_prod(p[1]) for st in steps for p in st["params"] if p[2] == "weight")
+    return {"kind": plan.kind, "in_shape": list(plan.in_shape), "n_out": plan.n_out, "out": plan.out, "steps": steps,
+            "aliases": plan.aliases, "params": n_params}
 
 
 # ---------------------------------------------------------------- TensorFlow Keras

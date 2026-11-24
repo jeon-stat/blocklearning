@@ -579,7 +579,7 @@ def test_code_api_and_save(server, tmp_path):
     moved["nodes"][1]["pos"] = [10, 20]
     code, r = _call(server, "/api/code/save", {"graph": moved, "framework": "pytorch", "path": str(tmp_path / "m.py")})
     assert code == 200 and r["trained"] and len(r["files"]) == 2
-    assert (tmp_path / "m_weights.pt").exists() and 'torch.load("m_weights.pt")' in (tmp_path / "m.py").read_text(encoding="utf-8")
+    assert (tmp_path / "m_weights.npz").exists() and 'np.load("m_weights.npz")' in (tmp_path / "m.py").read_text(encoding="utf-8")
     code, r = _call(server, "/api/code/save", {"graph": g, "framework": "tensorflow", "path": str(tmp_path / "k.py")})
     assert code == 200 and r["files"] == [str(tmp_path / "k.py")]
     assert _call(server, "/api/code/save", {"graph": g, "framework": "pytorch", "path": str(tmp_path / "m.txt")})[0] == 400

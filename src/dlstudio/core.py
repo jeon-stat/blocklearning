@@ -357,19 +357,18 @@ class Studio:
                 "filename": "model_pytorch.py" if fw == "pytorch" else "model_tensorflow.py"}
 
     def api_code_save(self, b: dict) -> dict:
-        """코드를 .py로 저장. PyTorch이고 학습한 모델이면 가중치(<이름>_weights.pt)도 같은 폴더에."""
+        """코드를 .py로 저장. PyTorch이고 학습한 모델이면 가중치(<이름>_weights.npz)도 같은 폴더에."""
         from dlstudio import codegen
         path = Path(_path(b.get("path")))
         if path.suffix.lower() != ".py":
             raise UserError("파이썬 파일(.py) 경로를 넣으세요", "예: model_pytorch.py (폴더까지 넣은 전체 경로)")
-        weights = path.with_name(path.stem + "_weights.pt")
+        weights = path.with_name(path.stem + "_weights.npz")
         code, trained, fw, graph = self._code(b, weights_file=weights.name)
         path.parent.mkdir(parents=True, exist_ok=True)
         files = [str(path)]
         if trained and fw == "pytorch":
-            import torch
             d = self.data
-            torch.save(codegen.torch_state_dict(self.model, graph, d.length, d.n_out, d.image), str(weights))
+            codegen.save_npz(codegen.torch_state_dict(self.model, graph, d.length, d.n_out, d.image), str(weights))
             files.append(str(weights))
         path.write_text(code, encoding="utf-8")
         return {"files": files, "trained": trained}

@@ -1,0 +1,8 @@
+{
+  "name": "dlstudio-js-tests",
+  "private": true,
+  "description": "웹 엔진(TF.js) 시험용. tests/test_engine.py가 node로 부름",
+  "devDependencies": {
+    "@tensorflow/tfjs": "4.22.0"
+  }
+}

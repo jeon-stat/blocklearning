@@ -95,9 +95,9 @@ def test_pytorch_script_runs_with_saved_weights(tmp_path):
     d = load_example("ecg")
     g = next(t["graph"] for t in tasks.catalog_view()["defaults"] if t["id"] == "cnn")
     net = build_graph_model(g, d.length, d.n_out, seed=2).eval()
-    torch.save(codegen.torch_state_dict(net, g, d.length, d.n_out), tmp_path / "model_weights.pt")
+    codegen.save_npz(codegen.torch_state_dict(net, g, d.length, d.n_out), str(tmp_path / "model_weights.npz"))
     code = codegen.to_pytorch(g, d.length, d.n_out, None, {"task": "classification", "classes": d.classes},
-                              {"epochs": 3}, weights_file="model_weights.pt")
+                              {"epochs": 3}, weights_file="model_weights.npz")
     (tmp_path / "model.py").write_text(code, encoding="utf-8")
     r = subprocess.run([sys.executable, "model.py"], cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stderr
@@ -169,3 +169,16 @@ def test_keras_stride_with_dilation_is_split():
     g = G(N("c", "conv", "input", channels=4, kernel=3, stride=2, dilation=2), N("g", "global_avg", "c"), N("o", "output", "g"))
     code = codegen.to_keras(g, 30, 2)
     assert "strides=2" not in code and "t[:, ::2, :]" in code and "dilation_rate=2" in code
+
+
+@pytest.mark.parametrize("case", CASES, ids=IDS)
+def test_plan_params_match_torch_state(case):
+    """웹 엔진용 계획의 가중치 이름·모양·학습 파라미터 수가 PyTorch(GraphNet)와 같음."""
+    name, g, L, n_out, image = case
+    net = build_graph_model(g, L, n_out, image=image)
+    plan = codegen.plan_dict(g, L, n_out, image)
+    specs = {p[0]: tuple(p[1]) for st in plan["steps"] for p in st["params"]}
+    assert specs == {k: tuple(v.shape) for k, v in net.state_dict().items()}, name
+    assert plan["params"] == sum(p.numel() for p in net.parameters())
+    import json
+    json.dumps(plan)
