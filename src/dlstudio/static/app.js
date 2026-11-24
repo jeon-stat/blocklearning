@@ -33,6 +33,7 @@ async function api(path, body) {
 }
 
 let msgTimer = null;
+function hideMessage() { clearTimeout(msgTimer); $("message").hidden = true; }
 function showMessage(msg, hint = "", detail = "", ok = false) {
   $("message").hidden = false;
   clearTimeout(msgTimer);                                // 떠 있는 알림: 성공 알림은 잠시 뒤 저절로 닫힘 (오류는 닫을 때까지)
@@ -498,6 +499,7 @@ $("btn-train").onclick = async () => {
   if (!st.summary) return showMessage("데이터가 없음", "② 데이터 단계에서 먼저 불러오세요");
   ensureEditor();
   const graph = st.graph;
+  hideMessage();                                              // 지난 오류 알림은 지움 (이번 결과와 헷갈리지 않게)
   $("train-status").textContent = "학습 준비 중…";
   $("btn-train").disabled = true;                              // 두 번 눌러 두 학습이 돌지 않게
   try {
@@ -519,9 +521,12 @@ $("btn-train").onclick = async () => {
       $("sample-box").hidden = false;
       showSample();
       $("train-status").textContent = "끝남";
+      const r = j.result;
+      showMessage(`학습 끝남: 시험 ${r.metric_name === "r2" ? "R² " + r.test_metric.toFixed(3) : "정확도 " + pct(r.test_metric)}`,
+        "아래 결과와 '샘플 하나 따라가 보기'를 보세요", "", true);
     } else if (j.state === "cancelled") $("train-status").textContent = "멈춤";
     else { $("train-status").textContent = "실패"; showMessage("학습 실패", "학습률을 낮추거나 블록을 바꿔 보세요", j.error); }
-  } catch (e) { showError(e); }
+  } catch (e) { $("train-status").textContent = ""; showError(e); }
   $("btn-train").disabled = false;
   markSteps();
 };

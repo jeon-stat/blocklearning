@@ -54,7 +54,7 @@ assert len(p["X_train"]) == 4 * 800 * 140
 web.set_trained(s, json.dumps(g), "{}", "{}")
 assert json.loads(web.sample(s, 0))["status"] == 200
 c, r = s.call("POST", "/api/code", {"graph": g, "framework": "pytorch", "weights_file": "w.npz"})
-assert c == 200 and r["trained"] and 'np.load("w.npz")' in r["code"], r
+assert c == 200 and r["trained"] and 'load_trained(path="w.npz")' in r["code"], r
 state = {}
 for st in plan["steps"]:
     for name, shape, kind in st["params"]:
@@ -68,7 +68,7 @@ print("ok")
 '''
     import os
     from pathlib import Path
-    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"), PYTHONIOENCODING="utf-8")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8", timeout=120, env=env)
     assert r.returncode == 0 and r.stdout.strip().endswith("ok"), r.stderr[-2000:]
 
@@ -84,7 +84,8 @@ def test_weights_npz_loads_into_generated_pytorch_code():
     exec(code, ns)
     m = ns["StudioModel"]().eval()
     with np.load(io.BytesIO(raw)) as z:
-        m.load_state_dict({k: torch.from_numpy(z[k]) for k in z.files})
+        assert np.allclose(z["_mean"], d.mean) and np.allclose(z["_std"], d.std) and list(z["_classes"]) == [str(c) for c in d.classes]
+        m.load_state_dict({k: torch.from_numpy(z[k]) for k in z.files if not k.startswith("_")})
     x = torch.as_tensor(to_model_input(net.kind, d.X_test[:8]), dtype=torch.float32)
     with torch.no_grad():
         assert torch.allclose(m(x), net(x), atol=1e-6)

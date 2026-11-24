@@ -135,7 +135,7 @@ function activations(body) {
   const s = wrapped(W.mod.sample(W.studio, i));
   const d = getData(), net = W.trained.net;
   const x = E().toInput(Float32Array.from(s.x), 1, net.kind, d.length, d.image);
-  const values = E().thin(net.trace(x));
+  const values = Object.fromEntries(Object.entries(net.trace(x)).map(([k, v]) => [k, E().thin(v)]));   // 층마다 줄이기
   const out = net.predict(x);
   x.dispose();
   let pred;

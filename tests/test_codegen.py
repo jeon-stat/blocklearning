@@ -95,14 +95,28 @@ def test_pytorch_script_runs_with_saved_weights(tmp_path):
     d = load_example("ecg")
     g = next(t["graph"] for t in tasks.catalog_view()["defaults"] if t["id"] == "cnn")
     net = build_graph_model(g, d.length, d.n_out, seed=2).eval()
-    codegen.save_npz(codegen.torch_state_dict(net, g, d.length, d.n_out), str(tmp_path / "model_weights.npz"))
+    codegen.save_npz(codegen.torch_state_dict(net, g, d.length, d.n_out), str(tmp_path / "model_weights.npz"), data=d)
     code = codegen.to_pytorch(g, d.length, d.n_out, None, {"task": "classification", "classes": d.classes},
                               {"epochs": 3}, weights_file="model_weights.npz")
     (tmp_path / "model.py").write_text(code, encoding="utf-8")
-    r = subprocess.run([sys.executable, "model.py"], cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    r = subprocess.run([sys.executable, "model.py"], cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=120,
+                       env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"})
     assert r.returncode == 0, r.stderr
-    assert "torch.Size([4, 2])" in r.stdout
+    assert r.stdout.strip().startswith("['")                       # 클래스 이름 목록
     assert "정상, 이상" in code and "epochs=3" in code
+    # predict(원래 값) == 학습 때 모델(정규화된 값)과 같은 답
+    ns: dict = {"__name__": "gen"}
+    import os
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        exec(code, ns)
+        model, info = ns["load_trained"]()
+    finally:
+        os.chdir(cwd)
+    raw = d.raw(d.X_test[:16])
+    want = [str(d.classes[i]) for i in net(torch.as_tensor(d.X_test[:16, None, :], dtype=torch.float32)).argmax(1)]
+    assert ns["predict"](model, info, raw) == want
 
 
 def test_pytorch_train_function_learns():

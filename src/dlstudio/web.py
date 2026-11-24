@@ -124,7 +124,7 @@ def weights_npz(studio: Studio, graph_json: str, state) -> bytes:
     """학습한 가중치 → 생성한 PyTorch 코드의 이름으로 .npz 바이트."""
     d = studio.need_data()
     buf = io.BytesIO()
-    codegen.save_npz(codegen.code_state(_arrays(state), json.loads(graph_json), d.length, d.n_out, d.image), buf)
+    codegen.save_npz(codegen.code_state(_arrays(state), json.loads(graph_json), d.length, d.n_out, d.image), buf, data=d)
     return buf.getvalue()
 
 

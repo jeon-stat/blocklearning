@@ -371,7 +371,7 @@ class Studio:
         files = [str(path)]
         if trained and fw == "pytorch":
             d = self.data
-            codegen.save_npz(codegen.torch_state_dict(self.model, graph, d.length, d.n_out, d.image), str(weights))
+            codegen.save_npz(codegen.torch_state_dict(self.model, graph, d.length, d.n_out, d.image), str(weights), data=d)
             files.append(str(weights))
         path.write_text(code, encoding="utf-8")
         return {"files": files, "trained": trained}

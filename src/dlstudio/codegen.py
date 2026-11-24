@@ -247,9 +247,10 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     doc = _io_doc(plan, data_info, channels_last=False)
     ex_shape = ", ".join(["4"] + [str(v) for v in plan.in_shape]) if plan.kind != "rnn" else f"4, {plan.in_shape[1]}, 1"
     if weights_file:
-        doc.append(f"학습한 가중치: {weights_file} (DL studio에서 학습한 값, 아래 실행 예가 불러옴)")
-    lines = ['"""DL studio에서 만든 모델 (PyTorch).', ""] + doc + ['"""', "import torch", "import torch.nn.functional as F",
-                                                               "from torch import nn"]
+        doc[-1] = "데이터 준비: 아래 predict()에 학습 CSV와 같은 열 순서의 원래 값(정답 열 빼고)을 넣으면 DL studio와 같은 정규화를 해 줍니다."
+        doc.append(f"학습한 가중치·정규화 값: {weights_file} (DL studio에서 학습한 값, load_trained()가 불러옴)")
+    lines = ['"""DL studio에서 만든 모델 (PyTorch).', ""] + doc + ['"""'] + (["import numpy as np"] if weights_file else []) + [
+        "import torch", "import torch.nn.functional as F", "from torch import nn"]
     if any(s.type == "se" for s in plan.steps):
         lines += _TORCH_SE.rstrip("\n").split("\n")
     lines += ["", "", "class StudioModel(nn.Module):", "    def __init__(self):", "        super().__init__()"]
@@ -275,13 +276,42 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
         f"        print(f\"epoch {{epoch + 1}}: loss {{loss.item():.4f}}\")",
         "    return model.eval()",
         "", "",
-        'if __name__ == "__main__":',
-        "    model = StudioModel().eval()",
     ]
     if weights_file:
-        lines += ["    import numpy as np",
-                  f'    model.load_state_dict({{k: torch.from_numpy(v) for k, v in np.load("{weights_file}").items()}})   # DL studio에서 학습한 가중치']
-    lines += [f"    x = torch.randn({ex_shape})", "    with torch.no_grad():",
+        if plan.kind == "image":
+            shape, n_feat = f"-1, 1, {plan.in_shape[1]}, {plan.in_shape[2]}", plan.in_shape[1] * plan.in_shape[2]
+        elif plan.kind == "rnn":
+            shape, n_feat = f"-1, {plan.in_shape[1]}, 1", plan.in_shape[1]
+        else:
+            shape, n_feat = f"-1, 1, {plan.in_shape[1]}", plan.in_shape[1]
+        answer = ('[str(info["classes"][i]) for i in out.argmax(1)]      # 클래스 이름' if task != "regression"
+                  else "out[:, 0].tolist()                                   # 예측값 (원래 단위)")
+        lines += [
+            f'def load_trained(path="{weights_file}"):',
+            '    """DL studio에서 학습한 모델과 정규화 값을 불러옴 → (model, info)."""',
+            "    z = np.load(path)",
+            "    model = StudioModel()",
+            '    model.load_state_dict({k: torch.from_numpy(z[k]) for k in z.files if not k.startswith("_")})',
+            '    info = {k[1:]: z[k] for k in z.files if k.startswith("_")}       # mean, std, classes',
+            "    return model.eval(), info",
+            "", "",
+            "def predict(model, info, rows):",
+            f'    """원래 값 행들 (샘플 수, {n_feat}: 학습 CSV와 같은 열 순서, 정답 열 빼고) → 예측. DL studio와 같은 정규화."""',
+            '    x = (np.asarray(rows, dtype=np.float32) - info["mean"]) / info["std"]',
+            f"    x = torch.as_tensor(x.reshape({shape}), dtype=torch.float32)",
+            "    with torch.no_grad():",
+            "        out = model(x)",
+            f"    return {answer}",
+            "", "",
+            'if __name__ == "__main__":',
+            "    model, info = load_trained()",
+            f"    rows = np.zeros((2, {n_feat}), dtype=np.float32)         # ← 여기에 내 데이터 (원래 값, 한 행 = 샘플 하나)",
+            "    print(predict(model, info, rows))",
+            "",
+        ]
+        return "\n".join(lines)
+    lines += ['if __name__ == "__main__":', "    model = StudioModel().eval()",
+              f"    x = torch.randn({ex_shape})", "    with torch.no_grad():",
               f"        print(model(x).shape)       # torch.Size([4, {plan.n_out}])", ""]
     return "\n".join(lines)
 
@@ -306,10 +336,16 @@ def torch_state_dict(net, graph: dict, length: int, n_out: int, image: tuple = N
     return {k: v.detach().clone() for k, v in code_state(net.state_dict(), graph, length, n_out, image).items()}
 
 
-def save_npz(state: dict, file) -> None:
-    """가중치 dict(이름 → 배열·텐서) → .npz (numpy만 있으면 읽음, torch 형식에 기대지 않음)."""
+def save_npz(state: dict, file, data=None) -> None:
+    """가중치 dict(이름 → 배열·텐서) → .npz (numpy만 있으면 읽음, torch 형식에 기대지 않음).
+    data(Dataset)를 주면 정규화 값(_mean·_std)과 클래스 이름(_classes)도 함께 — 생성 코드의 predict가 씀."""
     import numpy as np
     arrays = {k: (v.detach().cpu().numpy() if hasattr(v, "detach") else np.asarray(v)) for k, v in state.items()}
+    if data is not None:
+        arrays["_mean"] = np.asarray(data.mean, dtype=np.float32)
+        arrays["_std"] = np.asarray(data.std, dtype=np.float32)
+        if data.task == "classification":
+            arrays["_classes"] = np.asarray([str(c) for c in data.classes])
     np.savez(file, **arrays)
 
 
