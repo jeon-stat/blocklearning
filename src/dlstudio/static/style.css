@@ -65,6 +65,9 @@ button.ex-sel { border-color: var(--ok); color: var(--ok); background: var(--ok-
 .pitem.off { opacity: .62; }
 .pitem .fit { display: block; font-style: normal; font-size: 11px; color: var(--warn); margin-top: 2px; }
 .loading { padding: 18px 4px; }
+.skip-task { margin: -6px 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.auto-task { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-bg); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.auto-task button { padding: 3px 10px; font-size: 13px; }
 .split-note { font-size: 13px; margin: 8px 0 0; }
 .verdict { grid-column: 1 / -1; margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
 .verdict div { color: var(--text); margin-top: 4px; }

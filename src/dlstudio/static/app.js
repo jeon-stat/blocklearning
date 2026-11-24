@@ -206,18 +206,27 @@ $("families").onclick = (e) => {
   const f = st.catalog.find((x) => x.id === b.dataset.f);
   if (!f.subtasks.some((s) => s.available)) return showMessage(`'${f.name}'은(는) 준비 중입니다`, "지금은 분류·회귀를 쓸 수 있습니다");
   if (st.fam !== f) { st.fam = f; st.sub = null; st.tpl = null; }
+  st.autoTask = false;
   renderTask();
+};
+$("btn-skip-task").onclick = () => {                     // 과제 없이: 데이터를 보고 정함
+  st.autoTask = true;
+  if (st.sub) { st.fam = null; st.sub = null; st.tpl = null; renderTask(); renderDataGuide(); renderTemplateButtons(); }
+  go("data");
 };
 $("subtasks").onclick = (e) => {
   const b = e.target.closest("[data-s]");
   if (!b) return;
   const s = st.fam.subtasks.find((x) => x.id === b.dataset.s);
   if (!s.available) return showMessage(`'${s.name}'은(는) 준비 중입니다`, "같은 큰 틀의 다른 과제를 고르세요");
+  st.autoTask = false;
   if (st.sub !== s) chooseTemplate(st.fam, s, s.templates[0]);
 };
 $("templates").onclick = (e) => {
   const b = e.target.closest("[data-t]");
-  if (b) chooseTemplate(st.fam, st.sub, st.sub.templates.find((x) => x.id === b.dataset.t));
+  if (!b) return;
+  st.autoTask = false;
+  chooseTemplate(st.fam, st.sub, st.sub.templates.find((x) => x.id === b.dataset.t));
 };
 $("btn-quick").onclick = async () => {                   // 예시 과제·데이터·추천 모델을 한 번에 → ④ 학습
   const fam = st.catalog.find((f) => f.subtasks.some((s) => s.available && (s.example_data || []).some((e) => e[0] === "ecg")));
@@ -243,7 +252,7 @@ async function chooseTemplate(fam, sub, tpl) {
   renderDataGuide();
   renderTemplateButtons();
   if (st.ed) st.ed.redrawPalette();
-  if (subChanged && st.summary && st.summary.task !== sub.task)
+  if (subChanged && !st.autoTask && st.summary && st.summary.task !== sub.task)
     showMessage(`지금 불러온 데이터는 ${st.summary.task === "classification" ? "분류" : "회귀"}용입니다`, "② 데이터에서 이 과제에 맞는 데이터를 다시 불러오세요");
 }
 function applySelection(sel) {                           // 저장된 선택(id)을 목록에서 찾아 화면에 반영 (블록은 그대로)
@@ -269,22 +278,67 @@ function renderDataGuide() {
   const sub = st.sub;
   $("data-task-name").textContent = sub ? `${st.fam.name} · ${sub.name}` : "";
   const img = sub && sub.input === "image";
-  $("data-guide").textContent = !sub ? "① 과제를 먼저 고르면 그 과제에 맞는 예시 데이터와 안내가 나옵니다. 또는 바로 CSV를 불러올 수도 있습니다."
+  $("data-guide").textContent = !sub || st.autoTask
+    ? "과제를 고르지 않아도 됩니다. CSV·그림 폴더·예시 데이터를 넣으면 분류인지 회귀인지, 시계열·표·이미지 중 무엇인지 보고 과제와 추천 모델을 정해 드립니다. CSV는 한 행 = 샘플 하나, 마지막 열 = 정답."
     : img ? `이미지 폴더: ${GUIDE.image.classification} 픽셀 CSV(한 행 = 픽셀 값들 + 마지막 열 정답)도 됩니다. 처음이면 예시 데이터로 시작해 보세요.`
     : `CSV 파일: ${GUIDE[sub.input][sub.task]} 첫 줄이 열 이름이면 그대로 씁니다. 처음이면 예시 데이터로 시작해 보세요.`;
-  $("image-row").hidden = !img;
+  const any = !sub || st.autoTask;                           // 과제 없이: 넣는 방법을 다 보임
+  $("image-row").hidden = !img && !any;
   $("image-width-box").hidden = !img;
-  const ts = sub && sub.input === "timeseries";              // 샘플마다 CSV 하나인 폴더: 시계열 과제에서만
+  const ts = (sub && sub.input === "timeseries") || any;     // 샘플마다 CSV 하나인 폴더: 시계열 과제에서만
   $("series-row").hidden = !ts;
   if (!ts) $("series-box").hidden = true;
   $("csv-path").placeholder = WEB ? "옆 단추로 CSV 파일을 고르세요 (브라우저 안에서만 읽음)" : img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
-  st.examples = sub ? sub.example_data : [["ecg", "심전도 정상·이상 (의료)"], ["vibration", "설비 진동 정상·결함 (제조)"]];
+  st.examples = sub && !st.autoTask ? sub.example_data : allExamples();
   renderExamples();
-  $("csv-format-body").innerHTML = csvFormat(sub);
-  if (sub) $("task").value = sub.task;
+  $("csv-format-body").innerHTML = csvFormat(any ? null : sub);
+  if (sub && !st.autoTask) $("task").value = sub.task;
   $("normalize-text").textContent = img ? "정규화 (픽셀 전체 평균 0, 표준편차 1)"
     : inputKind() === "tabular" ? "정규화 (열마다 평균 0, 표준편차 1)" : "정규화 (시점별 평균 0, 표준편차 1)";
 }
+function allExamples() {                                 // 과제 없이: 쓸 수 있는 모든 예시 (과제 이름과 함께)
+  const out = [], seen = new Set();
+  for (const f of st.catalog) for (const s of f.subtasks) {
+    if (!s.available) continue;
+    for (const [k, name] of s.example_data || []) if (!seen.has(k)) { seen.add(k); out.push([k, `${name} · ${s.name}`]); }
+  }
+  return out.length ? out : [["ecg", "심전도 정상·이상 (의료)"]];
+}
+function subOfExample(k) {
+  for (const f of st.catalog) for (const s of f.subtasks) if (s.available && (s.example_data || []).some((e) => e[0] === k)) return [f, s];
+  return null;
+}
+function guessKind(s) {                                  // 이미지가 아니면: 열 이름이 항목 이름이고 열이 적으면 표, 아니면 시계열
+  if (s.image) return "image";
+  const generic = (s.features || []).every((n) => /^(열\s*\d+|[a-z_]*\d+)$/i.test(String(n).trim()));
+  return s.length <= 12 || (s.length <= 40 && !generic) ? "tabular" : "timeseries";
+}
+function findSub(input, task) {
+  for (const f of st.catalog) for (const s of f.subtasks) if (s.available && s.input === input && s.task === task) return [f, s];
+  return null;
+}
+async function autoPick(s) {                             // 과제를 안 골랐으면 데이터를 보고 과제·추천 모델을 정함
+  const ex = s.example && subOfExample(s.example);
+  const hit = ex && ex[1].task === s.task ? ex : findSub(guessKind(s), s.task);
+  if (!hit) { $("auto-task").hidden = true; return; }
+  if (st.sub !== hit[1]) await chooseTemplate(hit[0], hit[1], hit[1].templates[0]);
+}
+function renderAutoTask() {
+  const s = st.summary, sub = st.sub;
+  $("auto-task").hidden = !st.autoTask || !sub || !s;
+  if ($("auto-task").hidden) return;
+  const other = !s.image && findSub(sub.input === "tabular" ? "timeseries" : "tabular", s.task);
+  $("auto-task").innerHTML = `과제: <b>${esc(sub.name)}</b> — 데이터를 보고 정했습니다 (추천 모델: ${esc(st.tpl ? st.tpl.name : "")}).` +
+    (other ? ` <button data-sub="${esc(other[1].id)}">${sub.input === "tabular" ? "시계열 (값이 시간 순서)" : "표 데이터 (열마다 다른 항목)"}로 바꾸기</button>` : "") +
+    ` <button data-go="task">① 과제 직접 고르기</button>`;
+}
+$("auto-task").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.go) return go(b.dataset.go);
+  const hit = findSub(st.sub.input === "tabular" ? "timeseries" : "tabular", st.summary.task);
+  if (hit) chooseTemplate(hit[0], hit[1], hit[1].templates[0]).then(() => onData(st.summary));
+};
 function renderExamples() {                             // 불러온 예시는 ✓ 표시, 데이터가 없을 때만 눈에 띄게
   $("example-btns").innerHTML = (st.examples || []).map(([k, name]) => {
     const sel = st.summary && st.dataSrc === k;
@@ -320,6 +374,8 @@ async function loadData(body) {                       // 성공하면 true
   $("data-issues").innerHTML = "";
   try {
     const r = await api("/api/data/load", body);
+    if (!st.sub && st.catalog.length) st.autoTask = true;    // 과제 없이 넣은 데이터: 데이터를 보고 과제를 정함
+    if (st.autoTask) { st.summary = r.summary; await autoPick(r.summary); }
     onData(r.summary);
     showMessage(`데이터를 불러왔음: 샘플 ${r.summary.n_train + r.summary.n_test}개`, "", "", true);
     return true;
@@ -350,7 +406,8 @@ function onData(s) {
     ? `<table class="tab"><tr>${s.features.map((f) => `<th>${esc(f)}</th>`).join("")}<th class="lab">정답</th></tr>` +
       s.preview.map((p) => `<tr>${p.values.map((v) => `<td>${fmt(v)}</td>`).join("")}<td class="lab">${esc(p.label)}</td></tr>`).join("") + `</table>`
     : s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgLine(p.values, 240, 60)}</div>`).join("");
-  if (st.sub && st.sub.task !== s.task)
+  renderAutoTask();
+  if (!st.autoTask && st.sub && st.sub.task !== s.task)
     showMessage(`불러온 데이터는 ${s.task === "classification" ? "분류" : "회귀"}용인데 고른 과제는 ${st.sub.name}입니다`, "① 과제를 데이터에 맞게 다시 고르거나, 맞는 데이터를 불러오세요");
   $("sample-index").max = s.n_test - 1;
   renderExamples();
