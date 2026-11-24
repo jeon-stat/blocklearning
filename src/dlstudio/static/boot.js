@@ -21,6 +21,8 @@
   });
   for (const [src, sri] of CDN) await load(src, sri);
   const v = "?v=" + Date.now();                              // 새 버전을 바로 쓰게 (브라우저 캐시 피함)
+  const css = document.querySelector('link[href$="style.css"]');
+  if (css) css.href = STATIC + "style.css" + v;
   for (const f of ["engine.js", "store.js", "web.js", "graph.js", "app.js", "projects.js"]) await load(STATIC + f + v);
   window.DLS_WEB.afterApp();
   window.DLProjects.init();

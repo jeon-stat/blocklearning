@@ -886,7 +886,7 @@ function mount(els, opts) {
       if (!r.anchor) continue;
       const hz = L.dir === "h", gw = hz ? 14 : 44, gh = hz ? 44 : 14, gx = hz ? r.x - 24 : r.x - 22, gy = hz ? r.y - 22 : r.y - 24;
       s += `<g class="row-grip" data-row="${r.k}" data-anchor="${esc(r.anchor)}" data-shift="${r.shift}">` +
-        `<title>끌어서 이 줄을 ${hz ? "좌우" : "위아래"}로 옮기기 (두 번 누르면 맨 ${hz ? "왼쪽" : "위"}으로)</title>` +
+        `<title>끌어서 ${hz ? "이 줄을 좌우" : "이 열을 위아래"}로 옮기기 (두 번 누르면 맨 ${hz ? "왼쪽" : "위"}으로)</title>` +
         `<rect x="${gx}" y="${gy}" width="${gw}" height="${gh}" rx="4"/>` +
         `<text x="${gx + gw / 2}" y="${gy + gh / 2}">${hz ? "⇔" : "⇕"}</text></g>`;
     }
@@ -951,7 +951,7 @@ function mount(els, opts) {
     return `<select data-k="${k}">${options.map(([val, txt]) => `<option value="${val}"${String(v) === String(val) ? " selected" : ""}>${esc(txt)}</option>`).join("")}</select>`;
   }
   const KEYS = `<details class="keys"><summary>조작 방법</summary><p class="muted"><b>마우스만으로:</b> 왼쪽 목록에서 끌어 판에 놓기 (선 근처면 그 사이로) · 상자를 끌어 옮기기 (선 근처면 그 사이로, 여러 개 고른 채 끌면 함께) · ` +
-    `상자 위·아래 동그라미를 끌어 다른 상자에 놓으면 선 (기존 선은 바뀜), 빈 곳에 놓으면 층을 골라 바로 이어서 만듦 · <b>오른쪽 클릭</b>: 복사·삭제·감싸기·정렬·줄바꿈·선 지우기·층 넣기<br>` +
+    `상자 위·아래 동그라미를 끌어 다른 상자에 놓으면 선 (기존 선은 바뀜), 빈 곳에 놓으면 층을 골라 바로 이어서 만듦 · <b>오른쪽 클릭</b>: 복사·삭제·감싸기·정렬·줄바꿈(세로면 열바꿈)·선 지우기·층 넣기<br>` +
     `키보드도 됨: ` +
     `여러 개 고르기: 빈 곳에서 끌어서 네모, 또는 Shift+클릭 · Ctrl+C 복사 · Ctrl+X 잘라내기 · Ctrl+V 붙여넣기 · Ctrl+D 복제 · Delete 삭제 · Ctrl+Z 되돌리기 · Ctrl+Y 다시 하기 · Esc 선택 해제</p></details>`;
   // 처음 보는 사람에게 덜 중요한 칸은 접어 둠 (기본값이 아니면 펼침)
@@ -1403,7 +1403,7 @@ function mount(els, opts) {
         { title: many ? `${selIds().length}개 고름` : label(n, opts.getSummary()) },
         { label: many ? "위 상자와 가운데 맞추기 (고른 것 모두)" : "위 상자와 가운데 맞추기", fn: () => autoLayout(), disabled: n.type === "input" },
         ...(!n.anc && L.nodes.some((x) => x.id === id && !x.anc.length) && n.type !== "input"
-          ? [{ label: n.brk ? "줄바꿈 풀기" : `여기서 줄바꿈 (${flowDir === "h" ? "아래 줄로" : "오른쪽 칸으로"})`,
+          ? [{ label: flowDir === "h" ? (n.brk ? "줄바꿈 풀기" : "여기서 줄바꿈 (아래 줄로)") : (n.brk ? "열바꿈 풀기" : "여기서 열바꿈 (오른쪽 열로)"),
             fn: () => change(setBreak(graph, id, !n.brk), [id]) }] : []),
         { label: "복사", fn: () => copySel(false), disabled: fixed },
         { label: "복제 (바로 뒤에)", fn: () => act("dup"), disabled: fixed },

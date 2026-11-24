@@ -58,7 +58,7 @@ function pathOf(vals, x0, y0, w, h) {
   if (hi - lo < 1e-12) { lo -= 1; hi += 1; }
   return vals.map((v, i) => `${(x0 + (i / Math.max(1, vals.length - 1)) * w).toFixed(1)},${(y0 + h - ((v - lo) / (hi - lo)) * h).toFixed(1)}`).join(" ");
 }
-function svgLine(vals, w = 240, h = 50, color = "#2f6fde") {
+function svgLine(vals, w = 240, h = 50, color = "#4f46e5") {
   return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><polyline fill="none" stroke="${color}" stroke-width="1.3" points="${pathOf(vals, 2, 2, w - 4, h - 4)}"/></svg>`;
 }
 function svgStrips(rows, w = 300, color = "#1d9e75") {
@@ -89,7 +89,7 @@ function svgScatter(y, pred, w = 300, h = 260) {       // 회귀: 가로 = 실�
   let s = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" class="scatter">` +
     `<rect x="${L}" y="${T}" width="${w - L - R}" height="${h - B - T}" fill="#fbfbfc" stroke="#e3e6eb"/>` +
     `<line x1="${px(lo)}" y1="${py(lo)}" x2="${px(hi)}" y2="${py(hi)}" stroke="#9aa3af" stroke-dasharray="4 3"/>`;
-  y.forEach((v, i) => (s += `<circle cx="${px(v).toFixed(1)}" cy="${py(pred[i]).toFixed(1)}" r="2.6" fill="#2f6fde" fill-opacity=".55"/>`));
+  y.forEach((v, i) => (s += `<circle cx="${px(v).toFixed(1)}" cy="${py(pred[i]).toFixed(1)}" r="2.6" fill="#4f46e5" fill-opacity=".55"/>`));
   s += `<text x="${L}" y="${h - 18}" font-size="11" fill="#6b7280">${f(lo)}</text><text x="${w - R}" y="${h - 18}" font-size="11" text-anchor="end" fill="#6b7280">${f(hi)}</text>` +
     `<text x="${(L + w) / 2}" y="${h - 4}" font-size="12" text-anchor="middle" fill="#1d2330">실제 값</text>` +
     `<text x="12" y="${(h - B) / 2}" font-size="12" text-anchor="middle" fill="#1d2330" transform="rotate(-90 12 ${(h - B) / 2})">예측 값</text>`;
@@ -110,6 +110,8 @@ function go(step) {
   if (step === "model") ensureEditor();
   if (step === "predict") renderPredictStep();
   window.scrollTo(0, 0);
+  const mainEl = document.querySelector("main");          // 사이드바 틀에서는 main이 스크롤됨
+  if (mainEl) mainEl.scrollTop = 0;
 }
 function markSteps() {
   const mark = (name, done, stale) => {
@@ -492,6 +494,7 @@ function ensureEditor() {
     let fd = "v";
     try { fd = localStorage.getItem("dlstudio-flow-dir") || "v"; } catch (e) { /* 없음 */ }
     $("flow-dir").value = fd;
+    wrapText();
     st.ed.setFlowDir(fd, false);
     let aw = false;
     try { aw = localStorage.getItem("dlstudio-auto-wrap") === "1"; } catch (e) { /* 없음 */ }
@@ -621,6 +624,9 @@ document.addEventListener("click", (e) => {                // 보기 설정: 바
 });
 document.addEventListener("keydown", (e) => { const d = document.querySelector(".viewopt[open]"); if (e.key === "Escape" && d) d.open = false; });
 $("btn-autolayout").onclick = () => st.ed && st.ed.autoLayout();
+function wrapText() {                                    // 세로(위→아래)는 열바꿈, 가로는 줄바꿈
+  $("auto-wrap-text").textContent = $("flow-dir").value === "h" ? "자동 줄바꿈 (판을 넘으면 아래 줄로)" : "자동 열바꿈 (판을 넘으면 오른쪽 열로)";
+}
 $("auto-wrap").onchange = () => {                        // 자동 줄바꿈: 판 폭(세로면 높이)을 넘으면 다음 줄로
   try { localStorage.setItem("dlstudio-auto-wrap", $("auto-wrap").checked ? "1" : "0"); } catch (e) { /* 저장 안 돼도 됨 */ }
   if (st.ed) st.ed.setWrap($("auto-wrap").checked);
@@ -628,6 +634,7 @@ $("auto-wrap").onchange = () => {                        // 자동 줄바꿈: �
 $("flow-dir").onchange = () => {                         // 방향은 이 브라우저에 기억
   try { localStorage.setItem("dlstudio-flow-dir", $("flow-dir").value); } catch (e) { /* 저장 안 돼도 됨 */ }
   if (st.ed) st.ed.setFlowDir($("flow-dir").value, true);
+  wrapText();
 };
 $("edge-style").onchange = () => {                       // 선 모양은 이 브라우저에 기억 (모델에는 영향 없음)
   try { localStorage.setItem("dlstudio-edge-style", $("edge-style").value); } catch (e) { /* 저장 안 돼도 됨 */ }
@@ -656,24 +663,25 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
   let s = "";
   for (const f of [0, 0.5, 1]) {
     s += `<line x1="${L}" y1="${yv(f)}" x2="${L + pw}" y2="${yv(f)}" stroke="#e3e6eb"/>` +
-      `<text x="${L - 6}" y="${yv(f) + 4}" font-size="11" text-anchor="end" fill="#2f6fde">${acc ? f * 100 + "%" : f}</text>`;
+      `<text x="${L - 6}" y="${yv(f) + 4}" font-size="11" text-anchor="end" fill="#4f46e5">${acc ? f * 100 + "%" : f}</text>`;
   }
   const loss = progress.map((p) => p.loss), lmax = Math.max(0, ...loss) || 1;
-  s += `<text x="${L + pw + 6}" y="${yv(1) + 4}" font-size="11" fill="#c0392b">${Number(lmax.toPrecision(2))}</text>` +
-    `<text x="${L + pw + 6}" y="${yv(0) + 4}" font-size="11" fill="#c0392b">0</text>`;
+  s += `<text x="${L + pw + 6}" y="${yv(1) + 4}" font-size="11" fill="#f97316">${Number(lmax.toPrecision(2))}</text>` +
+    `<text x="${L + pw + 6}" y="${yv(0) + 4}" font-size="11" fill="#f97316">0</text>`;
+  if (!n) s += `<text x="${L + pw / 2}" y="${T + ph / 2}" font-size="13" text-anchor="middle" fill="#94a3b8">[학습 시작]을 누르면 epoch마다 곡선이 그려집니다</text>`;
   if (n) {
     const xs = (i) => L + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
     const lp = loss.map((v, i) => `${xs(i).toFixed(1)},${yv(v / lmax).toFixed(1)}`);
     const mp = progress.map((p, i) => `${xs(i).toFixed(1)},${yv(Math.max(0, Math.min(1, p.test_metric))).toFixed(1)}`);
-    s += `<polyline fill="none" stroke="#c0392b" stroke-width="2" points="${lp.join(" ")}"/>` +
-      `<polyline fill="none" stroke="#2f6fde" stroke-width="2" points="${mp.join(" ")}"/>` +
+    s += `<polyline fill="none" stroke="#f97316" stroke-width="2" points="${lp.join(" ")}"/>` +
+      `<polyline fill="none" stroke="#4f46e5" stroke-width="2" points="${mp.join(" ")}"/>` +
       `<text x="${L}" y="${H - 8}" font-size="11" fill="#6b7280">epoch 1</text>` +
       `<text x="${L + pw}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
   }
-  s += `<line x1="${L}" y1="12" x2="${L + 18}" y2="12" stroke="#2f6fde" stroke-width="2"/>` +
-    `<text x="${L + 24}" y="16" font-size="12" fill="#2f6fde">시험 ${acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
-    `<line x1="${L + 300}" y1="12" x2="${L + 318}" y2="12" stroke="#c0392b" stroke-width="2"/>` +
-    `<text x="${L + 324}" y="16" font-size="12" fill="#c0392b">loss (오른쪽 축, 낮을수록 좋음)</text>`;
+  s += `<line x1="${L}" y1="12" x2="${L + 18}" y2="12" stroke="#4f46e5" stroke-width="2"/>` +
+    `<text x="${L + 24}" y="16" font-size="12" fill="#4f46e5">시험 ${acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
+    `<line x1="${L + 300}" y1="12" x2="${L + 318}" y2="12" stroke="#f97316" stroke-width="2"/>` +
+    `<text x="${L + 324}" y="16" font-size="12" fill="#f97316">loss (오른쪽 축, 낮을수록 좋음)</text>`;
   $("curve").innerHTML = s;
 }
 $("btn-train").onclick = async () => {
@@ -765,7 +773,7 @@ function valuePic(v, b, w = 600) {                     // 층 하나의 값 그�
   if (Array.isArray(v[0])) return svgStrips(v, w);
   if (b.type === "output" && st.summary.task === "classification") {
     const m = Math.max(...v), ex = v.map((x) => Math.exp(x - m)), sum = ex.reduce((x, y) => x + y, 0);
-    return svgBars(ex.map((x) => x / sum), Math.max(120, v.length * 60), 60, st.summary.classes, "#2f6fde");
+    return svgBars(ex.map((x) => x / sum), Math.max(120, v.length * 60), 60, st.summary.classes, "#4f46e5");
   }
   return svgBars(v, Math.min(w, v.length * 14 + 10));
 }
@@ -1049,6 +1057,7 @@ $("code-save").onclick = async () => {
 // 화면을 새로 고쳐도 서버에 남은 상태(데이터, 블록, 학습된 모델)를 이어서 씀
 (async () => {
   go("task");
+  drawCurve([], "accuracy");
   if (!st.catalog.length) {                                  // 첫 로딩: 빈 화면 대신 무엇을 기다리는지
     $("btn-quick").disabled = true;
     $("families").innerHTML = `<p class="muted loading">과제 목록을 불러오는 중…${WEB ? " 처음 열 때는 계산 프로그램(Pyodide·TensorFlow.js)을 받느라 10~20초 걸립니다." : ""}</p>`;

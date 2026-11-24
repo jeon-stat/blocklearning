@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 보안 정책: 스크립트는 이 사이트·고정 버전 CDN·구글 로그인에서만, 통신은 구글 API·CDN에서만 (조작된 코드가 데이터를 낯선 곳으로 못 보내게).
      'unsafe-eval'은 TF.js가 시작할 때 Function("return this")를 써서 필요 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com 'wasm-unsafe-eval' 'unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://accounts.google.com; font-src 'self' data:; frame-src https://accounts.google.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com 'wasm-unsafe-eval' 'unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net; font-src 'self' data: https://cdn.jsdelivr.net; frame-src https://accounts.google.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>DL studio</title>
 <meta name="description" content="블록을 이어 딥러닝 모델을 만들고 학습하는 웹 도구. 설치 없이 브라우저에서, 계산은 브라우저 안에서">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css" integrity="sha384-uR1wgObmx89ZQ4VVXHdzjbDJZ1PvBK01K+E3GebmaBKdZ87qRJvBWPoPbzWeEd5T" crossorigin="anonymous">
 <link rel="stylesheet" href="src/dlstudio/static/style.css">
 </head>
 <!-- DL studio 웹 버전 (GitHub Pages). 화면은 로컬 실행과 같은 src/dlstudio/static/index.html을 불러 쓰고,

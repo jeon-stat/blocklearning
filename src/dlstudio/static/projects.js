@@ -177,24 +177,72 @@ function exportFile() {
 }
 
 // ------------------------------------------------------------ 첫 화면 "내 프로젝트"
+const svgI = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICON = {
+  blocks: svgI('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="8.5" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v2h11v-2M12 12v2"/>'),
+  chip: svgI('<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>'),
+  chart: svgI('<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>'),
+  code: svgI('<path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/>'),
+  folder: svgI('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+  pen: svgI('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
+  trash: svgI('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
+};
+// 첫 화면 그림: 블록 그래프 (Input → Conv1D → ReLU → Output, 옆에 학습 곡선)
+const HERO_ART = `<svg viewBox="0 0 360 260" width="100%" height="100%">
+  <defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef2ff"/><stop offset="1" stop-color="#f5f3ff"/></linearGradient></defs>
+  <rect x="0" y="0" width="360" height="260" rx="18" fill="url(#hg)"/>
+  <g font-family="inherit" font-size="11" text-anchor="middle">
+    <path d="M100 52v22M100 104v22M100 156v22" stroke="#94a3b8" stroke-width="1.5"/>
+    <rect x="40" y="24" width="120" height="30" rx="8" fill="#f1efe8" stroke="#888780"/><text x="100" y="43" fill="#1f2937">Input</text>
+    <rect x="40" y="74" width="120" height="30" rx="8" fill="#e1f5ee" stroke="#1d9e75"/><text x="100" y="93" fill="#1f2937">Conv1D · 16</text>
+    <circle cx="100" cy="141" r="15" fill="#eeedfe" stroke="#7f77dd"/><text x="100" y="145" fill="#1f2937">ReLU</text>
+    <rect x="40" y="178" width="120" height="30" rx="8" fill="#faece7" stroke="#d85a30"/><text x="100" y="197" fill="#1f2937">Output</text>
+  </g>
+  <rect x="186" y="40" width="150" height="120" rx="12" fill="#fff" stroke="#e5e7eb"/>
+  <text x="200" y="62" font-size="11" fill="#64748b">시험 정확도</text>
+  <text x="200" y="84" font-size="20" font-weight="700" fill="#4f46e5">93.5%</text>
+  <polyline points="200,140 222,128 244,112 266,104 288,97 310,95 322,94" fill="none" stroke="#4f46e5" stroke-width="2.2"/>
+  <polyline points="200,100 222,116 244,126 266,132 288,136 310,138 322,139" fill="none" stroke="#f97316" stroke-width="1.6" opacity=".7"/>
+  <rect x="186" y="176" width="150" height="40" rx="10" fill="#fff" stroke="#e5e7eb"/>
+  <text x="200" y="200" font-size="11" fill="#334155">PyTorch 코드로 내려받기</text>
+</svg>`;
 function ensureHome() {
   if ($("step-home")) return;
   const sec = document.createElement("section");
   sec.id = "step-home";
   sec.className = "panel";
   sec.hidden = true;
-  sec.innerHTML = `<h2>내 프로젝트</h2>
-    <p class="lead">프로젝트마다 데이터·모델·학습 기록이 함께 저장됩니다. 이어서 할 프로젝트를 고르거나 새로 시작하세요.</p>
-    <div class="home-start">
-      <button class="primary" id="home-new">＋ 새 프로젝트</button>
-      <button id="home-quick">예시로 바로 해 보기</button>
-      <button id="home-import">파일 가져오기 (.dlstudio)</button>
-      <button id="home-export" hidden>지금 프로젝트 내려받기</button>
+  sec.innerHTML = `
+    <div class="hero">
+      <div class="hero-text">
+        <div class="eyebrow">설치 없이 · 브라우저 안에서 · 무료</div>
+        <h1>블록을 이어 붙여<br>딥러닝 모델을 만드세요</h1>
+        <p>데이터를 넣고, 블록으로 모델을 짜고, 바로 학습해 결과를 봅니다. 코드를 몰라도 되고, 데이터는 이 PC 밖으로 나가지 않습니다.</p>
+        <div class="hero-cta">
+          <button class="primary lg" id="home-new">＋ 새 프로젝트</button>
+          <button class="lg" id="home-quick">예시로 바로 해 보기 →</button>
+        </div>
+      </div>
+      <div class="hero-art" aria-hidden="true">${HERO_ART}</div>
     </div>
-    <div class="tabs home-tabs"><button class="tab" data-kind="local">이 브라우저</button><button class="tab" data-kind="drive">구글 드라이브</button></div>
-    <div id="home-where" class="proj-where"></div>
-    <div id="home-list" class="proj-cards"></div>
-    <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.</p>`;
+    <div class="features">
+      <div class="feature"><span class="fi">${ICON.blocks}</span><b>블록으로 모델</b><span>CNN·RNN·ResNet을 끌어다 놓고 선으로 이어 만듭니다</span></div>
+      <div class="feature"><span class="fi">${ICON.chip}</span><b>브라우저에서 학습</b><span>설치·서버 없이 이 브라우저 안에서 바로 학습합니다</span></div>
+      <div class="feature"><span class="fi">${ICON.chart}</span><b>결과를 쉬운 말로</b><span>정확도·틀린 샘플·학습 기록을 보고 다음 할 일을 알려 줍니다</span></div>
+      <div class="feature"><span class="fi">${ICON.code}</span><b>PyTorch 코드로</b><span>만든 모델을 PyTorch·TensorFlow 코드와 가중치로 받습니다</span></div>
+    </div>
+    <div class="home-projects">
+      <div class="sec-head">
+        <h2>내 프로젝트</h2>
+        <div class="tabs home-tabs"><button class="tab" data-kind="local">이 브라우저</button><button class="tab" data-kind="drive">구글 드라이브</button></div>
+        <span class="grow"></span>
+        <button id="home-import">파일 가져오기</button>
+        <button id="home-export" hidden>지금 프로젝트 내려받기</button>
+      </div>
+      <div id="home-where" class="proj-where"></div>
+      <div id="home-list" class="proj-cards"></div>
+    </div>
+    <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요. <a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a></p>`;
   document.querySelector("main").prepend(sec);
   sec.querySelectorAll(".tab").forEach((b) => (b.onclick = () => { tab = b.dataset.kind; render(); }));
   $("home-new").onclick = () => startFresh("task");
@@ -260,12 +308,14 @@ async function render() {
     list.innerHTML = items.length ? items.map((p) => {
       const now = cur && cur.id === p.id, recent = !now && last && last.id === p.id;
       return `<div class="proj-card${now ? " cur" : ""}" data-id="${esc(p.id)}" data-name="${esc(p.name)}" title="눌러서 열기">
-        <div class="pn">${esc(p.name)}${now ? ' <span class="badge rec">지금 연 프로젝트</span>' : recent ? ' <span class="badge">최근</span>' : ""}</div>
-        <div class="pm">${esc(p.meta || "")}</div>
-        <div class="pt">${esc(when(p.updated))} 저장</div>
-        <div class="pa"><button data-a="open" class="primary">${now ? "계속하기" : "열기"}</button>
-          <button data-a="rename">이름 바꾸기</button><button data-a="remove">지우기</button></div></div>`;
-    }).join("") : `<p class="muted">아직 프로젝트가 없습니다. [새 프로젝트]나 [예시로 바로 해 보기]로 시작하세요. 데이터를 넣으면 자동으로 저장됩니다.</p>`;
+        <div class="pc-top"><span class="pc-icon">${esc((p.name || "?").trim().charAt(0))}</span>
+          ${now ? '<span class="badge rec">지금 연 프로젝트</span>' : recent ? '<span class="badge">최근</span>' : ""}</div>
+        <div class="pn">${esc(p.name)}</div>
+        <div class="pm">${esc(p.meta || "아직 학습 안 함")}</div>
+        <div class="pc-foot"><span class="pt">${esc(when(p.updated))} 저장</span>
+          <span class="pa"><button data-a="rename" class="ghost icon" title="이름 바꾸기" aria-label="이름 바꾸기">${ICON.pen}</button><button data-a="remove" class="ghost danger icon" title="지우기" aria-label="지우기">${ICON.trash}</button></span></div></div>`;
+    }).join("") : `<div class="empty"><span class="fi">${ICON.folder}</span><b>아직 프로젝트가 없습니다</b>
+      <span>[새 프로젝트]나 [예시로 바로 해 보기]로 시작하세요. 데이터를 넣으면 자동으로 저장됩니다.</span></div>`;
   } catch (e) { list.innerHTML = `<p class="bad">${esc(e.message || e)}</p>`; }
 }
 function home() {
@@ -277,21 +327,17 @@ function home() {
 
 // ------------------------------------------------------------ 시작
 async function init() {
-  const files = document.querySelector(".files");
   for (const id of ["btn-open", "btn-save"]) if ($(id)) $(id).hidden = true;       // 웹은 첫 화면 '내 프로젝트'로
-  const b = document.createElement("button");
-  b.id = "btn-projects";
-  b.className = "proj-btn";
+  const box = document.createElement("div");                       // 사이드바 위: 지금 프로젝트 (누르면 첫 화면)
+  box.className = "proj-switch";
+  box.innerHTML = `<div class="ps-label">프로젝트</div><button id="btn-projects" class="proj-btn"></button><span id="proj-status" class="proj-status"></span>`;
+  document.querySelector(".brand").after(box);
+  const b = $("btn-projects");
   b.onclick = home;
-  const s = document.createElement("span");
-  s.id = "proj-status";
-  s.className = "proj-status";
-  files.prepend(s);
-  files.prepend(b);
   const nav = $("steps"), hb = document.createElement("button");     // 단계 줄 맨 앞: 첫 화면
   hb.className = "step home-step";
   hb.dataset.step = "home";
-  hb.innerHTML = `<span class="n">⌂</span>내 프로젝트`;
+  hb.innerHTML = `<span class="n"><svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path d="M3 9.5 10 3.5l7 6V17H12.5v-4.5h-5V17H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span><span class="sl">내 프로젝트<small>열기·새로 만들기</small></span>`;
   hb.onclick = home;
   nav.prepend(hb);
   document.querySelector(".brand").onclick = home;

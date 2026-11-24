@@ -8,13 +8,14 @@
 </head>
 <body class="app">
 <header class="top">
-  <div class="brand">DL studio <span class="sub">블록으로 딥러닝 모델 만들기</span></div>
+  <div class="brand" title="DL studio"><svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M10 9.5v6.5M10 16l11 6.5M10 16h11" stroke="#fff" stroke-width="1.8" stroke-linecap="round" fill="none" opacity=".85"/><rect x="6.5" y="6" width="7" height="5" rx="1.6" fill="#fff"/><rect x="6.5" y="13.5" width="7" height="5" rx="1.6" fill="#fff"/><rect x="18.5" y="13.5" width="7" height="5" rx="1.6" fill="#fff" opacity=".9"/><rect x="18.5" y="20.5" width="7" height="5" rx="1.6" fill="#fff" opacity=".75"/></svg><span class="bt">DL studio<span class="sub">블록으로 딥러닝 모델 만들기</span></span></div>
   <nav class="steps" id="steps">
-    <button data-step="task" class="step active"><span class="n">1</span>과제</button>
-    <button data-step="data" class="step"><span class="n">2</span>데이터</button>
-    <button data-step="model" class="step"><span class="n">3</span>모델</button>
-    <button data-step="train" class="step"><span class="n">4</span>학습</button>
-    <button data-step="predict" class="step"><span class="n">5</span>예측</button>
+    <div class="nav-label">만들기</div>
+    <button data-step="task" class="step active"><span class="n">1</span><span class="sl">과제<small>무엇을 할지 고르기</small></span></button>
+    <button data-step="data" class="step"><span class="n">2</span><span class="sl">데이터<small>CSV·그림 넣기</small></span></button>
+    <button data-step="model" class="step"><span class="n">3</span><span class="sl">모델<small>블록으로 쌓기</small></span></button>
+    <button data-step="train" class="step"><span class="n">4</span><span class="sl">학습<small>배우고 채점하기</small></span></button>
+    <button data-step="predict" class="step"><span class="n">5</span><span class="sl">예측<small>새 데이터에 쓰기</small></span></button>
   </nav>
   <div class="files">
     <button id="btn-label" title="정답이 없는 데이터에 정답 붙이기 (새 탭)">라벨링 작업실</button>
@@ -127,7 +128,7 @@
         <summary>보기 설정</summary>
         <div class="viewopt-box">
           <label>방향 <select id="flow-dir"><option value="v">위→아래</option><option value="h">왼쪽→오른쪽</option></select></label>
-          <label><input id="auto-wrap" type="checkbox"> 자동 줄바꿈 (판을 넘으면 다음 줄로)</label>
+          <label><input id="auto-wrap" type="checkbox"> <span id="auto-wrap-text">자동 열바꿈 (판을 넘으면 오른쪽 열로)</span></label>
           <label>선 <select id="edge-style"><option value="ortho">꺾인선</option><option value="curve">곡선</option></select></label>
         </div>
       </details>
