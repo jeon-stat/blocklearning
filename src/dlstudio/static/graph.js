@@ -7,59 +7,261 @@
 const BOX_W = 236, BOX_H = 50, MERGE_W = 104, MERGE_H = 30, GAP_Y = 34, GAP_X = 30, DUMMY_W = 14, HEAD = 30, PAD = 16,
   MARGIN = 24, IN_W = 14, IN_H = 10, ACT_D = 64, SNAP = 48, GAP_H = 60;
 
-const TYPES = {
-  conv: { cat: "cnn", name: "Conv1D", desc: "짧은 구간의 모양(패턴)을 찾아 채널(filter)로 나눔",
-    make: () => ({ type: "conv", channels: 16, kernel: 3, stride: 1 }) },
-  pool: { cat: "cnn", name: "AvgPool1D", desc: "이웃 값을 평균 내어 길이를 줄임. 계산이 가벼워짐", make: () => ({ type: "pool", size: 2 }) },
-  conv2d: { cat: "cnn", name: "Conv2D", desc: "작은 네모(3×3 등) 필터로 그림의 획·모서리 같은 모양을 찾음",
-    make: () => ({ type: "conv2d", channels: 8, kernel: 3, stride: 1 }) },
-  pool2d: { cat: "cnn", name: "AvgPool2D", desc: "2×2 칸을 평균 내어 그림 크기를 절반으로", make: () => ({ type: "pool2d", size: 2 }) },
-  global_avg2d: { cat: "cnn", name: "GlobalAvgPool2D", desc: "채널마다 그림 전체를 평균 내어 값 하나로", make: () => ({ type: "global_avg2d" }) },
-  global_avg: { cat: "cnn", name: "GlobalAvgPool1D", desc: "채널마다 모든 시점을 평균 내어 값 하나로", make: () => ({ type: "global_avg" }) },
-  last_step: { cat: "cnn", name: "LastTimestep", desc: "채널마다 마지막 시점 값만 남김 (TCN식 분류)", make: () => ({ type: "last_step" }) },
-  bn: { cat: "cnn", name: "BatchNorm", desc: "값 크기를 고르게 맞춤. 학습이 안정됨", make: () => ({ type: "bn" }) },
-  act: { cat: "act", name: "Activation", desc: "꺾임(비선형)을 넣음. 잘 모르겠으면 ReLU",
-    make: () => ({ type: "act", kind: "relu" }) },
-  se: { cat: "struct", name: "SE block", desc: "채널마다 중요도를 배워 곱함 (Squeeze-and-Excitation, 채널 주의)",
-    make: () => ({ type: "se", ratio: 4, act: "relu" }) },
-  dropout: { cat: "struct", name: "Dropout", desc: "학습 때 일부 값을 무작위로 꺼서 과적합을 막음 (예측 때는 없음)",
-    make: () => ({ type: "dropout", rate: 0.2 }) },
-  flatten: { cat: "struct", name: "Flatten", desc: "(channels, length)를 한 줄로 펼침 (Dense 앞)", make: () => ({ type: "flatten" }) },
-  dense: { cat: "struct", name: "Dense", desc: "모든 값을 섞어 정한 개수(units)로 (Linear)", make: () => ({ type: "dense", units: 16 }) },
-  add: { cat: "merge", name: "Add (+)", desc: "들어온 값들을 더함 (모양이 같아야 함). 잔차·건너뛰는 연결", make: () => ({ type: "add" }) },
-  concat: { cat: "merge", name: "Concat", desc: "들어온 값들을 채널 방향으로 이어 붙임 (길이가 같아야 함). 갈래 합치기",
-    make: () => ({ type: "concat" }) },
-  lstm: { cat: "rnn", name: "LSTM", desc: "시점을 차례로 읽으며 기억. Input 바로 아래에만",
-    make: () => ({ type: "lstm", hidden: 16, layers: 1 }) },
-  simple_rnn: { cat: "rnn", name: "SimpleRNN", desc: "가장 단순한 순환 층. Input 바로 아래에만",
-    make: () => ({ type: "simple_rnn", hidden: 16, layers: 1 }) },
-  gru: { cat: "rnn", name: "GRU", desc: "LSTM보다 가벼운 순환 층. Input 바로 아래에만", make: () => ({ type: "gru", hidden: 16, layers: 1 }) },
-  output: { cat: "out", name: "Output", desc: "classification이면 클래스 수, regression이면 값 하나", make: () => ({ type: "output" }) },
+// ---- 블록 목록 (왼쪽): 범주 → 블록. 같은 종류에 설정만 다른 것(예: Causal Attention)도 따로 둠
+const CATS = [["dense", "완전연결 (Dense)"], ["conv", "합성곱 (Conv)"], ["pool", "줄이기·모으기 (Pooling)"], ["up", "키우기 (Upsampling)"],
+  ["rnn", "순환 (RNN)"], ["attn", "어텐션 (Attention)"], ["tf", "Transformer 부품"], ["norm", "정규화 (Normalization)"],
+  ["act", "활성화 (Activation)"], ["reg", "과적합 막기 (Regularization)"], ["merge", "합치기·나누기"], ["shape", "모양 바꾸기"],
+  ["prep", "입력 변환"], ["aug", "증강 (학습 때만)"], ["pack", "묶음 (자주 쓰는 조합)"]];
+const COLORS = { input: "gray", dense: "gray", conv: "teal", pool: "teal", up: "teal", rnn: "coral", attn: "blue", tf: "blue", norm: "amber",
+  act: "purple", reg: "gray", merge: "add", shape: "gray", prep: "pink", aug: "pink", out: "coral", pack: "gray" };
+// 블록이 받는 모양: seq (채널, 길이) · img (채널, 높이, 너비) · sp (둘 다) · any
+const RANK = { conv: "seq", pool: "seq", global_avg: "seq", last_step: "seq", conv2d: "img", pool2d: "img", global_avg2d: "img",
+  lstm: "seq", gru: "seq", simple_rnn: "seq", se: "sp", dw_conv: "seq", sep_conv: "seq", max_pool: "seq", global_max: "seq", first_step: "seq",
+  conv_t: "seq", cls_token: "seq", dw_conv2d: "img", sep_conv2d: "img", max_pool2d: "img", global_max2d: "img", conv_t2d: "img",
+  patch_embed: "img", to_seq: "img", rand_rotate: "img", rand_zoom: "img", rand_stretch: "seq", spectrogram: "seq",
+  adaptive_pool: "sp", attn_pool: "sp", upsample: "sp", pixel_shuffle: "sp", eca: "sp", cbam: "sp", spatial_attn: "sp", mha: "sp",
+  linear_attn: "sp", nonlocal: "sp", cross_attn: "sp", pos_enc: "sp", groupnorm: "sp", instancenorm: "sp", spatial_dropout: "sp",
+  permute: "sp", crop: "sp", pad: "sp", rand_flip: "sp", rand_shift: "sp", embedding: "sp" };
+const TWO_D = { conv: "conv2d", pool: "pool2d", global_avg: "global_avg2d", dw_conv: "dw_conv2d", sep_conv: "sep_conv2d", max_pool: "max_pool2d",
+  global_max: "global_max2d", conv_t: "conv_t2d" };
+const ONE_D = Object.fromEntries(Object.entries(TWO_D).map(([a, b]) => [b, a]));
+const P = (cat, name, desc, make) => ({ cat, name, desc, make });
+const PALETTE = {
+  dense: P("dense", "Dense", "모든 값을 섞어 정한 개수(units)로 (Linear)", () => ({ type: "dense", units: 16 })),
+  glu: P("dense", "GLU", "반은 값, 반은 문(σ): 값 × σ(문). 위치마다 채널에", () => ({ type: "glu", units: 16, gate: "sigmoid" })),
+  "glu:swiglu": P("dense", "SwiGLU", "GLU의 문을 SiLU로 (LLaMA 등 최신 LLM의 FFN)", () => ({ type: "glu", units: 16, gate: "silu" })),
+  conv: P("conv", "Conv1D", "짧은 구간의 모양(패턴)을 찾아 채널(filter)로 나눔", () => ({ type: "conv", channels: 16, kernel: 3, stride: 1 })),
+  "conv:causal": P("conv", "Causal Conv1D", "과거만 보는 Conv1D (왼쪽만 채움). WaveNet·TCN", () => ({ type: "conv", channels: 16, kernel: 3, stride: 1, padding: "causal" })),
+  conv2d: P("conv", "Conv2D", "작은 네모(3×3 등) 필터로 그림의 획·모서리 같은 모양을 찾음", () => ({ type: "conv2d", channels: 8, kernel: 3, stride: 1 })),
+  dw_conv: P("conv", "DepthwiseConv1D", "채널마다 따로 필터 하나 (채널은 안 섞음, 가벼움)", () => ({ type: "dw_conv", kernel: 3, multiplier: 1 })),
+  dw_conv2d: P("conv", "DepthwiseConv2D", "채널마다 따로 3×3 필터 (MobileNet)", () => ({ type: "dw_conv2d", kernel: 3, multiplier: 1 })),
+  sep_conv: P("conv", "SeparableConv1D", "Depthwise + 1칸 Conv: 같은 일을 훨씬 적은 가중치로", () => ({ type: "sep_conv", channels: 16, kernel: 3 })),
+  sep_conv2d: P("conv", "SeparableConv2D", "Depthwise 3×3 + 1×1 Conv (Xception·MobileNet)", () => ({ type: "sep_conv2d", channels: 16, kernel: 3 })),
+  pool: P("pool", "AvgPool1D", "이웃 값을 평균 내어 길이를 줄임", () => ({ type: "pool", size: 2 })),
+  max_pool: P("pool", "MaxPool1D", "이웃 중 가장 큰 값만 남겨 길이를 줄임 (가장 흔한 풀링)", () => ({ type: "max_pool", size: 2 })),
+  pool2d: P("pool", "AvgPool2D", "2×2 칸을 평균 내어 그림 크기를 절반으로", () => ({ type: "pool2d", size: 2 })),
+  max_pool2d: P("pool", "MaxPool2D", "2×2 칸 중 가장 큰 값만 남겨 그림을 절반으로", () => ({ type: "max_pool2d", size: 2 })),
+  global_avg: P("pool", "GlobalAvgPool1D", "채널마다 모든 시점을 평균 내어 값 하나로", () => ({ type: "global_avg" })),
+  global_max: P("pool", "GlobalMaxPool1D", "채널마다 모든 시점 중 가장 큰 값 (어딘가에 한 번이라도 나타났나)", () => ({ type: "global_max" })),
+  global_avg2d: P("pool", "GlobalAvgPool2D", "채널마다 그림 전체를 평균 내어 값 하나로", () => ({ type: "global_avg2d" })),
+  global_max2d: P("pool", "GlobalMaxPool2D", "채널마다 그림 전체에서 가장 큰 값", () => ({ type: "global_max2d" })),
+  adaptive_pool: P("pool", "AdaptivePool", "입력 크기와 상관없이 정한 크기(예: 4)로 줄임", () => ({ type: "adaptive_pool", size: 4, mode: "avg" })),
+  attn_pool: P("pool", "AttentionPool", "위치마다 점수를 배워 중요한 곳을 더 반영해 모음", () => ({ type: "attn_pool" })),
+  last_step: P("pool", "LastTimestep", "채널마다 마지막 시점 값만 (TCN식 분류)", () => ({ type: "last_step" })),
+  first_step: P("pool", "FirstTimestep", "채널마다 첫 시점 값만 (CLS token 꺼내기)", () => ({ type: "first_step" })),
+  upsample: P("up", "Upsample", "크기를 2배로 (가까운 값 복사 또는 선형 보간)", () => ({ type: "upsample", mode: "nearest" })),
+  pixel_shuffle: P("up", "PixelShuffle", "채널을 칸으로 옮겨 2배로 (채널은 2·4로 나뉨)", () => ({ type: "pixel_shuffle" })),
+  conv_t: P("up", "ConvTranspose1D", "배우면서 길이를 2배로 키우는 Conv", () => ({ type: "conv_t", channels: 16, kernel: 2, stride: 2 })),
+  conv_t2d: P("up", "ConvTranspose2D", "배우면서 그림을 2배로 키우는 Conv (U-Net·생성)", () => ({ type: "conv_t2d", channels: 8, kernel: 2, stride: 2 })),
+  simple_rnn: P("rnn", "SimpleRNN", "가장 단순한 순환 층", () => ({ type: "simple_rnn", hidden: 16, layers: 1 })),
+  lstm: P("rnn", "LSTM", "시점을 차례로 읽으며 기억", () => ({ type: "lstm", hidden: 16, layers: 1 })),
+  gru: P("rnn", "GRU", "LSTM보다 가벼운 순환 층", () => ({ type: "gru", hidden: 16, layers: 1 })),
+  "lstm:bi": P("rnn", "Bidirectional LSTM", "앞→뒤, 뒤→앞으로 둘 다 읽어 이어 붙임", () => ({ type: "lstm", hidden: 16, layers: 1, bidirectional: true })),
+  "gru:bi": P("rnn", "Bidirectional GRU", "앞→뒤, 뒤→앞으로 둘 다 읽는 GRU", () => ({ type: "gru", hidden: 16, layers: 1, bidirectional: true })),
+  se: P("attn", "SE block", "채널마다 중요도를 배워 곱함 (Squeeze-and-Excitation)", () => ({ type: "se", ratio: 4, act: "relu" })),
+  eca: P("attn", "ECA", "SE의 가벼운 판: 이웃 채널끼리만 봄", () => ({ type: "eca", kernel: 3 })),
+  cbam: P("attn", "CBAM", "무엇을(채널) + 어디를(공간) 볼지 차례로", () => ({ type: "cbam", ratio: 4, kernel: 7 })),
+  spatial_attn: P("attn", "SpatialAttention", "어디를 볼지 지도를 만들어 곱함", () => ({ type: "spatial_attn", kernel: 7 })),
+  mha: P("attn", "MultiHeadAttention", "위치끼리 서로 보고 섞음 (Self-attention, Transformer의 핵심)", () => ({ type: "mha", heads: 2 })),
+  "mha:causal": P("attn", "Causal Attention", "앞 위치만 봄 (GPT식, 다음 값 맞히기)", () => ({ type: "mha", heads: 2, causal: true })),
+  cross_attn: P("attn", "CrossAttention", "입력 둘: 첫째(질문)가 둘째(참고)의 어디를 볼지", () => ({ type: "cross_attn", heads: 2 })),
+  linear_attn: P("attn", "LinearAttention", "길이에 비례하는 가벼운 어텐션 (긴 입력용)", () => ({ type: "linear_attn", heads: 2 })),
+  nonlocal: P("attn", "NonLocal", "먼 칸끼리의 관계를 모아 더함 (이미지 어텐션)", () => ({ type: "nonlocal" })),
+  pos_enc: P("tf", "PositionalEncoding", "위치마다 sin·cos 값을 더해 순서를 알려 줌", () => ({ type: "pos_enc", mode: "sin" })),
+  "pos_enc:learned": P("tf", "PositionalEncoding (학습형)", "위치마다 더할 값을 배움 (BERT·ViT)", () => ({ type: "pos_enc", mode: "learned" })),
+  "mha:rope": P("tf", "Attention + RoPE", "Q·K를 위치만큼 돌려 순서를 앎 (최신 LLM)", () => ({ type: "mha", heads: 2, pos: "rope" })),
+  patch_embed: P("tf", "PatchEmbedding", "그림을 조각으로 잘라 조각마다 벡터로 (ViT 입구)", () => ({ type: "patch_embed", patch: 4, dim: 32 })),
+  cls_token: P("tf", "CLS token", "줄 맨 앞에 전체를 대표할 자리 하나를 붙임", () => ({ type: "cls_token" })),
+  bn: P("norm", "BatchNorm", "묶음(배치) 기준으로 값 크기를 고르게", () => ({ type: "bn" })),
+  layernorm: P("norm", "LayerNorm", "위치마다 채널 값을 고르게 (Transformer)", () => ({ type: "layernorm" })),
+  rmsnorm: P("norm", "RMSNorm", "LayerNorm의 가벼운 판 (최신 LLM)", () => ({ type: "rmsnorm" })),
+  groupnorm: P("norm", "GroupNorm", "채널을 묶어서 (배치가 작을 때)", () => ({ type: "groupnorm", groups: 4 })),
+  instancenorm: P("norm", "InstanceNorm", "샘플·채널마다 따로 (스타일 변환)", () => ({ type: "instancenorm" })),
+  dropout: P("reg", "Dropout", "학습 때 일부 값을 무작위로 꺼서 과적합을 막음", () => ({ type: "dropout", rate: 0.2 })),
+  spatial_dropout: P("reg", "SpatialDropout", "채널을 통째로 끔 (Conv 뒤에)", () => ({ type: "spatial_dropout", rate: 0.1 })),
+  drop_path: P("reg", "DropPath", "Residual 길을 통째로 건너뜀 (Residual 안 마지막에)", () => ({ type: "drop_path", rate: 0.1 })),
+  gaussian_noise: P("reg", "GaussianNoise", "학습 때 작은 잡음을 더함", () => ({ type: "gaussian_noise", std: 0.1 })),
+  add: P("merge", "Add (+)", "들어온 값들을 더함 (모양이 같아야 함). 잔차", () => ({ type: "add" })),
+  concat: P("merge", "Concat", "채널 방향으로 이어 붙임 (길이가 같아야 함)", () => ({ type: "concat" })),
+  multiply: P("merge", "Multiply (×)", "원소마다 곱함 (문·가중치 적용)", () => ({ type: "multiply" })),
+  average: P("merge", "Average", "원소마다 평균", () => ({ type: "average" })),
+  maximum: P("merge", "Maximum", "원소마다 큰 값", () => ({ type: "maximum" })),
+  slice: P("merge", "Split (채널 나누기)", "채널 일부만 꺼냄 (둘 이상 꺼내면 나누기)", () => ({ type: "slice", start: 0, count: 4 })),
+  flatten: P("shape", "Flatten", "한 줄로 펼침 (Dense 앞)", () => ({ type: "flatten" })),
+  reshape: P("shape", "Reshape", "값 전체를 (채널, 나머지) 줄로 다시 묶음", () => ({ type: "reshape", channels: 4 })),
+  permute: P("shape", "Transpose", "줄은 채널↔길이, 그림은 높이↔너비", () => ({ type: "permute" })),
+  to_seq: P("shape", "ToSequence", "그림 (C, H, W) → 칸들의 줄 (C, H·W). 어텐션 앞", () => ({ type: "to_seq" })),
+  crop: P("shape", "Crop", "가장자리를 잘라냄", () => ({ type: "crop", amount: 1 })),
+  pad: P("shape", "Pad", "가장자리에 0을 채움", () => ({ type: "pad", amount: 1 })),
+  embedding: P("prep", "Embedding", "값을 구간 번호로 바꿔 번호마다 벡터로 (시계열 토큰)", () => ({ type: "embedding", bins: 32, dim: 16 })),
+  spectrogram: P("prep", "Spectrogram", "신호 → 시간·주파수 그림 (그 뒤엔 Conv2D)", () => ({ type: "spectrogram", n_fft: 32, hop: 8, mode: "log" })),
+  "spectrogram:mel": P("prep", "Mel spectrogram", "사람 귀처럼 낮은 소리를 촘촘히 (음성)", () => ({ type: "spectrogram", n_fft: 64, hop: 16, mode: "mel", n_mels: 16 })),
+  "spectrogram:mfcc": P("prep", "MFCC", "mel을 DCT로 줄인 음성 특징", () => ({ type: "spectrogram", n_fft: 64, hop: 16, mode: "mfcc", n_mels: 32, n_mfcc: 13 })),
+  rand_flip: P("aug", "RandomFlip", "학습 때 반씩 뒤집음 (그림 좌우·신호 시간)", () => ({ type: "rand_flip", dir: "h" })),
+  rand_rotate: P("aug", "RandomRotation", "학습 때 그림을 조금씩 돌림", () => ({ type: "rand_rotate", degrees: 15 })),
+  rand_shift: P("aug", "RandomShift", "학습 때 조금씩 옮김", () => ({ type: "rand_shift", frac: 0.1 })),
+  rand_zoom: P("aug", "RandomZoom", "학습 때 그림을 조금 확대·축소", () => ({ type: "rand_zoom", frac: 0.1 })),
+  rand_scale: P("aug", "RandomScale", "학습 때 값 전체 세기를 조금 바꿈", () => ({ type: "rand_scale", frac: 0.2 })),
+  rand_stretch: P("aug", "RandomStretch", "학습 때 신호를 시간 방향으로 늘이고 줄임", () => ({ type: "rand_stretch", frac: 0.1 })),
 };
-const ACT_NAMES = { relu: "ReLU", sigmoid: "Sigmoid", tanh: "Tanh", leaky_relu: "LeakyReLU", gelu: "GELU",
-  silu: "SiLU / Swish", elu: "ELU", mish: "Mish", softplus: "Softplus" };
+const ACT_LIST = [["relu", "ReLU", "음수는 0 (가장 많이 씀)"], ["leaky_relu", "LeakyReLU", "음수도 조금 흘림"], ["gelu", "GELU", "부드러운 ReLU (Transformer)"],
+  ["silu", "SiLU / Swish", "x·σ(x) (EfficientNet·LLM)"], ["elu", "ELU", "음수 쪽이 부드럽게 −1로"], ["mish", "Mish", "부드럽고 매끈한 ReLU 계열"],
+  ["softplus", "Softplus", "부드러운 ReLU"], ["sigmoid", "Sigmoid", "0~1로"], ["tanh", "Tanh", "−1~1로"], ["selu", "SELU", "스스로 정규화되는 활성화"],
+  ["relu6", "ReLU6", "0~6으로 자름 (모바일)"], ["hardswish", "HardSwish", "가벼운 Swish (MobileNetV3)"], ["hardsigmoid", "HardSigmoid", "가벼운 Sigmoid"],
+  ["softmax", "Softmax", "채널 합이 1이 되게"]];
+for (const [k, name, desc] of ACT_LIST) PALETTE[k === "relu" ? "act" : `act:${k}`] = P("act", name, desc, () => ({ type: "act", kind: k }));
+PALETTE.prelu = P("act", "PReLU", "LeakyReLU의 기울기를 배움", () => ({ type: "prelu" }));
+// 종류마다 이름·설명·색 (palette 대표 항목에서)
+const TYPES = {};
+for (const [id, p] of Object.entries(PALETTE)) {
+  const t = p.make().type;
+  if (!TYPES[t] || !id.includes(":")) TYPES[t] = { cat: p.cat, name: t === "act" ? "Activation" : p.name, desc: p.desc, make: p.make };
+}
+TYPES.act.desc = "꺾임(비선형)을 넣음. 잘 모르겠으면 ReLU";
+TYPES.output = { cat: "out", name: "Output", desc: "classification이면 클래스 수, regression이면 값 하나", make: () => ({ type: "output" }) };
+const ACT_NAMES = Object.fromEntries(ACT_LIST.map(([k, n]) => [k, n]));
 const RNN_NAMES = { lstm: "LSTM", gru: "GRU", simple_rnn: "SimpleRNN" };
-const ACTS = [["relu", "ReLU (추천)"], ["leaky_relu", "LeakyReLU"], ["gelu", "GELU"], ["silu", "SiLU / Swish"], ["elu", "ELU"],
-  ["mish", "Mish"], ["softplus", "Softplus"], ["sigmoid", "Sigmoid"], ["tanh", "Tanh"]];
-const TABULAR_TYPES = ["dense", "act", "bn", "dropout", "add", "concat", "flatten", "se", "output"];   // 표 데이터에 흔히 쓰는 층
-const IMAGE_ONLY = ["conv2d", "pool2d", "global_avg2d"];
-const IMAGE_TYPES = IMAGE_ONLY.concat(["bn", "act", "dropout", "flatten", "dense", "add", "concat", "se", "output"]);
-// 왼쪽 목록은 데이터 종류와 상관없이 모든 층 (직접 꾸밀 수 있게). 맞는 층이 먼저, 잘 안 맞는 층은 뒤에 한마디와 함께
+const ACTS = ACT_LIST.map(([k, n]) => [k, k === "relu" ? "ReLU (추천)" : n]);
+const MERGES = ["add", "concat", "multiply", "average", "maximum"];
+const TWO_INPUT = ["cross_attn"];
+// 왼쪽 목록은 데이터 종류와 상관없이 모든 층 (직접 꾸밀 수 있게). 잘 안 맞는 층은 흐리게 한마디와 함께
+const TABULAR_OK = ["dense", "glu", "act", "prelu", "bn", "layernorm", "rmsnorm", "dropout", "gaussian_noise", "drop_path", "add", "concat",
+  "multiply", "average", "maximum", "slice", "flatten", "output"];
 function fitNote(t, input) {
-  if (input === "image") return IMAGE_TYPES.includes(t) ? "" : "시계열·표 데이터용 (이미지에는 2D 층)";
-  if (IMAGE_ONLY.includes(t)) return "이미지 데이터 전용";
-  if (input === "tabular" && !TABULAR_TYPES.includes(t)) return "표 데이터엔 보통 안 씀 (열 순서를 시간처럼 다룸)";
+  const r = RANK[t];
+  if (input === "image") return r === "seq" && !["conv", "pool", "global_avg"].includes(t) ? "줄(시계열) 모양에 씀 — 그림은 ToSequence 뒤에" : "";
+  if (r === "img") return t === "conv2d" || t === "pool2d" || t === "global_avg2d" ? "이미지 데이터용 (Spectrogram 뒤에는 됨)" : "그림 모양에 씀 (Spectrogram 뒤에는 됨)";
+  if (input === "tabular" && !TABULAR_OK.includes(t)) return "표 데이터엔 보통 안 씀 (열 순서를 시간처럼 다룸)";
   return "";
 }
 function paletteTypes(input) {
-  const all = Object.keys(TYPES).filter((t) => t !== "output");
-  return all.filter((t) => !fitNote(t, input)).concat(all.filter((t) => fitNote(t, input)));
+  const all = Object.keys(PALETTE);
+  const typeOf = (id) => PALETTE[id].make().type;
+  return all.filter((t) => !fitNote(typeOf(t), input)).concat(all.filter((t) => fitNote(typeOf(t), input)));
 }
-const CATS = [["cnn", "Convolution (CNN)"], ["act", "Activation"], ["merge", "합치기 (Merge)"], ["rnn", "Recurrent (RNN)"], ["struct", "Structure"]];
+function chooseHeads(C) { return [4, 2, 1].find((h) => C % h === 0 && C / h >= 2) || 1; }
+
+// ---- 묶음: 자주 쓰는 조합. make(C, rank, L) → {nodes (입력은 "SRC"), exit}. C: 넣는 자리로 들어오는 채널 수
+const PACKS = [
+  { id: "conv_bn_relu", name: "Conv–BN–ReLU", desc: "가장 흔한 합성곱 단위", ranks: [2, 3] },
+  { id: "resnet", name: "ResNet 기본 블록", desc: "Conv–BN–ReLU–Conv–BN + 지름길 더하기 → ReLU", ranks: [2, 3] },
+  { id: "bottleneck", name: "ResNet Bottleneck", desc: "1×1로 줄였다가 3×3 → 1×1로 되돌리고 지름길 (깊은 ResNet)", ranks: [2, 3] },
+  { id: "se_resnet", name: "SE-ResNet 블록", desc: "ResNet 블록 + SE 채널 주의", ranks: [2, 3] },
+  { id: "inception", name: "Inception 모듈", desc: "1·3·5칸 필터를 나란히 써서 이어 붙임", ranks: [2, 3] },
+  { id: "mobilenet", name: "MobileNet Inverted Residual", desc: "1×1로 4배 넓힘 → Depthwise → 1×1로 좁힘 + 지름길", ranks: [2, 3] },
+  { id: "dense", name: "DenseNet Dense 블록", desc: "층마다 앞의 모든 값을 이어 붙여 다음으로", ranks: [2, 3] },
+  { id: "convnext", name: "ConvNeXt 블록", desc: "Depthwise 7칸 → LayerNorm → 4배 넓힘·GELU → 되돌림 + DropPath 지름길", ranks: [2, 3] },
+  { id: "unet", name: "U-Net 한 단계", desc: "줄였다가(MaxPool) 키우고(Upsample) 같은 크기의 앞 값과 이어 붙임", ranks: [2, 3] },
+  { id: "transformer", name: "Transformer Encoder 블록", desc: "LayerNorm → Self-attention + 지름길 → LayerNorm → FFN(4배·GELU) + 지름길", ranks: [2, 3] },
+  { id: "decoder", name: "Transformer Decoder 블록 (GPT식)", desc: "Encoder 블록과 같고 어텐션이 앞만 봄 (Causal)", ranks: [2] },
+  { id: "mixer", name: "MLP-Mixer 블록", desc: "위치끼리 섞는 MLP(Transpose) + 채널끼리 섞는 MLP, 각각 지름길", ranks: [2] },
+  { id: "vit", name: "ViT 입구", desc: "PatchEmbedding → CLS token → PositionalEncoding(학습형)", ranks: [3] },
+  { id: "mlp", name: "MLP 블록 (Residual)", desc: "LayerNorm → 넓힘·GELU → 되돌림 + 지름길", ranks: [1, 2, 3] },
+];
+function makePack(id, C, rank, L) {
+  const nodes = [];
+  let n = 0;
+  const two = rank === 3;
+  const add = (type, ins, kw = {}) => {
+    const t = two && TWO_D[type] ? TWO_D[type] : type, node = Object.assign({ id: `p${++n}`, type: t, inputs: ins }, kw);
+    if (t === "conv2d" && node.kernel > 7) node.kernel = 7;
+    if (rank === 1 && (type === "conv")) { node.type = "dense"; node.units = node.channels; delete node.channels; delete node.kernel; delete node.stride; }
+    nodes.push(node);
+    return node.id;
+  };
+  const conv = (ins, ch, k = 3) => add("conv", [ins], { channels: Math.max(1, ch), kernel: k, stride: 1 });
+  const c = Math.max(4, C || 16), q = Math.max(1, Math.round(c / 4));
+  let x = "SRC", s;
+  switch (id) {
+    case "conv_bn_relu": x = add("act", [add("bn", [conv("SRC", c)])], { kind: "relu" }); break;
+    case "resnet": case "se_resnet": {
+      s = add("bn", [conv(add("act", [add("bn", [conv("SRC", c)])], { kind: "relu" }), c)]);
+      if (id === "se_resnet") s = add("se", [s], { ratio: Math.min(4, c), act: "relu" });
+      x = add("act", [add("add", ["SRC", s])], { kind: "relu" });
+      break;
+    }
+    case "bottleneck": {
+      s = add("act", [add("bn", [conv("SRC", q, 1)])], { kind: "relu" });
+      s = add("act", [add("bn", [conv(s, q, 3)])], { kind: "relu" });
+      s = add("bn", [conv(s, c, 1)]);
+      x = add("act", [add("add", ["SRC", s])], { kind: "relu" });
+      break;
+    }
+    case "inception": {
+      const b = Math.max(4, Math.round(c / 2));
+      const b1 = conv("SRC", b, 1), b2 = conv(conv("SRC", b, 1), b, 3), b3 = conv(conv("SRC", b, 1), b, 5);
+      x = add("act", [add("concat", [b1, b2, b3])], { kind: "relu" });
+      break;
+    }
+    case "mobilenet": {
+      s = add("act", [add("bn", [conv("SRC", c * 4, 1)])], { kind: "relu6" });
+      s = add("act", [add("bn", [add("dw_conv", [s], { kernel: 3, multiplier: 1 })])], { kind: "relu6" });
+      s = add("bn", [conv(s, c, 1)]);
+      x = add("add", ["SRC", s]);
+      break;
+    }
+    case "dense": {
+      const g = 8;
+      const l1 = conv(add("act", [add("bn", ["SRC"])], { kind: "relu" }), g, 3), c1 = add("concat", ["SRC", l1]);
+      const l2 = conv(add("act", [add("bn", [c1])], { kind: "relu" }), g, 3);
+      x = add("concat", [c1, l2]);
+      break;
+    }
+    case "convnext": {
+      s = add("layernorm", [add("dw_conv", ["SRC"], { kernel: 7, multiplier: 1 })]);
+      s = add("drop_path", [conv(add("act", [conv(s, c * 4, 1)], { kind: "gelu" }), c, 1)], { rate: 0.1 });
+      x = add("add", ["SRC", s]);
+      break;
+    }
+    case "unet": {
+      const skip = add("act", [conv("SRC", c)], { kind: "relu" });
+      const mid = add("act", [conv(add("max_pool", [skip], { size: 2 }), c * 2)], { kind: "relu" });
+      x = add("act", [conv(add("concat", [add("upsample", [mid], { mode: "nearest" }), skip]), c)], { kind: "relu" });
+      break;
+    }
+    case "transformer": case "decoder": {
+      const kw = { heads: chooseHeads(c) };
+      if (id === "decoder") kw.causal = true;
+      const a = add("add", ["SRC", add("mha", [add("layernorm", ["SRC"])], kw)]);
+      const f = conv(add("act", [conv(add("layernorm", [a]), c * 4, 1)], { kind: "gelu" }), c, 1);
+      x = add("add", [a, f]);
+      break;
+    }
+    case "mixer": {
+      const tok = Math.max(2, L || 16);
+      const t1 = add("permute", [add("layernorm", ["SRC"])]);
+      const t2 = add("permute", [conv(add("act", [conv(t1, tok * 2, 1)], { kind: "gelu" }), tok, 1)]);
+      const a = add("add", ["SRC", t2]);
+      const f = conv(add("act", [conv(add("layernorm", [a]), c * 4, 1)], { kind: "gelu" }), c, 1);
+      x = add("add", [a, f]);
+      break;
+    }
+    case "vit": x = add("pos_enc", [add("cls_token", [add("patch_embed", ["SRC"], { patch: 4, dim: 32 })])], { mode: "learned" }); break;
+    case "mlp": {
+      const f = conv(add("act", [conv(add("layernorm", ["SRC"]), c * 2, 1)], { kind: "gelu" }), c, 1);
+      x = add("add", ["SRC", f]);
+      break;
+    }
+    default: throw new Error("모르는 묶음: " + id);
+  }
+  return { nodes, exit: x };
+}
+// 묶음을 선 from → to 사이에 넣음 → {graph, ids}
+function insertPack(g0, from, to, pack) {
+  const g = clone(g0), f = findNode(g, to);
+  if (!f || !insOf(f.node).includes(from)) return { graph: g0, ids: [] };
+  const mk = idMaker(g), map = {};
+  for (const n of pack.nodes) map[n.id] = mk();
+  const added = pack.nodes.map((n) => Object.assign({}, n, { id: map[n.id], inputs: n.inputs.map((x) => (x === "SRC" ? from : map[x])) }));
+  replaceInput(f.node, from, map[pack.exit]);
+  f.list.splice(f.list.indexOf(f.node), 0, ...added);
+  return { graph: g, ids: added.map((n) => n.id) };
+}
 
 // ------------------------------------------------------------ 순수 함수: 그래프 다루기
 const clone = (x) => JSON.parse(JSON.stringify(x));
-const isMerge = (n) => n && (n.type === "add" || n.type === "concat");
+const isMerge = (n) => n && MERGES.includes(n.type);
+const maxIns = (n) => (isMerge(n) ? Infinity : n && TWO_INPUT.includes(n.type) ? 2 : 1);   // 받을 수 있는 입력 수
 const insOf = (n) => (n && Array.isArray(n.inputs) ? n.inputs : []);
 const nodesOf = (g) => (g && Array.isArray(g.nodes) ? g.nodes : []);
 
@@ -121,6 +323,7 @@ function connect(g0, from, to) {                          // → {graph, error}
   const t = f.node;
   if (insOf(t).includes(from)) return { graph: g0, error: "이미 이어져 있습니다" };
   if (isMerge(t)) t.inputs = insOf(t).concat([from]);        // 합치기 상자: 입력을 더함
+  else if (maxIns(t) === 2) t.inputs = insOf(t).length < 2 ? insOf(t).concat([from]) : [insOf(t)[0], from];   // 입력 둘: 둘째를 바꿈
   else t.inputs = [from];                                     // 보통 층: 기존 선을 새 선으로 바꿈
   return { graph: g, error: null };
 }
@@ -140,7 +343,7 @@ function addFeeding(g0, to, node, pos) {
   const n = Object.assign({}, node, { id: newId(g), inputs: [] });
   if (validPos(pos)) n.pos = [Math.max(0, Math.round(pos[0])), Math.max(0, Math.round(pos[1]))];
   f.list.splice(f.list.indexOf(f.node), 0, n);
-  f.node.inputs = isMerge(f.node) ? insOf(f.node).concat([n.id]) : [n.id];
+  f.node.inputs = isMerge(f.node) || (maxIns(f.node) === 2 && insOf(f.node).length < 2) ? insOf(f.node).concat([n.id]) : [n.id];
   return { graph: g, id: n.id };
 }
 function removeNode(g0, id) {
@@ -320,7 +523,8 @@ function moveNode(g0, id, from, to) {                     // 놓인 상자를 �
   delete node.pos;
   return { graph: insertOnEdge(removeNode(g0, id), from, to, node), error: null };
 }
-const SHORT_ACT = { relu: "ReLU", sigmoid: "Sigmoid", tanh: "Tanh", leaky_relu: "LReLU",
+const SHORT_ACT = { selu: "SELU", relu6: "ReLU6", hardswish: "HSwish", hardsigmoid: "HSigm", softmax: "Softmax",
+  relu: "ReLU", sigmoid: "Sigmoid", tanh: "Tanh", leaky_relu: "LReLU",
   gelu: "GELU", silu: "SiLU", elu: "ELU", mish: "Mish", softplus: "Softplus" };
 function shortLabel(b) { return b.type === "act" ? SHORT_ACT[b.kind] || "Act" : label(b); }
 // 점 p에서 선분 a-b까지 거리
@@ -357,7 +561,7 @@ function label(b, summary) {
   switch (b.type) {
     case "input": return "Input";
     case "conv": return `Conv1D · ${b.channels} filters · k=${b.kernel}` + (b.stride === 2 ? " · stride 2" : "") +
-      ((b.dilation || 1) > 1 ? ` · dilation ${b.dilation}` : "") + (b.padding === "valid" ? " · valid" : "") +
+      ((b.dilation || 1) > 1 ? ` · dilation ${b.dilation}` : "") + (b.padding === "valid" ? " · valid" : b.padding === "causal" ? " · causal" : "") +
       ((b.groups || 1) > 1 ? ` · groups ${b.groups}` : "");
     case "last_step": return "LastTimestep";
     case "se": return `SE block · ratio ${b.ratio}`;
@@ -365,6 +569,7 @@ function label(b, summary) {
     case "flatten": return "Flatten";
     case "pool": return `AvgPool1D · pool ${b.size}`;
     case "conv2d": return `Conv2D · ${b.channels} filters · ${b.kernel}×${b.kernel}` + (b.stride === 2 ? " · stride 2" : "") +
+      ((b.dilation || 1) > 1 ? ` · dilation ${b.dilation}` : "") + ((b.groups || 1) > 1 ? ` · groups ${b.groups}` : "") +
       (b.padding === "valid" ? " · valid" : "");
     case "pool2d": return `AvgPool2D · pool ${b.size || 2}`;
     case "global_avg2d": return "GlobalAvgPool2D";
@@ -376,9 +581,11 @@ function label(b, summary) {
     case "concat": return "Concat";
     case "lstm": case "gru": case "simple_rnn": {
       const n = b.layers || 1;
-      return `${RNN_NAMES[b.type]} · ${b.hidden} units` + (n > 1 ? ` × ${n} layers` : "");
+      return `${b.bidirectional ? "Bi" : ""}${RNN_NAMES[b.type]} · ${b.hidden} units` + (n > 1 ? ` × ${n} layers` : "") +
+        (b.return_sequences ? " · 줄 그대로" : "");
     }
     case "repeat": return `Repeat × ${b.times}`;
+    case "prelu": return "PReLU";
     case "output":
       if (!summary) return "Output";
       if (summary.task !== "classification") return "Output · regression";
@@ -386,9 +593,78 @@ function label(b, summary) {
         const names = summary.classes.join(" · ");           // 클래스가 많으면 상자를 넘지 않게 개수만
         return `Output · classification (${names.length > 24 ? `${summary.classes.length} classes` : names})`;
       }
-    default: return String(b.type);
+    default: return LABELS[b.type] ? LABELS[b.type](b) : TYPES[b.type] ? TYPES[b.type].name : String(b.type);
   }
 }
+const LABELS = {
+  glu: (b) => `${b.gate === "silu" ? "SwiGLU" : "GLU"} · ${b.units} units`,
+  dw_conv: (b) => `DepthwiseConv1D · k=${b.kernel || 3}` + ((b.multiplier || 1) > 1 ? ` · ×${b.multiplier}` : ""),
+  dw_conv2d: (b) => `DepthwiseConv2D · ${b.kernel || 3}×${b.kernel || 3}` + ((b.multiplier || 1) > 1 ? ` · ×${b.multiplier}` : ""),
+  sep_conv: (b) => `SeparableConv1D · ${b.channels} filters · k=${b.kernel || 3}`,
+  sep_conv2d: (b) => `SeparableConv2D · ${b.channels} filters · ${b.kernel || 3}×${b.kernel || 3}`,
+  max_pool: (b) => `MaxPool1D · pool ${b.size || 2}`, max_pool2d: () => "MaxPool2D · pool 2",
+  adaptive_pool: (b) => `Adaptive${(b.mode || "avg") === "max" ? "Max" : "Avg"}Pool · ${b.size || 4}`,
+  upsample: (b) => `Upsample ×2 · ${(b.mode || "nearest") === "linear" ? "linear" : "nearest"}`,
+  conv_t: (b) => `ConvTranspose1D · ${b.channels} filters · k=${b.kernel || 2}` + ((b.stride || 2) === 2 ? " · ×2" : ""),
+  conv_t2d: (b) => `ConvTranspose2D · ${b.channels} filters · ${b.kernel || 2}×${b.kernel || 2}` + ((b.stride || 2) === 2 ? " · ×2" : ""),
+  eca: (b) => `ECA · k=${b.kernel || 3}`, cbam: (b) => `CBAM · ratio ${b.ratio || 4}`, spatial_attn: (b) => `SpatialAttention · k=${b.kernel || 7}`,
+  mha: (b) => `${b.causal ? "Causal " : ""}Attention · ${b.heads || 2} heads` + (b.pos === "rope" ? " · RoPE" : ""),
+  linear_attn: (b) => `LinearAttention · ${b.heads || 2} heads`, cross_attn: (b) => `CrossAttention · ${b.heads || 2} heads`,
+  pos_enc: (b) => `PositionalEncoding · ${(b.mode || "sin") === "learned" ? "학습형" : "sin·cos"}`,
+  patch_embed: (b) => `PatchEmbedding · ${b.patch || 4}×${b.patch || 4} → ${b.dim || 32}`,
+  groupnorm: (b) => `GroupNorm · ${b.groups || 4} groups`,
+  spatial_dropout: (b) => `SpatialDropout · ${b.rate ?? 0.1}`, drop_path: (b) => `DropPath · ${b.rate ?? 0.1}`,
+  gaussian_noise: (b) => `GaussianNoise · ${b.std ?? 0.1}`,
+  multiply: () => "Multiply (×)", average: () => "Average", maximum: () => "Maximum",
+  slice: (b) => `Split · 채널 ${b.start || 0}–${(b.start || 0) + b.count - 1}`,
+  reshape: (b) => `Reshape · ${b.channels} 채널`, crop: (b) => `Crop · ${b.amount || 1}`, pad: (b) => `Pad · ${b.amount || 1}`,
+  embedding: (b) => `Embedding · ${b.bins || 32} 구간 → ${b.dim || 16}`,
+  spectrogram: (b) => `${{ log: "Spectrogram", mel: "Mel spectrogram", mfcc: "MFCC" }[b.mode || "log"]} · n_fft ${b.n_fft || 32}`,
+  rand_flip: (b) => `RandomFlip · ${{ h: "좌우", v: "상하", hv: "좌우·상하" }[b.dir || "h"]}`,
+  rand_rotate: (b) => `RandomRotation · ±${b.degrees || 15}°`, rand_shift: (b) => `RandomShift · ±${b.frac ?? 0.1}`,
+  rand_zoom: (b) => `RandomZoom · ±${b.frac ?? 0.1}`, rand_scale: (b) => `RandomScale · ±${b.frac ?? 0.2}`,
+  rand_stretch: (b) => `RandomStretch · ±${b.frac ?? 0.1}`,
+};
+// 설정 칸: [종류, 키, 이름, …]
+const num = (k, lab, min, max) => ["num", k, lab, min, max];
+const sel = (k, lab, opts) => ["sel", k, lab, opts];
+const yes = (k, lab) => ["sel", k, lab, [[false, "끔"], [true, "켬"]]];
+const vals = (...xs) => xs.map((v) => [v, String(v)]);
+const RATE = sel("rate", "Rate (끄는 비율)", vals(0.05, 0.1, 0.2, 0.3, 0.5));
+const FRAC = sel("frac", "세기 (±비율)", vals(0.05, 0.1, 0.2, 0.3));
+const HEADS = sel("heads", "Heads (나눠 보는 수, 채널의 약수)", vals(1, 2, 4, 8));
+const FIELDS = {
+  glu: [num("units", "Units (출력 채널 수)", 1, 1024), sel("gate", "문(gate)", [["sigmoid", "Sigmoid (GLU)"], ["silu", "SiLU (SwiGLU)"]])],
+  dw_conv: [sel("kernel", "Kernel size", vals(1, 3, 5, 7, 9, 11, 15)), num("multiplier", "Multiplier (채널마다 필터 수)", 1, 8)],
+  dw_conv2d: [sel("kernel", "Kernel size", [1, 3, 5, 7].map((v) => [v, `${v}×${v}`])), num("multiplier", "Multiplier (채널마다 필터 수)", 1, 8)],
+  sep_conv: [num("channels", "Filters", 1, 256), sel("kernel", "Kernel size", vals(1, 3, 5, 7, 9, 11, 15))],
+  sep_conv2d: [num("channels", "Filters", 1, 256), sel("kernel", "Kernel size", [1, 3, 5, 7].map((v) => [v, `${v}×${v}`]))],
+  max_pool: [sel("size", "Pool size", vals(2, 4))],
+  adaptive_pool: [num("size", "출력 크기", 1, 64), sel("mode", "방법", [["avg", "평균 (Avg)"], ["max", "최댓값 (Max)"]])],
+  upsample: [sel("mode", "방법", [["nearest", "nearest (가까운 값 복사)"], ["linear", "linear (선형 보간)"]])],
+  conv_t: [num("channels", "Filters", 1, 256), sel("kernel", "Kernel size", vals(1, 2, 3, 4, 5)), sel("stride", "Stride", [[2, "2 (길이 2배)"], [1, "1 (그대로)"]])],
+  conv_t2d: [num("channels", "Filters", 1, 256), sel("kernel", "Kernel size", vals(1, 2, 3, 4, 5)), sel("stride", "Stride", [[2, "2 (크기 2배)"], [1, "1 (그대로)"]])],
+  eca: [sel("kernel", "Kernel size (이웃 채널 수)", vals(3, 5, 7))],
+  cbam: [sel("ratio", "Ratio (채널 ÷ ratio)", vals(2, 4, 8, 16)), sel("kernel", "공간 kernel size", vals(3, 5, 7))],
+  spatial_attn: [sel("kernel", "Kernel size", vals(3, 5, 7))],
+  mha: [HEADS, yes("causal", "Causal (앞만 봄, GPT식)"), sel("pos", "위치 정보", [["none", "없음 (PositionalEncoding을 따로)"], ["rope", "RoPE (Q·K를 위치만큼 돌림)"]])],
+  linear_attn: [HEADS], cross_attn: [HEADS],
+  pos_enc: [sel("mode", "방법", [["sin", "sin·cos (고정)"], ["learned", "학습형"]])],
+  patch_embed: [sel("patch", "조각 크기", [2, 4, 8].map((v) => [v, `${v}×${v}`])), num("dim", "Dim (조각마다 값 수)", 1, 256)],
+  groupnorm: [sel("groups", "Groups (채널의 약수)", vals(1, 2, 4, 8, 16, 32))],
+  spatial_dropout: [RATE], drop_path: [RATE],
+  gaussian_noise: [sel("std", "Std (잡음 크기)", vals(0.01, 0.05, 0.1, 0.2, 0.5))],
+  slice: [num("start", "시작 채널 (0부터)", 0, 1024), num("count", "채널 수", 1, 1024)],
+  reshape: [num("channels", "채널 수 (값 전체 개수의 약수)", 1, 65536)],
+  crop: [num("amount", "양쪽에서 자를 칸", 1, 64)], pad: [num("amount", "양쪽에 채울 칸", 1, 64)],
+  embedding: [sel("bins", "구간 수", vals(8, 16, 32, 64, 128, 256)), num("dim", "Dim (구간마다 값 수)", 1, 256)],
+  spectrogram: [sel("mode", "종류", [["log", "Spectrogram (log 크기)"], ["mel", "Mel spectrogram"], ["mfcc", "MFCC"]]),
+    sel("n_fft", "창 길이 (n_fft)", vals(8, 16, 32, 64, 128, 256)), sel("hop", "hop (창을 옮기는 칸)", vals(1, 2, 4, 8, 16, 32, 64, 128)),
+    sel("n_mels", "mel 칸 수", vals(8, 16, 32, 64)), sel("n_mfcc", "MFCC 개수", vals(8, 13, 20, 40))],
+  rand_flip: [sel("dir", "방향 (그림)", [["h", "좌우"], ["v", "상하"], ["hv", "좌우·상하"]])],
+  rand_rotate: [num("degrees", "최대 각도 (±도)", 1, 180)],
+  rand_shift: [FRAC], rand_zoom: [FRAC], rand_scale: [FRAC], rand_stretch: [FRAC],
+};
 
 // ------------------------------------------------------------ 순수 함수: 자동 배치
 const validSize = (s) => Array.isArray(s) && s.length === 2 && s.every((v) => typeof v === "number" && v > 0 && isFinite(v));
@@ -805,17 +1081,24 @@ function alignToParent(g0, ids, opts) {
 
 // ------------------------------------------------------------ 화면
 const LOOSE = ["입력이 연결되지 않음", "출력까지 이어지지 않음", "합칠 입력이 2개 이상"];   // 아직 선을 안 이은 것
-const COLORS = { input: "gray", cnn: "teal", act: "purple", rnn: "coral", struct: "gray", out: "coral", merge: "add" };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmtShape = (s) => (!s ? "" : `(${s.join(", ")})`);
 // 이미지면 기본 Conv를 Conv2D로
-function forInput(n, input) {
-  if (input !== "image") return n;
-  if (n.type === "conv") return { type: "conv2d", channels: n.channels, kernel: 3, stride: 1 };
-  if (n.type === "pool") return { type: "pool2d", size: 2 };
-  if (n.type === "global_avg") return { type: "global_avg2d" };
+// 넣는 자리의 모양(rank: 2 줄 · 3 그림, 모르면 데이터 종류)에 맞춰 1D ↔ 2D 층을 바꿈
+function forInput(n, input, rank) {
+  const r = rank || (input === "image" ? 3 : 2);
+  if (r === 3 && TWO_D[n.type]) {
+    const t = TWO_D[n.type];
+    if (t === "conv2d") return { type: "conv2d", channels: n.channels, kernel: 3, stride: 1 };
+    if (t === "pool2d" || t === "max_pool2d") return { type: t, size: 2 };
+    const m = Object.assign({}, n, { type: t });
+    if (m.kernel > 7) m.kernel = 7;
+    return m;
+  }
+  if (r === 2 && ONE_D[n.type] && rank) return Object.assign({}, n, { type: ONE_D[n.type] });
   return n;
 }
+const makeOf = (id) => PALETTE[id].make();
 
 function mount(els, opts) {
   // els: {canvas, palette, settings}; opts: {onChange(graph), getSummary(), getInput(), onHint(msg), onHistory(canUndo, canRedo)}
@@ -989,25 +1272,38 @@ function mount(els, opts) {
       field("Kernel size (한 번에 보는 칸 수)", selectInput("kernel", b.kernel, [1, 3, 5, 7, 9, 11, 15].map((v) => [v, v]))) +
       adv(field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (길이 절반)"]])) +
         field("Dilation (칸 사이를 띄워 넓게 봄, TCN)", selectInput("dilation", b.dilation || 1, [1, 2, 4, 8, 16, 32].map((v) => [v, v]))) +
-        field("Padding", selectInput("padding", b.padding || "same", [["same", "same (길이 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]])) +
+        field("Padding", selectInput("padding", b.padding || "same", [["same", "same (길이 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"], ["causal", "causal (과거만 봄)"]])) +
         field("Groups (filters·들어오는 채널을 나누는 수, 같으면 depthwise)", numberInput("groups", b.groups || 1, 1, 256)),
       (b.stride || 1) !== 1 || (b.dilation || 1) !== 1 || (b.padding || "same") !== "same" || (b.groups || 1) !== 1);
     if (b.type === "pool") f = field("Pool size", selectInput("size", b.size, [[2, "2"], [4, "4"]]));
     if (b.type === "conv2d") f = field("Filters (채널 수: 많을수록 정확, 느림)", numberInput("channels", b.channels, 1, 256)) +
       field("Kernel size (한 번에 보는 네모 크기)", selectInput("kernel", b.kernel, [1, 3, 5, 7].map((v) => [v, `${v}×${v}`]))) +
       adv(field("Stride", selectInput("stride", b.stride || 1, [[1, "1"], [2, "2 (크기 절반)"]])) +
+        field("Dilation (칸 사이를 띄워 넓게 봄)", selectInput("dilation", b.dilation || 1, [1, 2, 4, 8].map((v) => [v, v]))) +
+        field("Groups (같으면 depthwise)", numberInput("groups", b.groups || 1, 1, 256)) +
         field("Padding", selectInput("padding", b.padding || "same", [["same", "same (크기 그대로)"], ["valid", "valid (가장자리만큼 줄어듦)"]])),
-      (b.stride || 1) !== 1 || (b.padding || "same") !== "same");
+      (b.stride || 1) !== 1 || (b.padding || "same") !== "same" || (b.dilation || 1) !== 1 || (b.groups || 1) !== 1);
     if (b.type === "act") f = field("Function", selectInput("kind", b.kind, ACTS));
     if (b.type === "se") f = field("Ratio (줄이는 비율: 채널 ÷ ratio)", selectInput("ratio", b.ratio, [2, 4, 8, 16].map((v) => [v, v]))) +
       adv(field("안쪽 activation", selectInput("act", b.act || "relu", [["relu", "ReLU"], ["sigmoid", "Sigmoid"], ["tanh", "Tanh"]])), (b.act || "relu") !== "relu");
     if (b.type === "dropout") f = field("Rate (끄는 비율)", selectInput("rate", b.rate, [0.1, 0.2, 0.3, 0.5].map((v) => [v, v])));
     if (b.type === "dense") f = field("Units (출력 개수)", numberInput("units", b.units, 1, 1024));
     if (b.type === "lstm" || b.type === "gru" || b.type === "simple_rnn") f = field("Units (hidden size)", numberInput("hidden", b.hidden, 1, 256)) +
-      field("Layers", numberInput("layers", b.layers || 1, 1, 3));
+      field("Layers", numberInput("layers", b.layers || 1, 1, 3)) +
+      field("Bidirectional (앞→뒤·뒤→앞 둘 다)", selectInput("bidirectional", !!b.bidirectional, [[false, "끔"], [true, "켬"]])) +
+      field("Return sequences (줄 그대로 내보내기: 뒤에 순환·어텐션·Conv를 쌓을 때)", selectInput("return_sequences", !!b.return_sequences, [[false, "끔 (마지막 값만)"], [true, "켬"]]));
+    if (FIELDS[b.type]) {
+      const d = TYPES[b.type] ? TYPES[b.type].make() : {};
+      f = FIELDS[b.type].map(([kind, k, lab, a1, a2]) => field(lab, kind === "num" ? numberInput(k, b[k] ?? d[k], a1, a2) : selectInput(k, b[k] ?? d[k], a1))).join("");
+    }
+    if (TWO_INPUT.includes(b.type)) f += `<div class="fld"><span>들어오는 선 (첫째 = 질문, 둘째 = 참고)</span><ol class="ins">${insOf(b).map((x, i) => {
+      const src = findNode(graph, x);
+      return `<li>${esc(src ? label(src.node, summary) : x)} <span class="muted">${esc(fmtShape(shapes[x]))}</span> <button data-a="in-del" data-i="${i}" title="이 선 지우기">×</button></li>`;
+    }).join("")}</ol></div>`;
     if (b.type === "repeat") f = field("Repeat count", numberInput("times", b.times, 1, 10));
     if (isMerge(b)) {
-      f = field("합치는 방법", selectInput("type", b.type, [["add", "Add (+): 더하기, 모양이 같아야 함"], ["concat", "Concat: 채널로 이어 붙이기"]])) +
+      f = field("합치는 방법", selectInput("type", b.type, [["add", "Add (+): 더하기, 모양이 같아야 함"], ["concat", "Concat: 채널로 이어 붙이기"],
+        ["multiply", "Multiply (×): 원소마다 곱하기"], ["average", "Average: 원소마다 평균"], ["maximum", "Maximum: 원소마다 큰 값"]])) +
         `<div class="fld"><span>들어오는 선 (Concat은 이 순서로 붙임)</span><ol class="ins">${insOf(b).map((x, i) => {
           const src = findNode(graph, x);
           return `<li>${esc(src ? label(src.node, summary) : x === "in" ? "묶음 입력" : x)} <span class="muted">${esc(fmtShape(shapes[x]))}</span> <button data-a="in-del" data-i="${i}" title="이 선 지우기">×</button></li>`;
@@ -1033,20 +1329,62 @@ function mount(els, opts) {
       `<label>세로 <input type="number" data-size="h" value="${esc(Math.round(boxes[0].h))}" min="${SIZE_MIN[1]}" max="${SIZE_MAX[1]}" step="5"></label>` +
       `<button data-a="size-reset">기본 크기로</button></div><span class="muted">고른 상자 오른쪽 아래 네모를 끌어도 됨</span></details>`;
   }
+  let openCat = "conv", search = "";
+  function packNote(p, kind) {
+    if (kind === "image" && !p.ranks.includes(3)) return "줄(시계열) 모양에 씀 — 그림은 ToSequence 뒤에";
+    if (kind !== "image" && !p.ranks.includes(2) && !p.ranks.includes(1)) return "그림 모양에 씀";
+    return "";
+  }
+  function itemHtml(id, cat, name, desc, note) {
+    return `<div class="pitem p-${cat}${note ? " off" : ""}" data-t="${esc(id)}" title="끌어서 판 위에 놓기 (선 근처면 그 선 사이로)">` +
+      `<b>${esc(name)}</b><span>${esc(desc)}</span>${note ? `<em class="fit">${esc(note)}</em>` : ""}</div>`;
+  }
   function drawPalette() {
-    const kind = input(), all = paletteTypes(kind);
+    if (!els.palette.querySelector(".psearch")) {
+      els.palette.innerHTML = `<input class="psearch" type="search" placeholder="블록 찾기 (예: attention, LSTM, norm)" aria-label="블록 찾기"><div class="plist"></div>`;
+      const box = els.palette.querySelector(".psearch");
+      box.addEventListener("input", () => { search = box.value.trim().toLowerCase(); drawPalette(); });
+      box.addEventListener("mousedown", (e) => e.stopPropagation());
+    }
+    const kind = input(), all = paletteTypes(kind), list = els.palette.querySelector(".plist");
+    const items = (cat) => cat === "pack"
+      ? PACKS.map((p) => ["pack:" + p.id, "pack", p.name, p.desc, packNote(p, kind)])
+      : all.filter((id) => PALETTE[id].cat === cat).map((id) => [id, cat, PALETTE[id].name, PALETTE[id].desc, fitNote(makeOf(id).type, kind)]);
     let h = "";
-    for (const [cat, name] of CATS) {
-      const items = all.filter((t) => TYPES[t].cat === cat);
-      if (!items.length) continue;
-      h += `<div class="pcat">${name}</div>`;
-      for (const t of items) {
-        const T = TYPES[t], note = fitNote(t, kind);
-        h += `<div class="pitem p-${T.cat}${note ? " off" : ""}" data-t="${t}" title="끌어서 판 위에 놓기 (선 근처면 그 선 사이로)">` +
-          `<b>${esc(T.name)}</b><span>${esc(T.desc)}</span>${note ? `<em class="fit">${esc(note)}</em>` : ""}</div>`;
+    if (search) {
+      const hits = CATS.flatMap(([cat, cname]) => items(cat).filter((it) => (it[2] + " " + it[3] + " " + cname).toLowerCase().includes(search)));
+      h = hits.length ? hits.map((it) => itemHtml(...it)).join("") : `<p class="muted">'${esc(search)}'에 맞는 블록이 없습니다</p>`;
+    } else {
+      for (const [cat, name] of CATS) {
+        const its = items(cat), on = openCat === cat;
+        h += `<button type="button" class="pcat-btn p-${cat}${on ? " on" : ""}" data-cat="${cat}" aria-expanded="${on}"><span>${esc(name)}</span><em>${its.length}</em></button>`;
+        if (on) h += `<div class="pitems">${its.map((it) => itemHtml(...it)).join("")}</div>`;
       }
     }
-    els.palette.innerHTML = h;
+    list.innerHTML = h;
+  }
+  els.palette.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-cat]");
+    if (!b) return;
+    openCat = openCat === b.dataset.cat ? null : b.dataset.cat;
+    drawPalette();
+  });
+  const paletteName = (id) => (id.startsWith("pack:") ? (PACKS.find((p) => "pack:" + p.id === id) || {}).name : PALETTE[id].name);
+  const rankAt = (id) => (id === "input" || id === "in" ? (shapes[id] || []).length || (input() === "image" ? 3 : 2) : (shapes[id] || []).length || 0);
+  function dropPack(id, edge) {                      // 묶음 넣기: 선 위면 그 사이, 아니면 Output 바로 앞
+    let from, to;
+    if (edge) { from = edge.from; to = edge.to; } else {
+      const out = outputNode();
+      if (!out || !insOf(out).length) return hint("묶음은 선 위에 놓으세요");
+      from = insOf(out)[0]; to = out.id;
+    }
+    const sh = from === "input" ? (opts.getSummary() ? (opts.getSummary().image ? [1].concat(opts.getSummary().image) : [1, opts.getSummary().length]) : null) : shapes[from];
+    const pk = PACKS.find((p) => "pack:" + p.id === id), rank = sh ? sh.length : (input() === "image" ? 3 : 2);
+    let pack;
+    try { pack = makePack(pk.id, sh ? sh[0] : 16, rank, sh && sh.length === 2 ? sh[1] : 0); } catch (err) { return hint(String(err.message || err)); }
+    const r = insertPack(graph, from, to, pack);
+    change(r.graph, r.ids);
+    hint(`'${pk.name}'을(를) 넣었습니다${edge ? "" : " (Output 바로 앞)"}. 상자를 눌러 설정을 바꿀 수 있습니다`);
   }
 
   // ---------------- 편집 동작
@@ -1196,7 +1534,8 @@ function mount(els, opts) {
       const p = overCanvas(e) && L ? svgPoint(e) : null;
       const edge = p ? nearestEdge(L.edges, p) : null;
       if (edge !== dropEdge) showDrop(edge);
-      setGhost(`${TYPES[drag.type].name} — ${!p ? "판 위에 놓으세요" : edge ? "이 선 사이에 넣기" : "여기에 두기 (선은 나중에 이음)"}`, e);
+      const pk = drag.type.startsWith("pack:");
+      setGhost(`${paletteName(drag.type)} — ${!p ? "판 위에 놓으세요" : edge ? "이 선 사이에 넣기" : pk ? "Output 바로 앞에 넣기" : "여기에 두기 (선은 나중에 이음)"}`, e);
       return;
     }
     if (drag && drag.kind === "row") {                         // 줄 옮기기: 놓기 전까지는 보기만 (되돌리기 기록은 놓을 때 한 번)
@@ -1264,10 +1603,13 @@ function mount(els, opts) {
       }
       const p = overCanvas(e) ? svgPoint(e) : null;
       if (!p) return;
-      const node = forInput(TYPES[d.type].make(), input()), nid = newId(graph);
+      if (d.type.startsWith("pack:")) return dropPack(d.type, edge);
+      const node = forInput(makeOf(d.type), input(), edge ? rankAt(edge.from) : 0), nid = newId(graph);
       if (edge) {
         change(insertOnEdge(graph, edge.from, edge.to, Object.assign({ id: nid }, node)), [nid]);
         if (isMerge(node)) hint("합치기 상자는 입력이 2개 이상이어야 합니다: 다른 상자의 동그라미를 끌어 이 상자에 놓으세요");
+        else if (maxIns(node) === 2) hint("입력이 둘인 상자입니다: 참고할 다른 상자의 동그라미를 끌어 이 상자에 놓으세요 (첫째 = 질문, 둘째 = 참고)");
+        else if (/^rand_/.test(node.type)) hint("증강 블록은 Input 바로 아래에 두세요 (학습 때만 그림·신호를 바꿈)");
       } else {
         const [w, h] = sizeOfDefault(node, flowDir), o = L.nodes.find((n) => !n.anc.length) || { ox: 0, oy: 0 };
         change(addFree(graph, Object.assign({ id: nid }, node), [p[0] - w / 2 - o.ox, p[1] - h / 2 - o.oy]), [nid]);
@@ -1321,7 +1663,7 @@ function mount(els, opts) {
       }
       if (!p || !overCanvas(e) || Math.hypot(p[0] - w.x0, p[1] - w.y0) < 12) return;
       layerMenu(e, (t) => {                          // 빈 곳에 놓음: 층을 골라 바로 이어서 만듦
-        const node = forInput(TYPES[t].make(), input()), [nw, nh] = sizeOfDefault(node, flowDir);
+        const node = forInput(makeOf(t), input(), out ? rankAt(w.from) : 0), [nw, nh] = sizeOfDefault(node, flowDir);
         const ref = L.nodes.find((n) => n.id === (out ? w.from : w.to)) || { ox: 0, oy: 0 };
         const pos = [p[0] - nw / 2 - ref.ox, p[1] - nh / 2 - ref.oy];
         const r = out ? addConnected(graph, w.from, node, pos) : addFeeding(graph, w.to, node, pos);
@@ -1383,10 +1725,10 @@ function mount(els, opts) {
   function layerMenu(e, pick) {
     const kind = input(), all = paletteTypes(kind), items = [];
     for (const [cat, name] of CATS) {
-      const ts = all.filter((t) => TYPES[t].cat === cat);
+      const ts = all.filter((t) => PALETTE[t].cat === cat);
       if (!ts.length) continue;
       items.push({ title: name });
-      for (const t of ts) items.push({ label: TYPES[t].name + (fitNote(t, kind) ? " · 잘 안 맞음" : ""), fn: () => pick(t) });
+      for (const t of ts) items.push({ label: PALETTE[t].name + (fitNote(makeOf(t).type, kind) ? " · 잘 안 맞음" : ""), fn: () => pick(t) });
     }
     openMenu(e, items, "layers");
   }
@@ -1424,7 +1766,7 @@ function mount(els, opts) {
         { title: "선" },
         { label: "이 선에 층 넣기…", fn: () => layerMenu(e, (t) => {
           const nid = newId(graph);
-          change(insertOnEdge(graph, from, to, Object.assign({ id: nid }, forInput(TYPES[t].make(), input()))), [nid]);
+          change(insertOnEdge(graph, from, to, Object.assign({ id: nid }, forInput(makeOf(t), input(), rankAt(from)))), [nid]);
         }) },
         { label: "선 지우기", fn: () => change(removeEdge(graph, from, to), []), danger: true },
       ]);
@@ -1433,7 +1775,7 @@ function mount(els, opts) {
     openMenu(e, [
       { title: "판" },
       { label: "여기에 층 추가…", fn: () => layerMenu(e, (t) => {
-        const node = forInput(TYPES[t].make(), input()), [nw, nh] = sizeOfDefault(node, flowDir), o = L.nodes.find((n) => !n.anc.length) || { ox: 0, oy: 0 };
+        const node = forInput(makeOf(t), input()), [nw, nh] = sizeOfDefault(node, flowDir), o = L.nodes.find((n) => !n.anc.length) || { ox: 0, oy: 0 };
         const nid = newId(graph);
         change(addFree(graph, Object.assign({ id: nid }, node), [p[0] - nw / 2 - o.ox, p[1] - nh / 2 - o.oy]), [nid]);
       }) },
@@ -1450,7 +1792,7 @@ function mount(els, opts) {
     const k = e.target.dataset.k, ids = selIds();
     if (!k || ids.length !== 1) return;
     const raw = e.target.value;
-    const v = raw !== "" && !isNaN(Number(raw)) ? Number(raw) : raw;   // same·valid·relu 같은 글자 값은 그대로
+    const v = raw === "true" ? true : raw === "false" ? false : raw !== "" && !isNaN(Number(raw)) ? Number(raw) : raw;   // same·relu 같은 글자 값은 그대로
     change(setParam(graph, ids[0], k, v));
   });
   els.settings.addEventListener("click", (e) => {
@@ -1494,7 +1836,7 @@ function mount(els, opts) {
   return { set, get, decorate, select, redraw: draw, redrawPalette: drawPalette, undo, redo, autoLayout, setEdgeStyle, setFlowDir, setWrap };
 }
 
-const API = { mount, fmtShape, forInput, labelLines, setBreak, setShift, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, fitNote, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,
+const API = { PALETTE, PACKS, makePack, insertPack, RANK, mount, fmtShape, forInput, labelLines, setBreak, setShift, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, fitNote, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,
   singleEntryExit, wrapResidual, wrapRepeat, unwrap, splitBranch, copyNodes, pasteAfter, setParam, newId, findNode, history, clone };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.StudioGraph = API;

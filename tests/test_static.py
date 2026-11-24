@@ -28,9 +28,13 @@ def test_no_external_urls():
 
 
 def test_all_layer_types_in_palette():
+    """검사가 아는 층은 모두 왼쪽 목록에 (Input·Repeat·옛 블록 묶음 빼고)."""
+    from dlstudio.graph import LAYER_TYPES
     js = (STATIC / "graph.js").read_text(encoding="utf-8")
-    for t in ("conv", "pool", "global_avg", "bn", "act", "dense", "lstm", "gru", "add", "concat", "output"):
-        assert f'make: () => ({{ type: "{t}"' in js, t
+    for t in LAYER_TYPES:
+        if t in ("input", "repeat", "branch", "residual"):
+            continue
+        assert f'type: "{t}"' in js, t
 
 
 def test_model_lead_explains_graph_editing():

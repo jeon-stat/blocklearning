@@ -716,3 +716,25 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 #data-preview .det-legend { flex-basis: 100%; }
 .preview.thumbs.det { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .preview.thumbs.det .det-img { width: 100%; height: auto; max-width: 220px; }
+
+/* 블록 목록: 범주를 누르면 펼침 · 위에 찾기 */
+.palette { gap: 6px; }
+.palette .psearch { width: 100%; min-height: 36px; padding: 6px 10px; border-radius: var(--r-sm); border-color: var(--line-2); position: sticky; top: 0; z-index: 1; }
+.palette .psearch:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.palette .plist { display: flex; flex-direction: column; gap: 4px; }
+.pcat-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left;
+  padding: 8px 10px; border: 1px solid var(--line); border-left: 4px solid var(--cc, var(--line-2)); border-radius: var(--r-sm);
+  background: #fff; font-size: 13.5px; font-weight: 600; color: var(--text-2); box-shadow: var(--shadow-xs); }
+.pcat-btn:hover { border-color: var(--line-2); border-left-color: var(--cc, var(--line-2)); background: #fafbff; }
+.pcat-btn em { font-style: normal; font-weight: 500; font-size: 11.5px; color: var(--muted); background: #f2f4f7; border-radius: 999px; padding: 1px 8px; }
+.pcat-btn::after { content: "▸"; color: var(--muted-2); font-size: 11px; margin-left: 2px; transition: transform .15s; }
+.pcat-btn em { margin-left: auto; }
+.pcat-btn.on { background: var(--accent-bg); color: var(--accent-ink); border-color: #c7d2fe; border-left-color: var(--cc, var(--accent)); }
+.pcat-btn.on::after { transform: rotate(90deg); color: var(--accent); }
+.pitems { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 8px 8px; border-left: 2px solid #e0e7ff; margin-left: 6px; }
+.p-dense { --cc: #888780; } .p-conv { --cc: #1d9e75; } .p-pool { --cc: #15a37a; } .p-up { --cc: #0e8a6a; } .p-rnn { --cc: #d85a30; }
+.p-attn { --cc: #2563eb; } .p-tf { --cc: #4f46e5; } .p-norm { --cc: #d97706; } .p-act { --cc: #7f77dd; } .p-reg { --cc: #6b7280; }
+.p-merge { --cc: var(--accent); } .p-shape { --cc: #94a3b8; } .p-prep { --cc: #db2777; } .p-aug { --cc: #e11d48; } .p-pack { --cc: #0f172a; }
+.pitem[class*="p-"] { border-left-color: var(--cc); }
+.flow-svg .c-blue { fill: #e8f0fe; stroke: #2563eb; } .flow-svg .c-amber { fill: #fef3e2; stroke: #d97706; }
+.flow-svg .c-pink { fill: #fdeef4; stroke: #db2777; }
