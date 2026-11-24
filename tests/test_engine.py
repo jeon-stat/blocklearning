@@ -111,11 +111,15 @@ def test_engine_trains_classification_and_weights_run_in_torch(tmp_path):
     r = out["result"]
     assert [p["epoch"] for p in out["progress"]] == list(range(1, 7)) and r["epochs_done"] == 6
     assert r["metric_name"] == "accuracy" and r["test_metric"] > 0.7 and len(r["confusion"]) == 2
+    assert 0.5 < r["train_metric"] <= 1
     net = build_graph_model(g, d.length, d.n_out).eval()
     net.load_state_dict({k: torch.tensor(v["data"]).reshape(v["shape"]).to(net.state_dict()[k].dtype) for k, v in out["state"].items()})
     with torch.no_grad():
         pred = net(torch.as_tensor(to_model_input(net.kind, d.X_test), dtype=torch.float32)).argmax(1).numpy()
     assert abs(float(np.mean(pred == d.y_test)) - r["test_metric"]) < 1e-6
+    with torch.no_grad():
+        pred_tr = net(torch.as_tensor(to_model_input(net.kind, d.X_train), dtype=torch.float32)).argmax(1).numpy()
+    assert abs(float(np.mean(pred_tr == d.y_train)) - r["train_metric"]) < 1e-6, (float(np.mean(pred_tr == d.y_train)), r["train_metric"])
 
 
 def test_engine_trains_regression_in_original_units(tmp_path):

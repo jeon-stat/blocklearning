@@ -226,6 +226,10 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task),
               "metric_name": "accuracy" if data.task == "classification" else "r2", "warnings": [],
               "confusion": None, "recall": None}
+    with torch.no_grad():                                   # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+        Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
+        out_tr = np.concatenate([net(Xtr_t[i:i + 1024]).double().numpy() for i in range(0, len(Xtr_t), 1024)])
+    result["train_metric"] = metric(out_tr, data.y_train, data.task)
     if data.task == "classification":
         result["confusion"], result["recall"] = confusion(out.argmax(1), data.y_test, len(data.classes))
     else:

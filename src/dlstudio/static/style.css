@@ -33,6 +33,17 @@ h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
 .step.done .n { background: var(--ok); color: #fff; }
 .step.stale .n { background: var(--warn); color: #fff; }
 .files { display: flex; gap: 6px; }
+.quick { display: flex; align-items: center; gap: 14px; justify-content: space-between; padding: 12px 14px; margin: 0 0 16px;
+  border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-bg); }
+.quick button { white-space: nowrap; }
+.guard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; margin: 0 0 12px; border-radius: 8px;
+  background: var(--warn-bg); color: var(--warn); }
+.guard span { flex: 1 1 280px; }
+.verdict { grid-column: 1 / -1; margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
+.verdict div { color: var(--text); margin-top: 4px; }
+.verdict.good { background: var(--ok-bg); color: var(--ok); }
+.verdict.warn { background: var(--warn-bg); color: var(--warn); }
+.verdict.bad { background: var(--bad-bg); color: var(--bad); }
 
 .message { margin: 12px 20px 0; padding: 10px 40px 10px 14px; border-radius: 8px; background: var(--bad-bg); color: var(--bad); position: relative; }
 .message.ok { background: var(--ok-bg); color: var(--ok); }

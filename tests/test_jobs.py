@@ -33,6 +33,7 @@ def test_train_job_reports_and_finishes():
     assert [p["epoch"] for p in st["progress"]] == [1, 2, 3, 4, 5]
     r = st["result"]
     assert r["epochs_done"] == 5 and r["metric_name"] == "accuracy" and r["test_metric"] > 0.6
+    assert 0.5 < r["train_metric"] <= 1
     assert all(p.device.type == "cpu" for p in r["model"].parameters())
     assert set(build_graph_model(from_blocks(CNN), 140, 2).block_modules) <= set(r["model"].block_modules)   # 학습 뒤에도 블록 대응표
 

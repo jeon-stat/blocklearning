@@ -356,7 +356,11 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     }
     const out = net.predict(Xte);
     const r = { epochs_done: done, test_metric: metric(out, d.y_test, d.task, d.n_out),
-      metric_name: reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null };
+      metric_name: reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
+      train_metric: metric(net.predict(Xtr), d.y_train, d.task, d.n_out) };   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+    if (!consistent(net, Xte, out, d.n_out))                 // 브라우저 GPU(WebGL)가 드물게 틀린 값을 낼 때가 있음
+      r.warnings.push({ message: "이 브라우저의 GPU 계산이 불안정해 결과 숫자가 틀릴 수 있습니다",
+        hint: "페이지를 새로 고친 뒤 다시 학습하세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
     if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);
     else [r.confusion, r.recall] = confusion(out, d.y_test, d.n_out);
     return { net, result: r };
@@ -364,6 +368,14 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     [Xtr, Xte, ytr].forEach((t) => t.dispose());
     opt.dispose();
   }
+}
+
+// 같은 샘플을 다른 묶음 크기로 다시 계산해 같은지 (GPU 계산이 꼬이면 묶음 크기에 따라 값이 달라짐)
+function consistent(net, X, out, nOut) {
+  const n = Math.min(64, X.shape[0]);
+  const again = net.predict(X.slice(0, n), 7);
+  for (let i = 0; i < n * nOut; i++) if (Math.abs(again[i] - out[i]) > 1e-3 * (1 + Math.abs(out[i]))) return false;
+  return true;
 }
 
 // 샘플 따라가기 값: (C, L)이 200점보다 길면 고르게 200점, 소수 다섯째 자리 (analysis._thin과 같음)

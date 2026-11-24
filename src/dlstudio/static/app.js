@@ -118,7 +118,40 @@ function markSteps() {
   mark("data", st.summary);
   mark("model", st.checked && st.checked.ok);
   mark("train", st.trained, st.trained && st.trainedJson !== st.graphJson);
+  renderGuard();
 }
+// ④ 학습: 데이터가 없거나 모델에 문제가 있으면 학습 단추를 막고, 무엇을 하면 되는지 바로 보여 줌
+function trainBlock() {
+  if (!st.summary) return { why: "데이터가 아직 없습니다.", fix: [["data", "② 데이터 넣으러 가기"]] };
+  const c = st.checked;
+  if (c && !c.ok && st.graphJson === sig(st.graph)) {
+    const first = c.issues[0];
+    return { why: `모델에 문제가 ${c.issues.length}개 있어 학습할 수 없습니다: ${first ? first.message : ""}`,
+      fix: [["model", "③ 모델 고치러 가기"], ["tpl", "추천 모델로 되돌리기"]] };
+  }
+  return null;
+}
+function renderGuard() {
+  const b = trainBlock();
+  $("train-guard").hidden = !b;
+  if (b) $("train-guard").innerHTML = `<span>⚠ ${esc(b.why)}</span>` + b.fix.map(([k, t]) => `<button data-fix="${k}">${esc(t)}</button>`).join("");
+  $("btn-train").disabled = !!b || !!st.training;
+}
+$("train-guard").onclick = (e) => {
+  const k = (e.target.closest("[data-fix]") || {}).dataset;
+  if (!k || !k.fix) return;
+  if (k.fix === "data") return go("data");
+  if (k.fix === "model") {
+    go("model");
+    const first = st.checked && st.checked.issues.find((i) => i.node);
+    if (first && st.ed) st.ed.select(first.node);
+    return;
+  }
+  const t = st.tpl ? st.tpl.graph : st.defaults.length ? st.defaults[0].graph : null;
+  if (!t) return go("model");
+  setGraph(t);
+  showMessage("추천 모델로 되돌렸습니다", "③ 모델에서 Ctrl+Z(되돌리기)로 고치던 모델을 되살릴 수 있습니다", "", true);
+};
 document.querySelectorAll(".step").forEach((b) => (b.onclick = () => go(b.dataset.step)));
 
 // ------------------------------------------------------------ 과제 목록
@@ -175,6 +208,19 @@ $("subtasks").onclick = (e) => {
 $("templates").onclick = (e) => {
   const b = e.target.closest("[data-t]");
   if (b) chooseTemplate(st.fam, st.sub, st.sub.templates.find((x) => x.id === b.dataset.t));
+};
+$("btn-quick").onclick = async () => {                   // 예시 과제·데이터·추천 모델을 한 번에 → ④ 학습
+  const fam = st.catalog.find((f) => f.subtasks.some((s) => s.available && (s.example_data || []).some((e) => e[0] === "ecg")));
+  const sub = fam && fam.subtasks.find((s) => s.available && (s.example_data || []).some((e) => e[0] === "ecg"));
+  if (!sub) return showMessage("예시를 찾지 못함", "아래에서 과제를 직접 고르세요");
+  $("btn-quick").disabled = true;
+  try {
+    await chooseTemplate(fam, sub, sub.templates[0]);
+    if (!(await loadData(Object.assign(dataOptions(), { example: "ecg" })))) return;
+    go("model");                                            // 모델 판을 한 번 그려 두고 (검사도 시작)
+    go("train");
+    showMessage("예시 데이터와 추천 모델을 준비했습니다", "[학습 시작]을 누르세요. 데이터는 ②, 모델은 ③에서 볼 수 있습니다", "", true);
+  } finally { $("btn-quick").disabled = false; }
 };
 async function chooseTemplate(fam, sub, tpl) {
   try { await api("/api/task/select", { family: fam.id, subtask: sub.id, template: tpl.id }); } catch (e) { return showError(e); }
@@ -499,8 +545,11 @@ $("btn-train").onclick = async () => {
   if (!st.summary) return showMessage("데이터가 없음", "② 데이터 단계에서 먼저 불러오세요");
   ensureEditor();
   const graph = st.graph;
+  const blocked = trainBlock();
+  if (blocked) return showMessage(blocked.why, blocked.fix[0][1]);
   hideMessage();                                              // 지난 오류 알림은 지움 (이번 결과와 헷갈리지 않게)
   $("train-status").textContent = "학습 준비 중…";
+  st.training = true;
   $("btn-train").disabled = true;                              // 두 번 눌러 두 학습이 돌지 않게
   try {
     const { id } = await api("/api/train", { graph, settings: trainSettings() });
@@ -527,7 +576,7 @@ $("btn-train").onclick = async () => {
     } else if (j.state === "cancelled") $("train-status").textContent = "멈춤";
     else { $("train-status").textContent = "실패"; showMessage("학습 실패", "학습률을 낮추거나 블록을 바꿔 보세요", j.error); }
   } catch (e) { $("train-status").textContent = ""; showError(e); }
-  $("btn-train").disabled = false;
+  st.training = false;
   markSteps();
 };
 $("btn-train-stop").onclick = () => st.trainJob && api(`/api/jobs/${st.trainJob}/cancel`, {}).catch(showError);
@@ -535,12 +584,41 @@ function renderTrainResult(r) {
   const isAcc = r.metric_name === "accuracy";
   const f = (v) => (v === null ? "-" : isAcc ? pct(v) : v.toFixed(3));
   const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(4)));
-  const rows = [["Epochs", r.epochs_done], [`시험 ${isAcc ? "정확도" : "R²"}`, f(r.test_metric)]];
-  if (!isAcc) rows.push(["시험 평균 오차 MAE", m(r.mae)]);
-  $("train-result").innerHTML = kv(rows);
+  const has = (v) => v !== null && v !== undefined;
+  const base = isAcc ? baselineOf(r) : null;
+  const rows = [["Epochs", r.epochs_done], [`시험 ${isAcc ? "정확도" : "R²"}`, `<b>${f(r.test_metric)}</b>`]];
+  if (has(r.train_metric)) rows.push([`학습 ${isAcc ? "정확도" : "R²"}`, f(r.train_metric)]);
+  if (has(base)) rows.push(["찍기 기준", `${pct(base)} <span class="muted">(가장 많은 클래스만 답할 때)</span>`]);
+  if (!isAcc) rows.push(["시험 평균 오차 MAE", m(r.mae)], ["찍기 기준", `R² 0 <span class="muted">(늘 평균값만 답할 때)</span>`]);
+  const v = verdict(r, base);
+  $("train-result").innerHTML = kv(rows) + (v ? `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>` : "");
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", r.confusion, r.recall, "시험 데이터");
   renderScatter("train-scatter", r.scatter, r.mae, "시험 데이터");
+}
+function baselineOf(r) {                                // 분류: 시험 데이터에서 가장 많은 클래스만 답할 때 정확도
+  if (!r.confusion) return null;
+  const rows = r.confusion.map((row) => row.reduce((a, b) => a + b, 0)), n = rows.reduce((a, b) => a + b, 0);
+  return n ? Math.max(...rows) / n : null;
+}
+function verdict(r, base) {                              // 결과를 쉬운 말로 + 다음에 해 볼 일
+  const t = r.test_metric, tr = r.train_metric, acc = r.metric_name === "accuracy";
+  if (t === null || t === undefined) return null;
+  const show = (v) => (acc ? pct(v) : v.toFixed(2));
+  const gap = tr === null || tr === undefined ? 0 : tr - t;
+  if (acc ? base !== null && t <= base + 0.02 : t < 0.1)
+    return ["bad", acc ? `찍기 기준(${pct(base)})과 비슷합니다. 모델이 아직 거의 배우지 못했습니다.`
+      : `R²가 ${t.toFixed(2)}로, 늘 평균값만 답하는 것(R² 0)과 비슷하거나 못합니다.`,
+      "Epochs를 늘리거나, [더 보기]에서 Learning rate를 바꿔 보거나(0.01 또는 0.0001), 다른 대표 모델을 써 보세요."];
+  if (gap > (acc ? 0.1 : 0.2))
+    return ["warn", `학습 데이터는 ${show(tr)}인데 시험 데이터는 ${show(t)}입니다. 학습 데이터를 외운 것일 수 있습니다 (과적합).`,
+      "③ 모델에 Dropout 블록을 넣거나, 층·채널을 줄이거나, Epochs를 줄이거나, 데이터를 더 모아 보세요."];
+  if (acc ? t >= 0.9 : t >= 0.8)
+    return ["good", acc ? `학습에 쓰지 않은 시험 데이터의 ${pct(t)}를 맞혔습니다.` : `시험 데이터에서 R² ${t.toFixed(2)}로 잘 맞힙니다 (1이면 완벽).`,
+      `${acc ? "혼동 행렬에서 어떤 클래스를 헷갈리는지" : "산점도에서 어디가 크게 틀리는지"} 보고, 위 [내보내기]로 학습한 모델을 받아 쓸 수 있습니다.`];
+  return ["warn", acc ? `시험 데이터의 ${pct(t)}를 맞혔습니다 (찍기 기준 ${pct(base)}). 배우긴 했지만 더 좋아질 수 있습니다.`
+    : `시험 데이터에서 R² ${t.toFixed(2)}입니다 (1이면 완벽, 0이면 평균값만 답하는 수준).`,
+    "Epochs를 늘리거나, 다른 대표 모델이나 블록을 바꿔 시험 성적이 오르는지 보세요."];
 }
 async function showSample() {
   const i = Number($("sample-index").value) || 0;
