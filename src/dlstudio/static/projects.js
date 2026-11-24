@@ -25,7 +25,7 @@ function autoName() {                                    // 데이터와 과제�
     let data = "";
     if (st.dataSrc && st.examples) {
       const e = st.examples.find((x) => x[0] === st.dataSrc);
-      data = e ? e[1].replace(/\s*\([^)]*\)\s*$/, "") : st.dataSrc;
+      data = e ? e[1].split(" · ")[0].replace(/\s*\([^)]*\)\s*$/, "") : st.dataSrc;   // "이름 (분야) · 과제" → 이름
     } else {
       const v = ["csv-path", "folder-path", "series-path"].map((id) => ($(id) || {}).value || "").find((x) => x);
       data = (v || "").replace(/\s*\(파일 \d+개\)$/, "").replace(/\.(csv|tsv|txt)$/i, "");
