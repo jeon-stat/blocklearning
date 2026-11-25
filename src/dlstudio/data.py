@@ -843,6 +843,33 @@ def example_files(kind: str) -> list:
     return [EXAMPLES[kind][0] + ".npz"] if kind in EXAMPLES else []
 
 
+def example_new(d) -> dict:
+    """예시 데이터의 예측 예시용 새 데이터 (학습·시험에 쓰지 않은 10개, npz의 *_new): {names, X (원래 값), labels, truth}.
+    labels: 정답 이름·값 (글자), truth: 예측은 다음 값들 · 탐지는 정답 상자."""
+    kind = ALIASES.get((d.source or {}).get("example") or "", (d.source or {}).get("example") or "")
+    if kind not in EXAMPLE_KINDS:
+        raise DataError([Issue(None, None, "예시 데이터로 학습한 모델이 아님", "내 데이터는 CSV·폴더로 예측하세요")])
+    if kind in FC_EXAMPLES:
+        from dlstudio.forecast import windows
+        H = int(d.extra["horizon"])
+        X, Y = windows(_npz(FC_EXAMPLES[kind][0])["series_new"], int(d.length), H, H)
+        if not len(X):
+            raise DataError([Issue(None, None, f"예시 새 데이터가 입력 길이 {d.length}보다 짧음", "② 데이터에서 입력 길이를 줄이세요")])
+        return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None, "truth": Y}
+    if kind in DET_EXAMPLES:
+        z = _npz(DET_EXAMPLES[kind][0])
+        X, boxes, _ = _det_arrays({"X": z["X_new"], "boxes": z["boxes_new"], "names": z["names"]})
+        return {"names": [f"새 그림 {i + 1}" for i in range(len(X))], "X": X, "labels": None, "truth": boxes}
+    base = AE_EXAMPLES.get(kind, kind)
+    f, make, names, feats, image = EXAMPLES[base]
+    z = _npz(f)
+    zn = {k[:-4]: v for k, v in z.items() if k.endswith("_new")}
+    zn.update({k: v for k, v in z.items() if not k.endswith("_new") and k not in zn and (z[k].ndim == 0 or len(z[k]) != len(z["X"]))})
+    X, y = make(zn)
+    labels = [str(names[int(v)]) for v in y] if names else [f"{float(v):.6g}" for v in y]
+    return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": labels, "truth": None}
+
+
 def _det_arrays(z: dict) -> tuple:
     """탐지 npz: X (그림, H, W) 0–255, boxes (상자, 6) = [그림 번호, 클래스, x, y, w, h] (0–1 비율)."""
     X = _float(z["X"]) / 255.0

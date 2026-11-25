@@ -1,3 +1,4 @@
 쇼트 블라스팅한 강판 표면 (양호·불량) — SteelBlastQC Dataset, DataverseNL doi:10.34894/EKZNN0, CC BY 4.0
 Ruzavina I, et al. SteelBlastQC: Shot-blasted Steel Surface Dataset with Interpretable Detection of Surface Defects. IJCNN 2025 (arXiv:2504.20510).
 바꾼 내용: 공개된 512×512 컬러 1,654장을 흑백 64×64로 줄임. 정답: good → 양호, not-good(용접선·긁힘·부식·변색) → 불량.
+예측 예시용: 샘플 10개는 학습·시험에서 빼 따로 둠 (<이름>_new). ⑤ 예측의 [예시 새 데이터].

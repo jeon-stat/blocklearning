@@ -29,6 +29,11 @@ def _err(msg: str, hint: str):
 def read_new(d, b: dict) -> dict:
     """요청 → {"names": [...], "X": 정규화한 값 (n, 특징 수) float32, "labels": 정답 문자열 목록 또는 None}."""
     n_feat = int(d.X_train.shape[1])
+    if b.get("example_new"):                                # 예시 데이터의 학습·시험에 쓰지 않은 10개
+        from dlstudio.data import example_new
+        e = example_new(d)
+        Xn = ((np.asarray(e["X"], dtype=np.float64) - d.mean) / d.std).astype(np.float32)
+        return {"names": e["names"], "X": Xn, "labels": e["labels"], "truth": e["truth"]}
     if d.task == "forecast":
         if not b.get("path"):
             raise _err("시계열 예측은 긴 시계열 CSV로 예측함", "한 행 = 한 시점인 CSV를 고르세요 (학습 때와 같은 값 열)")
@@ -163,7 +168,7 @@ def _read_images(d, folder: str) -> tuple:
 SHOW_PICS = 24             # 탐지: 화면에 그림으로 보이는 수
 
 
-def _table_det(d, names: list, out: np.ndarray, X) -> dict:
+def _table_det(d, names: list, out: np.ndarray, X, truth=None) -> dict:
     """탐지: 그림마다 찾은 상자 (점수 0.5 이상). CSV는 상자마다 한 줄, 위치는 그림 크기에 대한 0–1 비율 (왼쪽 위 기준)."""
     from dlstudio.detect import SHOW_SCORE, decode
     G, K = d.n_out.grid, d.n_out.n_cls
@@ -181,13 +186,31 @@ def _table_det(d, names: list, out: np.ndarray, X) -> dict:
             w.writerow([nm, "", "", "", "", "", ""])
         if i < SHOW_ROWS:
             rows.append({"name": nm, "boxes": [[int(b[0])] + [round(float(v), 4) for v in b[1:]] for b in bs]})
-    pics = [] if X is None else [{"name": names[i], "values": np.round(d.raw(np.asarray(X[i], dtype=np.float64)), 3).tolist()}
-                                 for i in range(min(SHOW_PICS, len(names)))]
+    pics = [] if X is None else [{"name": names[i], "values": np.round(d.raw(np.asarray(X[i], dtype=np.float64)), 3).tolist(),
+                                  "truth": truth[i] if truth is not None else None} for i in range(min(SHOW_PICS, len(names)))]
     n_boxes = sum(counts.values())
     summary = {"n": len(names), "task": "detection", "counts": counts, "n_boxes": n_boxes, "score": SHOW_SCORE,
                "no_box": sum(1 for r in rows if not r["boxes"])}
     return {"summary": summary, "rows": rows, "shown": min(len(names), SHOW_ROWS), "csv": "\ufeff" + buf.getvalue(),
             "has_label": False, "pics": pics}
+
+
+def _table_fc_many(d, names, out: np.ndarray, X, truth) -> dict:
+    """예측 (예시 새 데이터): 창마다 다음 H개와 실제 값, 평균 오차."""
+    truth = np.asarray(truth, dtype=np.float64)
+    hist = d.raw(np.asarray(X, dtype=np.float64))
+    err = np.abs(out - truth)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["창", "몇 칸 뒤", "예측", "실제"])
+    for i, nm in enumerate(names):
+        for k in range(out.shape[1]):
+            w.writerow([nm, k + 1, f"{out[i, k]:.6g}", f"{truth[i, k]:.6g}"])
+    rows = [{"name": nm, "mae": float(err[i].mean()), "history": np.round(hist[i], 5).tolist(), "pred": np.round(out[i], 5).tolist(),
+             "y": np.round(truth[i], 5).tolist()} for i, nm in enumerate(names)]
+    summary = {"n": len(names), "task": "forecast", "many": True, "column": d.extra.get("column"), "mae": float(err.mean()),
+               "horizon": int(out.shape[1])}
+    return {"summary": summary, "rows": rows, "shown": len(rows), "csv": "﻿" + buf.getvalue(), "has_label": True}
 
 
 def _table_fc(d, out: np.ndarray, X) -> dict:
@@ -233,14 +256,14 @@ def _table_ae(d, names: list, out: np.ndarray, labels, X, results) -> dict:
             "has_label": labels is not None}
 
 
-def table(d, names: list, out: np.ndarray, labels, X=None, results=None) -> dict:
+def table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=None) -> dict:
     """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌, 이상 탐지는 점수에).
     results: 학습 결과 (이상 탐지의 기준값)."""
     out = np.asarray(out, dtype=np.float64).reshape(len(names), -1)
     if d.task == "detection":
-        return _table_det(d, names, out, X)
+        return _table_det(d, names, out, X, truth)
     if d.task == "forecast":
-        return _table_fc(d, out, X)
+        return _table_fc_many(d, names, out, X, truth) if truth is not None else _table_fc(d, out, X)
     if d.task == "anomaly":
         return _table_ae(d, names, out, labels, X, results)
     cls = d.task == "classification"
@@ -290,11 +313,12 @@ def table(d, names: list, out: np.ndarray, labels, X=None, results=None) -> dict
 def new_data_kinds(d) -> list:
     """이 모델에 넣을 수 있는 새 데이터 종류 (화면이 단추를 고름): series(시계열 폴더) · folder(그림 폴더) · csv · rows(직접)."""
     if d.task == "detection":
-        return ["folder"]
+        return ["example", "folder"] if (d.source or {}).get("example") else ["folder"]
+    ex = ["example"] if (d.source or {}).get("example") else []   # 예시 데이터: 학습·시험에 쓰지 않은 10개
     if d.task == "forecast":
-        return ["csv"]
+        return ex + ["csv"]
     if d.source.get("series_folder"):
-        return ["series", "csv"]
+        return ex + ["series", "csv"]
     if d.image:
-        return ["folder", "csv"]
-    return ["csv", "rows"] if d.X_train.shape[1] <= 40 else ["csv"]
+        return ex + ["folder", "csv"]
+    return ex + (["csv", "rows"] if d.X_train.shape[1] <= 40 else ["csv"])

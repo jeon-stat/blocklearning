@@ -180,7 +180,7 @@ def predict_finish(studio: Studio, out_bytes) -> dict:
     raw = out_bytes.to_bytes() if hasattr(out_bytes, "to_bytes") else bytes(out_bytes)
     p, studio.pending = studio.pending, None
     out = np.frombuffer(raw, dtype=np.float32).reshape(len(p["names"]), -1)
-    return _clean(table(studio.data, p["names"], out, p["labels"], p["X"], studio.results))
+    return _clean(table(studio.data, p["names"], out, p["labels"], p["X"], studio.results, p.get("truth")))
 
 
 @_wrap

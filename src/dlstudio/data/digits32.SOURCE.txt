@@ -1,3 +1,4 @@
 손글씨 숫자 0–9 (32×32 흑백) — Alpaydin E, Kaynak C. Optical Recognition of Handwritten Digits.
 UCI Machine Learning Repository (1998), doi:10.24432/C50P49, CC BY 4.0
 바꾼 내용: optdigits-orig.tra·cv·windep의 32×32 비트맵(0·1)을 그대로 모음 (wdep는 같은 사람 글씨라 뺌).
+예측 예시용: 샘플 10개는 학습·시험에서 빼 따로 둠 (<이름>_new). ⑤ 예측의 [예시 새 데이터].

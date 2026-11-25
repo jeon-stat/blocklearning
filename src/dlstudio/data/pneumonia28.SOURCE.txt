@@ -10,3 +10,4 @@ pneumonia28.npz: 흉부 X-ray 정상·폐렴 28×28 흑백 (1,200장: 정상 600
   원본: 소아 흉부 X-ray 5,856장 (Kermany et al., "Identifying Medical Diagnoses and Treatable Diseases by
   Image-Based Deep Learning", Cell 172(5), 2018)
 의료 진단용이 아님 (MedMNIST: "NOT intended for clinical use").
+예측 예시용: 샘플 10개는 학습·시험에서 빼 따로 둠 (<이름>_new). ⑤ 예측의 [예시 새 데이터].

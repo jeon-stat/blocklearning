@@ -102,9 +102,9 @@ def test_non_ascii_path(tmp_path):
 
 def test_example_data():
     d = load_example()
-    assert d.length == 140 and len(d.y_train) + len(d.y_test) == 5000          # MIT-BIH 박동 (정상·이상 각 2,500)
+    assert d.length == 140 and len(d.y_train) + len(d.y_test) == 4990          # MIT-BIH 박동 (정상·이상 각 2,500, 예측 예시용 10개 뺌)
     y = np.concatenate([d.y_train, d.y_test])
-    assert (y == 0).sum() == 2500 and (y == 1).sum() == 2500
+    assert (y == 0).sum() == 2495 and (y == 1).sum() == 2495
     assert d.classes == ["정상", "이상"]
     json.dumps(d.summary(), ensure_ascii=False)
 
@@ -387,14 +387,14 @@ def test_label_table_mode_ignores_unmatched_subfolders(tmp_path):
 # ---------------------------------------------------------------- 예시 데이터: 모두 공개된 실제 데이터 (출처 파일과 함께)
 
 REAL = [  # 종류, 과제, 클래스 수(회귀 0), 길이, 그림, 샘플 수
-    ("ecg", "classification", 2, 140, None, 5000),
-    ("bearing", "classification", 5, 512, None, 1200),
-    ("steel_plates", "classification", 7, 27, None, 1941),
-    ("concrete", "regression", 0, 8, None, 1030),
-    ("hydraulic_valve", "regression", 0, 200, None, 2205),
-    ("steelblast", "classification", 2, 64 * 64, (64, 64), 1654),
-    ("pneumonia", "classification", 2, 28 * 28, (28, 28), 1200),
-    ("digits", "classification", 10, 32 * 32, (32, 32), 4677),
+    ("ecg", "classification", 2, 140, None, 4990),                 # 예측 예시용 10개는 빼 둠 (*_new)
+    ("bearing", "classification", 5, 512, None, 1190),
+    ("steel_plates", "classification", 7, 27, None, 1931),
+    ("concrete", "regression", 0, 8, None, 1020),
+    ("hydraulic_valve", "regression", 0, 200, None, 2195),
+    ("steelblast", "classification", 2, 64 * 64, (64, 64), 1644),
+    ("pneumonia", "classification", 2, 28 * 28, (28, 28), 1190),
+    ("digits", "classification", 10, 32 * 32, (32, 32), 4667),
 ]
 
 

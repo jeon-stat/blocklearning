@@ -50,7 +50,7 @@ c, r = s.call("POST", "/api/model/check", {"graph": g})
 assert c == 200 and r["ok"] and r["panel"]["params"] > 0, r
 plan = json.loads(web.plan(s, json.dumps(g)))["body"]
 p = web.data_payload(s)
-assert len(p["X_train"]) == 4 * 4000 * 140
+assert len(p["X_train"]) == 4 * 3992 * 140
 web.set_trained(s, json.dumps(g), "{}", "{}")
 assert json.loads(web.sample(s, 0))["status"] == 200
 c, r = s.call("POST", "/api/code", {"graph": g, "framework": "pytorch", "weights_file": "w.npz"})
@@ -105,7 +105,7 @@ def test_project_bytes_roundtrip_with_weights(tmp_path):
     r = json.loads(web.open_project(s2, str(p)))
     assert r["status"] == 200, r
     b = r["body"]
-    assert b["response"]["trained"] and b["response"]["train_settings"] == {"epochs": 3} and b["response"]["summary"]["n_train"] + b["response"]["summary"]["n_test"] == 5000
+    assert b["response"]["trained"] and b["response"]["train_settings"] == {"epochs": 3} and b["response"]["summary"]["n_train"] + b["response"]["summary"]["n_test"] == 4990
     names = {p[0] for st in b["plan"]["steps"] for p in st["params"]}
     assert set(b["state"]) == names
     w = b["state"]["mods.m_b0.weight"]

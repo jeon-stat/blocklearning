@@ -453,7 +453,7 @@ class Studio:
         with torch.no_grad():
             for i in range(0, len(X), 512):
                 outs.append(m.eval()(torch.as_tensor(X[i:i + 512], dtype=torch.float32)).numpy())
-        return predict.table(d, new["names"], np.concatenate(outs), new["labels"], new["X"], self.results)
+        return predict.table(d, new["names"], np.concatenate(outs), new["labels"], new["X"], self.results, new.get("truth"))
 
     def api_anomaly_threshold(self, b: dict) -> dict:
         """이상 탐지 기준값 바꾸기 (④ 결과의 분포에서 고른 값 → ⑤ 예측·샘플 따라가기의 판정)."""

@@ -1346,8 +1346,9 @@ function renderPredictDet(r) {                          // 탐지: 그림마다 
   const cards = [["그림", s.n], ["찾은 상자", s.n_boxes]].concat(Object.entries(s.counts).map(([c, n]) => [`'${c}'`, n]));
   if (s.no_box) cards.push(["찾은 것 없는 그림", s.no_box]);
   $("predict-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
-  $("predict-gallery").innerHTML = (r.pics || []).length ? detLegend(names).replace("점선 = 정답 · ", "") +
-    `<div class="det-gallery">${r.pics.map((p, i) => `<div class="det-card">${detImage(p.values, im[0], im[1], 168, null, r.rows[i].boxes, names, s.score)}` +
+  const gt = (r.pics || []).some((p) => p.truth);
+  $("predict-gallery").innerHTML = (r.pics || []).length ? (gt ? detLegend(names) : detLegend(names).replace("점선 = 정답 · ", "")) +
+    `<div class="det-gallery">${r.pics.map((p, i) => `<div class="det-card">${detImage(p.values, im[0], im[1], 168, p.truth || null, r.rows[i].boxes, names, s.score)}` +
       `<div class="muted">${esc(p.name)} · ${r.rows[i].boxes.length}개</div></div>`).join("")}</div>` +
     (r.rows.length > r.pics.length ? `<p class="muted">그림은 처음 ${r.pics.length}장만 보입니다. 전부는 아래 표와 CSV로.</p>` : "") : "";
   $("predict-table").innerHTML = `<tr><th>그림</th><th>찾은 상자</th><th>내용 (클래스 점수)</th></tr>` + r.rows.map((x) =>
@@ -1355,7 +1356,20 @@ function renderPredictDet(r) {                          // 탐지: 그림마다 
   $("predict-note").textContent = r.shown < s.n ? `표에는 처음 ${r.shown}개만 보입니다. 전부는 CSV로 내려받으세요.` : "";
   $("predict-result").hidden = false;
 }
+function renderPredictFcMany(r) {                       // 시계열 예측 (예시 새 데이터): 창마다 지난 값·실제·예측
+  const s = r.summary, num = (v) => Number(Number(v).toPrecision(4));
+  $("predict-cards").innerHTML = [["창", s.n], ["평균 오차 MAE", num(s.mae)], ["맞힌 값 열", s.column || "-"]]
+    .map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+  $("predict-gallery").innerHTML = `<p class="muted fc-legend"><span style="color:${FC_COLORS.hist}">━</span> 지난 값 · <span style="color:${FC_COLORS.y}">━</span> 실제 · <span style="color:${FC_COLORS.pred}">━</span> 예측</p>` +
+    `<div class="fc-gallery">${r.rows.map((x) => { const hist = x.history.slice(-Math.max(s.horizon * 3, 24));
+      return `<div class="fc-card">${svgSeries([{ v: hist, color: FC_COLORS.hist }, { v: x.y, x0: hist.length, color: FC_COLORS.y, width: 1.8 },
+        { v: x.pred, x0: hist.length, color: FC_COLORS.pred, width: 1.8 }], 280, 100, hist.length)}<div class="muted">${esc(x.name)} · MAE ${num(x.mae)}</div></div>`; }).join("")}</div>`;
+  $("predict-table").innerHTML = `<tr><th>창</th><th>평균 오차 MAE</th></tr>` + r.rows.map((x) => `<tr><td>${esc(x.name)}</td><td>${num(x.mae)}</td></tr>`).join("");
+  $("predict-note").textContent = "";
+  $("predict-result").hidden = false;
+}
 function renderPredictFc(r) {                           // 시계열 예측: 지난 값 + 다음 값 그래프와 표
+  if (r.summary.many) return renderPredictFcMany(r);
   const s = r.summary, num = (v) => Number(Number(v).toPrecision(4)), hist = s.history.slice(-Math.max(s.pred.length * 3, 24));
   $("predict-cards").innerHTML = [["예측한 칸", s.n], ["맞힌 값 열", s.column || "-"], ["예측 평균", num(s.mean)], ["예측 범위", `${num(s.range[0])} ~ ${num(s.range[1])}`]]
     .map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
@@ -1402,6 +1416,7 @@ function renderPredict(r) {
   $("predict-note").textContent = r.shown < s.n ? `표에는 처음 ${r.shown}개만 보입니다. 전부는 CSV로 내려받으세요.` : "";
   $("predict-result").hidden = false;
 }
+$("btn-predict-example").onclick = () => runPredict({ example_new: true });
 $("btn-predict-csv").onclick = () => (pathVal("predict-path") ? runPredict({ path: pathVal("predict-path") }) : showMessage("CSV 파일 경로를 넣으세요", "예: C:\\data\\new.csv"));
 $("btn-predict-folder").onclick = () => (pathVal("predict-folder") ? runPredict({ folder: pathVal("predict-folder") }) : showMessage("그림 폴더 경로를 넣으세요"));
 $("btn-predict-series").onclick = () => (pathVal("predict-series") ? runPredict({ series_folder: pathVal("predict-series") }) : showMessage("폴더 경로를 넣으세요"));

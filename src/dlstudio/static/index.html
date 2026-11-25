@@ -255,6 +255,7 @@
     <p class="lead">학습한 모델로 정답을 모르는 새 데이터를 예측합니다. 학습 때와 같은 모양의 데이터를 넣으세요. 정답이 함께 있으면 맞았는지도 보여 줍니다.</p>
     <div id="predict-guard" class="guard" hidden></div>
     <div id="predict-inputs">
+      <div class="row" data-kind="example"><button id="btn-predict-example" class="primary">예시 새 데이터 10개로 예측</button></div>
       <div class="row" data-kind="csv"><input id="predict-path" class="path" placeholder="C:\data\new.csv"><button id="btn-predict-csv" class="primary">CSV로 예측</button></div>
       <div class="row" data-kind="folder"><input id="predict-folder" class="path" placeholder="C:\data\새 그림 폴더"><button id="btn-predict-folder" class="primary">그림 폴더로 예측</button></div>
       <div class="row" data-kind="series"><input id="predict-series" class="path" placeholder="C:\data\새 사이클 (샘플마다 CSV 하나)"><button id="btn-predict-series" class="primary">폴더로 예측</button></div>

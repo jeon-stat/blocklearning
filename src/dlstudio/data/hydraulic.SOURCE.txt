@@ -3,3 +3,4 @@ UCI Machine Learning Repository (2015), doi:10.24432/C5CW21, CC BY 4.0
 Helwig N, et al. Condition Monitoring of a Complex Hydraulic System Using Multivariate Statistics. I2MTC 2015.
 바꾼 내용: 60초 작업 사이클 2,205개. 표: 센서 17개의 사이클 평균. 시계열: 압력 PS2 (100 Hz)의 앞 20초 2,000점을 10점씩 평균해 200점.
 상태: profile.txt의 냉각기 효율(%)·밸브 상태(%)·펌프 누설(0–2)·어큐뮬레이터 압력(bar) 그대로.
+예측 예시용: 샘플 10개는 학습·시험에서 빼 따로 둠 (<이름>_new). ⑤ 예측의 [예시 새 데이터].

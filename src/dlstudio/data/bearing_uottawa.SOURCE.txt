@@ -3,3 +3,4 @@ Conditions. Mendeley Data, V2, doi:10.17632/v43hmbwxpm.2 (University of Ottawa),
 Data in Brief 21:1745-1749 (2018), doi:10.1016/j.dib.2018.11.019
 바꾼 내용: 상태 5종 × 속도 조건 4종의 첫 측정(?-?-1.mat)에서 가속도계 신호(Channel_1, 200 kHz)를 10 kHz로 줄이고(거름 후 솎음)
 512점(0.05초) 구간을 무작위로 잘라 상태마다 240개.
+예측 예시용: 샘플 10개는 학습·시험에서 빼 따로 둠 (<이름>_new). ⑤ 예측의 [예시 새 데이터].

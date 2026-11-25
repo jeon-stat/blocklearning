@@ -3,3 +3,4 @@ Mendeley Data V2, doi:10.17632/vdj74sngvn.2, CC BY 4.0. Data in Brief (2025), do
 바꾼 내용: 기판 사진 230장(Version 1, 가로세로 상자)에서 결함마다 결함 둘레를 결함 크기의 2.5–4배(160픽셀 이상) 정사각형으로 잘라
 흑백 64×64로 줄이고, 그 안에 반 이상 들어온 결함의 상자를 0–1 비율로 옮김. 결함 없는 칸도 섞음.
 클래스: missing_pad·mouse_bite·open_circuit·short·spur·spurious_copper → 패드 누락·쥐 물림·회로 끊김·단락·돌기·잔여 구리.
+예측 예시용: 그림 10장은 학습·시험에서 빼 따로 둠 (X_new, boxes_new).
