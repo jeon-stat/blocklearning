@@ -26,6 +26,8 @@ def test_example_new_is_held_out(kind):
         assert np.asarray(e["truth"]).shape == (10, d.n_out)
     elif d.task == "segmentation":
         assert np.asarray(e["truth"]).shape == (10, d.length)
+    elif d.task == "multi":
+        assert np.asarray(e["truth"]).shape == (10, len(d.n_out.heads))
     elif d.task == "detection":
         assert len(e["truth"]) == 10 and sum(len(b) for b in e["truth"]) > 0
     else:

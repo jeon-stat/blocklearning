@@ -24,7 +24,7 @@ function svgImage(vals, H, W, cell = 6) {
 
 // 객체 탐지 그림: 흑백 그림 위에 정답(점선)·모델이 찾은 상자(실선, 점수) — 상자는 [클래스 번호, (점수,) x, y, w, h] 0–1 비율
 const DET_COLORS = ["#e11d48", "#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
-const TASK_NAME = { classification: "분류", regression: "회귀", detection: "객체 탐지", forecast: "시계열 예측", anomaly: "이상 탐지",
+const TASK_NAME = { multi: "여러 정답", classification: "분류", regression: "회귀", detection: "객체 탐지", forecast: "시계열 예측", anomaly: "이상 탐지",
   segmentation: "구간 분할" };
 const SEG_COLORS = ["#94a3b8", "#4f46e5", "#14b8a6", "#f97316", "#e11d48", "#a855f7", "#22c55e", "#eab308", "#0ea5e9", "#78716c"];
 function segStrip(states, w = 240, h = 9) {              // 시점마다 상태 → 색 띠 (같은 상태가 이어지면 한 칸)
@@ -40,6 +40,7 @@ const segLegend = (names) => `<p class="muted fc-legend">${names.map((n, k) => `
 // 성적 글자: 정확도·mAP는 %, R²·AUC는 0–1, 복원 오차는 그대로 (낮을수록 좋음)
 function metricText(name, v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "-";
+  if (name === "mean") return "평균 " + v.toFixed(3);
   if (name === "r2") return "R² " + v.toFixed(3);
   if (name === "auc") return "AUC " + v.toFixed(3);
   if (name === "recon") return "복원 오차 " + Number(v.toPrecision(3));
@@ -305,6 +306,8 @@ const FAMILY_ICON = {
   anomaly: lineIcon('<path d="M3 12h4l2-5 4 10 2-5h6"/>'),
   forecast: lineIcon('<path d="M3 17l5-5 4 3 6-7"/><path d="M14 8h4v4"/><path d="M3 21h18" stroke-dasharray="2 3"/>'),
   segmentation: lineIcon('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 6v12M15 6v12"/>'),
+
+  multi: lineIcon('<circle cx="5" cy="12" r="2"/><path d="M7 12h4M11 12l5-6M11 12l5 6M11 12h5"/><circle cx="18" cy="5" r="2"/><circle cx="18" cy="12" r="2"/><circle cx="18" cy="19" r="2"/>'),
 };
 const readyFirst = (xs, ok) => xs.filter(ok).concat(xs.filter((x) => !ok(x)));   // '준비 중'은 뒤로
 function renderTask() {
@@ -411,9 +414,9 @@ function renderDataGuide() {
   $("data-guide").textContent = !sub || st.autoTask
     ? "과제를 고르지 않아도 됩니다. CSV·그림 폴더·예시 데이터를 넣으면 분류인지 회귀인지, 시계열·표·이미지 중 무엇인지 보고 과제와 추천 모델을 정해 드립니다. CSV는 한 행 = 샘플 하나, 마지막 열 = 정답."
     : img ? `이미지 폴더: ${GUIDE.image.classification} 픽셀 CSV(한 행 = 픽셀 값들 + 마지막 열 정답)도 됩니다. 처음이면 예시 데이터로 시작해 보세요.`
-    : sub.task === "segmentation" ? "지금은 예시 데이터로만 할 수 있습니다."
+    : sub.task === "segmentation" || sub.task === "multi" ? "지금은 예시 데이터로만 할 수 있습니다."
     : `CSV 파일: ${GUIDE[sub.input][sub.task]} 첫 줄이 열 이름이면 그대로 씁니다. 처음이면 예시 데이터로 시작해 보세요.`;
-  const onlyEx = !!sub && !st.autoTask && sub.task === "segmentation";   // 구간 분할: 내 데이터로 만드는 것은 아직 없음
+  const onlyEx = !!sub && !st.autoTask && (sub.task === "segmentation" || sub.task === "multi");   // 구간 분할·정답 여러 개: 내 데이터로 만드는 것은 아직 없음
   $("mine-title").hidden = $("mine-grid").hidden = onlyEx;
   const any = !sub || st.autoTask;                           // 과제 없이: 넣는 방법을 다 보임
   $("image-row").hidden = !img && !any;
@@ -558,10 +561,11 @@ function clearTrainView() {
   st.detPred = null;
   drawCurve([], "accuracy");
 }
+const lossKey = (s) => (s && s.losses ? JSON.stringify([s.losses.allowed, (s.losses.heads || []).map((h) => h.name)]) : "");
 function onData(s) {
-  const prevLoss = st.summary && st.summary.losses && st.summary.losses.allowed.join();
+  const prevLoss = lossKey(st.summary);
   st.summary = s;
-  if (!s.losses || s.losses.allowed.join() !== prevLoss) st.loss = null;      // 정답 종류가 바뀌면 손실은 기본으로
+  if (lossKey(s) !== prevLoss) st.loss = null;                // 정답 종류가 바뀌면 손실은 기본으로
   renderLoss();
   st.dataSrc = s.example || null;
   st.trained = false;
@@ -569,8 +573,8 @@ function onData(s) {
   $("data-summary").hidden = false;
   $("btn-next-data").hidden = false;
   const det = s.task === "detection", fc = s.forecast, ae = s.anomaly;
-  const seg = s.task === "segmentation";
-  const task = s.task === "classification" ? `분류 (${s.classes.length}클래스)` : det ? `객체 탐지 (${s.classes.length}클래스)`
+  const seg = s.task === "segmentation", multi = s.task === "multi";
+  const task = multi ? `여러 정답 (${s.targets.length}개)` : s.task === "classification" ? `분류 (${s.classes.length}클래스)` : det ? `객체 탐지 (${s.classes.length}클래스)`
     : fc ? "시계열 예측" : ae ? "이상 탐지" : seg ? `구간 분할 (${s.classes.length}상태)` : "회귀";
   const tab = inputKind() === "tabular" && !s.image;
   const cards = fc ? [["학습 창", s.n_train], ["시험 창 (뒤쪽 구간)", s.n_test], ["입력 길이", `지난 ${s.length}개`], ["예측 길이", `다음 ${fc.horizon}개`],
@@ -580,6 +584,8 @@ function onData(s) {
   if (ae) cards.push(["정상으로 본 클래스", esc(ae.normal)], ["이상으로 본 클래스", ae.others.length ? ae.others.map(esc).join(", ") : "없음 (정상만)"]);
   renderFcBox(s);
   if (det) cards.push(["상자", `${s.detection.n_boxes}개`], ["격자", `${s.detection.grid}×${s.detection.grid}칸`]);
+  if (multi) for (const t of s.targets) cards.push([`정답 '${esc(t.name)}'`, t.kind === "class" ? `${t.classes.length}클래스`
+    : `${Number(t.range[0].toPrecision(3))} ~ ${Number(t.range[1].toPrecision(3))}`]);
   if (s.target_range) cards.push(["정답 범위", `${Number(s.target_range[0].toPrecision(3))} ~ ${Number(s.target_range[1].toPrecision(3))}`]);
   $("data-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("") +
     Object.entries(s.class_counts).map(([k, v]) => `<div class="card"><div class="k">${det ? `'${esc(k)}' 상자` : seg ? `'${esc(k)}' 시점` : `클래스 '${esc(k)}'`}</div><div class="v">${v}</div></div>`).join("");
@@ -767,10 +773,10 @@ $("model-issues").onclick = (e) => {                     // 문제를 누르면 
 function renderWarnings(el, warns) {
   $(el).innerHTML = (warns || []).map((w) => `<li>⚠ ${esc(w.message)}<span class="hint">→ ${esc(w.hint)}</span></li>`).join("");
 }
-function renderConfusion(el, cm, recall, caption, pickable = false) {
+function renderConfusion(el, cm, recall, caption, pickable = false, classNames = null) {
   $("cm-pick").hidden = true;
   if (!cm) return ($(el).innerHTML = "");
-  const names = st.summary.classes;
+  const names = classNames || st.summary.classes;
   let h = `<table class="cm${pickable ? " pick" : ""}"><tr><th>정답↓ 예측→</th>${names.map((n) => `<th>${esc(n)}</th>`).join("")}<th>재현율</th></tr>`;
   cm.forEach((row, i) => {
     h += `<tr><th>${esc(names[i])}</th>${row.map((v, j) => `<td class="${i === j ? "diag" : ""}"${pickable && v ? ` data-cell="${i},${j}" title="이 칸의 샘플 보기"` : ""}>${v}</td>`).join("")}` +
@@ -879,7 +885,7 @@ async function pollJob(id, onTick) {
 function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성적 (0~100% 또는 R² 0~1), 오른쪽 축 = loss (가장 큰 값 기준)
   const W = 560, H = 220, L = 46, R = 46, T = 30, B = 26, pw = W - L - R, ph = H - T - B;
   const n = progress.length, map = metricName === "map50", auc = metricName === "auc", recon = metricName === "recon";
-  const acc = metricName !== "r2" && !auc && !recon;
+  const acc = metricName !== "r2" && metricName !== "mean" && !auc && !recon;
   const mmax = recon ? Math.max(1e-12, ...progress.map((p) => p.test_metric)) : 1;      // 복원 오차: 가장 큰 값 기준
   const yv = (f) => T + (1 - f) * ph;
   let s = "";
@@ -907,7 +913,7 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
       `<text x="${L + pw}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
   }
   s += `<line x1="${L}" y1="12" x2="${L + 18}" y2="12" stroke="#4f46e5" stroke-width="2"/>` +
-    `<text x="${L + 24}" y="16" font-size="12" fill="#4f46e5">시험 ${map ? "mAP@0.5 (왼쪽 축, 높을수록 좋음)" : auc ? "AUC (왼쪽 축, 1에 가까울수록 좋음)" : recon ? "복원 오차 (왼쪽 축, 낮을수록 좋음)" : acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
+    `<text x="${L + 24}" y="16" font-size="12" fill="#4f46e5">시험 ${map ? "mAP@0.5 (왼쪽 축, 높을수록 좋음)" : auc ? "AUC (왼쪽 축, 1에 가까울수록 좋음)" : recon ? "복원 오차 (왼쪽 축, 낮을수록 좋음)" : acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : metricName === "mean" ? "평균 (왼쪽 축, 1에 가까울수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
     `<line x1="${L + 300}" y1="12" x2="${L + 318}" y2="12" stroke="#f97316" stroke-width="2"/>` +
     `<text x="${L + 324}" y="16" font-size="12" fill="#f97316">loss (오른쪽 축, 낮을수록 좋음)</text>`;
   $("curve").innerHTML = s;
@@ -930,7 +936,7 @@ $("btn-train").onclick = async () => {
     const json = sig(graph);
     $("train-status").textContent = "학습 중…";
     const ae = st.summary.anomaly;                              // 이상 탐지: 이상 샘플이 있으면 AUC, 없으면 복원 오차
-    const metric = { classification: "accuracy", detection: "map50", segmentation: "accuracy" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
+    const metric = { classification: "accuracy", detection: "map50", segmentation: "accuracy", multi: "mean" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
     const t0 = performance.now();
     const j = await pollJob(id, (j) => {
       drawCurve(j.progress, metric);
@@ -982,7 +988,33 @@ function renderSegResult(r) {                             // 구간 분할: 시�
     `<div class="fc-card">${svgLine(p.x, 300, 60)}${segStrip(p.truth, 300)}${segStrip(p.pred, 300)}<div class="muted">맞힌 시점 ${pct(p.acc)}</div></div>`).join("") +
     `</div><p class="muted fc-legend">띠: 위 = 정답, 아래 = 예측</p>` + segLegend(names);
 }
+function renderMultiResult(r, pick = 0) {                  // 정답 여러 개: 정답마다 성적 탭 → 그 정답의 혼동 행렬·산점도
+  st.multiResult = r;
+  $("det-box").hidden = true;
+  pick = Math.max(0, Math.min(pick, r.heads.length - 1));
+  const one = (h, v) => (v === null || v === undefined ? "-" : h.kind === "class" ? pct(v) : `R² ${v.toFixed(3)}`);
+  const h = r.heads[pick];
+  const rows = [["Epochs", epochsText(r)], ["시험 평균", `<b>${r.test_metric.toFixed(3)}</b>`], ["학습 평균", r.train_metric === null || r.train_metric === undefined ? "-" : r.train_metric.toFixed(3)]];
+  const detail = [[`시험 ${h.kind === "class" ? "정확도" : "R²"}`, `<b>${one(h, h.metric)}</b>`], [`학습 ${h.kind === "class" ? "정확도" : "R²"}`, one(h, h.train_metric)]];
+  if (h.kind === "value") detail.push(["시험 평균 오차 MAE", Number(h.mae.toPrecision(4))]);
+  $("train-result").innerHTML = kv(rows) +
+    `<div class="head-tabs" role="tablist">${r.heads.map((x, i) => `<button type="button" role="tab" data-head="${i}" aria-selected="${i === pick}">${esc(x.name)} <b>${one(x, x.metric)}</b></button>`).join("")}</div>` +
+    kv(detail);
+  renderWarnings("train-warnings", r.warnings);
+  if (h.kind === "class") {
+    renderConfusion("train-confusion", h.confusion, h.recall, `시험 데이터 · ${h.name}`, false, h.classes);
+    $("train-scatter").innerHTML = "";
+  } else {
+    renderConfusion("train-confusion", null);
+    renderScatter("train-scatter", h.scatter, h.mae, `시험 데이터 · ${h.name}`);
+  }
+}
+$("train-result").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-head]");
+  if (b && st.multiResult) renderMultiResult(st.multiResult, Number(b.dataset.head));
+});
 function renderTrainResult(r) {
+  if (r.heads) return renderMultiResult(r);
   if (r.seg_samples) return renderSegResult(r);
   if (r.metric_name === "map50") return renderDetResult(r);
   if (r.fc_samples) return renderFcResult(r);
@@ -1363,21 +1395,41 @@ function applySettings(s) {                              // 학습 설정 칸에
 const LOSS_OPT_LABEL = { smooth: "라벨 스무딩", gamma: "γ", delta: "δ", balance: "드문 클래스 무겁게" };
 function lossInfo() { return st.summary && st.summary.losses; }
 function lossTerms() { const L = lossInfo(); return st.loss || (L ? L.default.map((t) => Object.assign({}, t)) : []); }
+function lossGroups(L) {                                    // 칩 줄: [{head, allowed}] — 정답이 하나면 한 줄
+  return L.heads ? L.heads.map((h) => ({ head: h.name, allowed: h.allowed })).concat([{ head: null, allowed: L.allowed }])
+    : [{ head: null, allowed: L.allowed }];
+}
 function renderLoss() {
   const L = lossInfo();
   if (!$("loss-terms")) return;
   if (!L) { $("loss-terms").innerHTML = ""; return; }
   const terms = lossTerms();
-  $("loss-terms").innerHTML = terms.map((t, i) => {
+  document.querySelector(".loss-box").classList.toggle("multi", !!L.heads);
+  if (L.heads) {
+    $("loss-terms").innerHTML = lossGroups(L).map((g) => {
+      const mine = terms.map((t, i) => [t, i]).filter(([t]) => (t.head ?? null) === g.head);
+      return `<div class="loss-row"><span class="loss-k">${g.head === null ? "공통" : esc(g.head)}</span>` +
+        mine.map(([t, i], n) => (n ? `<span class="lplus">+</span>` : "") + lossChip(L, t, i, g.allowed, g.head === null || mine.length > 1)).join("") +
+        `<button type="button" class="ladd" data-add="${g.head === null ? "" : esc(g.head)}">+ 항</button></div>`;
+    }).join("");
+    $("loss-add").hidden = true;
+    $("loss-reset").hidden = !st.loss;
+    return;
+  }
+  $("loss-add").hidden = false;
+  $("loss-terms").innerHTML = terms.map((t, i) => (i ? `<span class="lplus">+</span>` : "") + lossChip(L, t, i, L.allowed, terms.length > 1)).join("");
+  $("loss-reset").hidden = !st.loss;
+}
+function lossChip(L, t, i, allowed, canDelete) {
+  {
     const opts = L.options[t.term] || {};
     const fields = Object.entries(opts).map(([k, [d, lo, hi]]) => typeof d === "boolean"
       ? `<label class="lopt"><input type="checkbox" data-i="${i}" data-k="${k}"${t[k] ?? d ? " checked" : ""}> ${LOSS_OPT_LABEL[k] || k}</label>`
       : `<label class="lopt">${LOSS_OPT_LABEL[k] || k} <input type="number" data-i="${i}" data-k="${k}" min="${lo}" max="${hi}" step="0.1" value="${t[k] ?? d}"></label>`).join("");
-    return `${i ? `<span class="lplus">+</span>` : ""}<span class="loss-term"><input type="number" class="lw" data-i="${i}" data-k="w" min="0" step="0.1" value="${t.w ?? 1}"> ×` +
-      `<select data-i="${i}" data-k="term">${L.allowed.map((a) => `<option value="${a}"${a === t.term ? " selected" : ""}>${esc(L.names[a])}</option>`).join("")}</select>` +
-      fields + (terms.length > 1 ? `<button type="button" class="ldel" data-del="${i}" aria-label="빼기">×</button>` : "") + `</span>`;
-  }).join("");
-  $("loss-reset").hidden = !st.loss;
+    return `<span class="loss-term"><input type="number" class="lw" data-i="${i}" data-k="w" min="0" step="0.1" value="${t.w ?? 1}"> ×` +
+      `<select data-i="${i}" data-k="term">${allowed.map((a) => `<option value="${a}"${a === t.term ? " selected" : ""}>${esc(L.names[a])}</option>`).join("")}</select>` +
+      fields + (canDelete ? `<button type="button" class="ldel" data-del="${i}" aria-label="빼기">×</button>` : "") + `</span>`;
+  }
 }
 function setLoss(terms) {
   const L = lossInfo();
@@ -1388,12 +1440,18 @@ $("loss-terms").addEventListener("change", (e) => {
   const el = e.target, i = Number(el.dataset.i), k = el.dataset.k;
   if (k === undefined) return;
   const terms = lossTerms().map((t) => Object.assign({}, t));
-  if (k === "term") terms[i] = { term: el.value, w: terms[i].w ?? 1 };          // 항을 바꾸면 설정은 그 항의 기본
+  if (k === "term") terms[i] = Object.assign({ term: el.value, w: terms[i].w ?? 1 }, terms[i].head ? { head: terms[i].head } : {});   // 항을 바꾸면 설정은 그 항의 기본
   else terms[i][k] = el.type === "checkbox" ? el.checked : Number(el.value);
   setLoss(terms);
 });
 $("loss-terms").addEventListener("click", (e) => {
-  const d = e.target.dataset.del;
+  const d = e.target.dataset.del, add = e.target.dataset.add;
+  if (add !== undefined) {                                     // 정답 여러 개: 그 줄에 항 더하기 (공통 줄은 L2·L1)
+    const g = lossGroups(lossInfo()).find((x) => (x.head ?? "") === add);
+    const used = new Set(lossTerms().filter((t) => (t.head ?? "") === add).map((t) => t.term));
+    const next = g.allowed.find((a) => !used.has(a)) || g.allowed[0];
+    return setLoss(lossTerms().concat([Object.assign({ term: next, w: next === "l2" || next === "l1" ? 0.0001 : 1 }, add ? { head: add } : {})]));
+  }
   if (d === undefined) return;
   setLoss(lossTerms().filter((_, i) => i !== Number(d)));
 });
@@ -1528,8 +1586,20 @@ function renderPredictSeg(r) {                          // 구간 분할: 창마
   $("predict-note").innerHTML = segLegend(s.classes);
   $("predict-result").hidden = false;
 }
+function renderPredictMulti(r) {                        // 정답 여러 개: 샘플마다 정답마다의 예측 (정답이 있으면 함께)
+  const s = r.summary, cell = (v) => (typeof v === "number" ? Number(v.toPrecision(4)) : esc(v));
+  const cards = [["샘플", s.n]].concat(s.score === null || s.score === undefined ? [] : [["평균 성적 (정답과 비교)", s.score.toFixed(3)]]);
+  $("predict-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+  const head = ["샘플"].concat(s.heads.map((h) => h.name));
+  $("predict-table").innerHTML = `<tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>` + r.rows.map((x) =>
+    `<tr class="${x.ok === false ? "bad" : ""}"><td>${esc(x.name)}</td>` + x.multi_pred.map((v, j) =>
+      `<td><b>${cell(v)}</b>${x.multi_label ? `<div class="muted">정답 ${cell(x.multi_label[j])}</div>` : ""}</td>`).join("") + `</tr>`).join("");
+  $("predict-note").textContent = r.shown < s.n ? `표에는 처음 ${r.shown}개만 보입니다. 전부는 CSV로 내려받으세요.` : "";
+  $("predict-result").hidden = false;
+}
 function renderPredict(r) {
   if (r.summary.task === "segmentation") return renderPredictSeg(r);
+  if (r.summary.task === "multi") { $("predict-gallery").innerHTML = ""; return renderPredictMulti(r); }
   $("predict-gallery").innerHTML = "";
   if (r.summary.task === "detection") return renderPredictDet(r);
   if (r.summary.task === "forecast") return renderPredictFc(r);

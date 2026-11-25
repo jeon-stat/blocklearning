@@ -119,8 +119,12 @@ class TrainSettings:
         return cls(**known)
 
 
-def metric(out: np.ndarray, y: np.ndarray, task: str, X: Optional[np.ndarray] = None) -> float:
-    """시험 성적: 분류 정확도, 회귀 R², 예측 R²(다음 H개 전체), 이상 탐지 AUC (X = 모델 입력을 펼친 정규화 값)."""
+def metric(out: np.ndarray, y: np.ndarray, task: str, X: Optional[np.ndarray] = None, heads=None) -> float:
+    """시험 성적: 분류 정확도, 회귀 R², 예측 R²(다음 H개 전체), 이상 탐지 AUC (X = 모델 입력을 펼친 정규화 값),
+    정답 여러 개는 정답마다 성적의 평균 (heads: 머리 목록)."""
+    if task == "multi":
+        from dlstudio.multi import metric as multi_metric
+        return multi_metric(out, y, heads)
     if task == "classification":
         return float(np.mean(out.argmax(1) == y))
     if task == "forecast":
@@ -206,6 +210,10 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         from dlstudio.segment import torch_loss as seg_loss
         yt = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev)
         loss_fn = lambda out, t: seg_loss(out, t, det.n_cls)
+    elif task == "multi":                                  # 정답 여러 개 (det = MultiOut: 머리 목록)
+        from dlstudio.multi import torch_loss as multi_loss
+        yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(len(Xt), -1)
+        loss_fn = lambda out, t: multi_loss(out, t, det.heads)
     elif task == "classification":
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev), nn.CrossEntropyLoss()
     else:
@@ -213,8 +221,10 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
     parts_fn = None
     if loss_spec is not None:                                # 조립한 손실: 전체 = Σ 가중치 × 항
         from dlstudio import losses
-        parts_fn = losses.build(loss_spec, task, n_cls=n_cls, det=det, seg_K=getattr(det, "n_cls", 0),
-                                cw=None if class_w is None else torch.as_tensor(class_w, device=dev))
+        cw = (None if class_w is None else {k: torch.as_tensor(v, device=dev) for k, v in class_w.items()}
+              if isinstance(class_w, dict) else torch.as_tensor(class_w, device=dev))
+        parts_fn = losses.build(loss_spec, task, n_cls=n_cls, det=det, seg_K=getattr(det, "n_cls", 0), cw=cw,
+                                heads=getattr(det, "heads", None))
         loss_fn = lambda out, t: parts_fn(out, t, net)[0]
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     Xv = yv = None
@@ -284,9 +294,12 @@ def _progress(info: dict, test_metric) -> dict:
 def loss_args(data, settings) -> dict:
     """학습 설정의 손실 → fit에 넘길 것 (기본이면 비워 둠: 지금까지와 똑같은 손실)."""
     from dlstudio import losses
-    spec = losses.normalize(settings.loss, data.task)
-    if losses.is_default(spec, data.task):
+    heads = data.n_out.heads if data.task == "multi" else None
+    spec = losses.normalize(settings.loss, data.task, heads)
+    if losses.is_default(spec, data.task, heads):
         return {}
+    if heads:
+        return {"loss_spec": spec, "n_cls": 0, "class_w": losses.multi_class_weights(data.y_train, heads, spec) or None}
     K = len(data.classes) if data.task in ("classification", "segmentation") else 0
     cw = losses.class_weights(data.y_train, K) if K and any(t.get("balance") for t in spec) else None
     return {"loss_spec": spec, "n_cls": K, "class_w": cw}
@@ -319,10 +332,14 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
         Xte_t = torch.as_tensor(Fte, dtype=torch.float32, device=dev)
         model.start = head
-    reg = data.task not in ("classification", "segmentation")   # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
+    reg = data.task not in ("classification", "segmentation", "multi")   # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
     Y = np.asarray(data.target_train, dtype=np.float64).reshape(len(data.X_train), -1)
     mu, sd = target_scale(Y) if reg else (0.0, 1.0)
     y_fit = (Y - mu) / sd if reg else data.y_train
+    heads = data.n_out.heads if data.task == "multi" else None
+    if heads:                                              # 정답 여러 개: 값 정답만 정규화 (출력 칸마다 되돌림)
+        from dlstudio import multi
+        mu, sd, y_fit = multi.target_scale(data.y_train, heads)
 
     def cb(info):
         net = info["model"]
@@ -330,27 +347,27 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         with torch.no_grad():
             out = net(Xte_t).detach().double().cpu().numpy() * sd + mu
         done.append(info["epoch"])
-        job.report(_progress(info, metric(out, data.y_test, data.task, data.X_test)))
+        job.report(_progress(info, metric(out, data.y_test, data.task, data.X_test, heads)))
         return job.cancelled
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
             net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
-                      device=dev, callback=cb, det=data.n_out if data.task == "segmentation" else None,
+                      device=dev, callback=cb, det=data.n_out if data.task in ("segmentation", "multi") else None,
                       keep_best=settings.keep_best, early_stop=settings.early_stop, **loss_args(data, settings))
         finally:
             model.start = None
-    if reg:
+    if reg or heads:
         _fold_target_scale(net, mu, sd)
     with torch.no_grad():
         out = net(torch.as_tensor(Xte, dtype=torch.float32)).double().numpy()
-    result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task, data.X_test),
+    result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task, data.X_test, heads),
               "metric_name": metric_name(data), "warnings": [], "confusion": None, "recall": None, **_fit_result(net)}
     with torch.no_grad():                                   # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
         Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
         out_tr = np.concatenate([net(Xtr_t[i:i + 1024]).double().numpy() for i in range(0, len(Xtr_t), 1024)])
-    if data.task in ("forecast", "anomaly", "segmentation"):
+    if data.task in ("forecast", "anomaly", "segmentation", "multi"):
         return dict(result, **task_result(data, out, out_tr))
     result["train_metric"] = metric(out_tr, data.y_train, data.task)
     if data.task == "classification":
@@ -408,6 +425,8 @@ def metric_name(data) -> str:
     if data.task == "anomaly":
         from dlstudio.anomaly import metric_name as ae_name
         return ae_name(data)
+    if data.task == "multi":
+        return "mean"
     return "accuracy" if data.task in ("classification", "segmentation") else "r2"
 
 
@@ -416,6 +435,9 @@ def task_result(data, out: np.ndarray, out_tr: np.ndarray) -> dict:
     if data.task == "segmentation":
         from dlstudio import segment
         return segment.result(out, out_tr, data)
+    if data.task == "multi":
+        from dlstudio import multi
+        return multi.result(out, out_tr, data)
     if data.task == "forecast":
         from dlstudio import forecast
         return dict(forecast.result(out, data), train_metric=forecast.metric(out_tr, data.y_train))

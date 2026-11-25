@@ -338,7 +338,7 @@ class Studio:
         settings = TrainSettings.from_dict(b.get("settings"))
         from dlstudio import losses
         try:
-            losses.normalize(settings.loss, d.task)
+            losses.normalize(settings.loss, d.task, d.n_out.heads if d.task == "multi" else None)
         except ValueError as e:
             raise UserError(str(e), "④ 학습 → 더 보기의 손실을 고치세요") from None
 
@@ -373,6 +373,10 @@ class Studio:
         elif d.task == "segmentation":
             from dlstudio.segment import predicted, states_text
             pred = states_text(predicted(out[None], 1, len(d.classes))[0], d.classes)
+        elif d.task == "multi":
+            from dlstudio.multi import pred_values
+            pred = " · ".join(f"{h['name']} {v:g}" if isinstance(v, float) else f"{h['name']} {v}"
+                              for h, v in zip(d.n_out.heads, pred_values(out, d.n_out.heads)))
         elif d.task == "anomaly":
             from dlstudio.anomaly import scores
             s, th = float(scores(out[None], d.X_test[i:i + 1])[0]), (self.results or {}).get("threshold")
@@ -604,18 +608,25 @@ class Studio:
             i = c.issues[0]
             raise UserError(i.message, i.hint or "③ 모델의 문제를 먼저 고치세요", [x.to_dict() for x in c.issues])
         trained = (self.model is not None or self.web) and self.model_graph is not None and _same_model(graph, self.model_graph)
+        heads = d.n_out.heads if d.task == "multi" else None
         info = {"task": d.task, "classes": list(d.classes) if d.task in ("classification", "detection") else []}
+        if heads:
+            info["heads"] = heads
         settings = b.get("settings") or self.train_settings or {}
         train = {k: settings[k] for k in ("epochs", "lr", "batch_size") if k in settings}
         from dlstudio import losses
         try:
-            spec = losses.normalize(settings.get("loss"), d.task)
+            spec = losses.normalize(settings.get("loss"), d.task, heads)
         except ValueError:
-            spec = losses.default(d.task)
-        if not losses.is_default(spec, d.task) and d.task != "detection":     # 조립한 손실도 코드로 (탐지는 기본 손실)
+            spec = losses.normalize(None, d.task, heads)
+        if (heads or not losses.is_default(spec, d.task, heads)) and d.task != "detection":   # 조립한 손실도 코드로 (탐지는 기본 손실)
             train["loss"] = spec
             K = len(d.classes) if d.task in ("classification", "segmentation") else 0
-            if K and any(t.get("balance") for t in spec):
+            if heads:
+                cw = losses.multi_class_weights(d.y_train, heads, spec)
+                if cw:
+                    train["class_weights"] = {k: v.tolist() for k, v in cw.items()}
+            elif K and any(t.get("balance") for t in spec):
                 train["class_weights"] = losses.class_weights(d.y_train, K).tolist()
         try:
             code = codegen.generate(fw, graph, d.length, d.n_out, d.image, info, train,

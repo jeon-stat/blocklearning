@@ -89,7 +89,8 @@ def data_payload(studio: Studio) -> dict:
                                 "det": None if d.task != "detection" else
                                 {"grid": d.n_out.grid, "per_cell": d.n_out.per_cell, "n_cls": d.n_out.n_cls,
                                  "train": d.det["train"], "test": d.det["test"]},
-                                "seg": None if d.task != "segmentation" else {"n_cls": d.n_out.n_cls, "length": d.n_out.length}})}
+                                "seg": None if d.task != "segmentation" else {"n_cls": d.n_out.n_cls, "length": d.n_out.length},
+                                "multi": None if d.task != "multi" else {"heads": d.n_out.heads}})}
 
 
 @_wrap
@@ -396,10 +397,14 @@ def loss_setup(studio: Studio, settings_json: str) -> dict:
     """학습 설정의 손실 → 엔진이 쓸 {spec (기본이면 None), class_weights}. 잘못이면 오류."""
     from dlstudio import losses
     d = studio.need_data()
+    heads = d.n_out.heads if d.task == "multi" else None
     try:
-        spec = losses.normalize(json.loads(settings_json or "{}").get("loss"), d.task)
+        spec = losses.normalize(json.loads(settings_json or "{}").get("loss"), d.task, heads)
     except ValueError as e:
         raise UserError(str(e), "④ 학습 → 더 보기의 손실을 고치세요") from None
+    if heads:                                               # 정답 여러 개: 엔진에 기본 손실이 없으니 늘 항 목록으로
+        cw = {k: v.tolist() for k, v in losses.multi_class_weights(d.y_train, heads, spec).items()}
+        return {"spec": [dict(t, label=losses.label(t)) for t in spec], "class_weights": cw or None}
     if losses.is_default(spec, d.task):
         return {"spec": None, "class_weights": None}
     K = len(d.classes) if d.task in ("classification", "segmentation") else 0

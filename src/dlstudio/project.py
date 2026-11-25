@@ -111,6 +111,9 @@ def export_torch(model, data, path: str) -> dict:
              "(값, 세로, 가로) 순서로 펼친 것 — DL studio의 dlstudio.detect.decode로 상자를 풂") if det else "예측값 (원래 단위)"}
     if det:
         info["grid"], info["per_cell"] = data.n_out.grid, data.n_out.per_cell
+    if data.task == "multi":
+        info["heads"] = data.n_out.heads
+        info["output"] = "정답마다 머리를 이어 붙인 한 줄 (heads의 start·size): 분류 머리는 클래스 점수, 값 머리는 예측값 (원래 단위)"
     with warnings.catch_warnings():                          # 새 torch는 TorchScript를 낡았다고 알리지만 가장 널리 읽힘
         warnings.simplefilter("ignore")
         torch.jit.save(traced, str(path), _extra_files={"studio.json": json.dumps(info, ensure_ascii=False)})

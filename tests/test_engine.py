@@ -103,7 +103,8 @@ def _train_js(tmp_path, graph, d, settings, distance=None):
     data = {"X_train": d.X_train.ravel().tolist(), "X_test": d.X_test.ravel().tolist(), "y_train": np.ravel(d.y_train).tolist(),
             "y_test": np.ravel(d.y_test).tolist(), "n_train": len(d.y_train), "n_test": len(d.y_test), "task": d.task, "n_out": d.n_out,
             "length": d.length, "image": list(d.image) if d.image else None,
-            "seg": {"n_cls": d.n_out.n_cls, "length": d.n_out.length} if d.task == "segmentation" else None}
+            "seg": {"n_cls": d.n_out.n_cls, "length": d.n_out.length} if d.task == "segmentation" else None,
+            "multi": {"heads": d.n_out.heads} if d.task == "multi" else None}
     f = tmp_path / "train.json"
     f.write_text(json.dumps({"plan": plan, "data": data, "settings": settings, "distance": distance}), encoding="utf-8")
     r = subprocess.run(["node", str(JS / "run_train.js"), str(f)], capture_output=True, text=True, encoding="utf-8", timeout=600)

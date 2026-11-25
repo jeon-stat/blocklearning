@@ -189,6 +189,10 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
         lines.append("출력: (샘플 수, 1) 예측값")
     elif info.get("task") == "forecast":
         lines.append(f"출력: (샘플 수, {plan.n_out}) 다음 {plan.n_out}개 값 (원래 단위). 입력 = 바로 앞의 값들 (신호 전체의 평균·표준편차로 정규화)")
+    elif info.get("task") == "multi" and info.get("heads"):
+        lines.append(f"출력: (샘플 수, {plan.n_out}) 정답마다의 머리를 이어 붙인 것 — " + "; ".join(
+            f"{h['name']} [{h['start']}:{h['start'] + h['size']}] " +
+            (f"클래스 점수 ({', '.join(map(str, h['classes']))})" if h["kind"] == "class" else "값 (원래 단위)") for h in info["heads"]))
     elif info.get("task") == "anomaly":
         lines.append(f"출력: (샘플 수, {plan.n_out}) 되살린 입력 (정규화한 값). 이상 점수 = (입력 − 출력)²의 평균, 클수록 이상. "
                      "정상만으로 학습하세요")
@@ -377,18 +381,18 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     custom = tr.get("loss")                                    # 조립한 손실 (DL studio ④ 학습 → 더 보기)
     if custom:
         lines += _torch_loss_code(custom, task, plan.n_out if task == "classification" else (seq or {}).get("n_cls", 0),
-                                  tr.get("class_weights"))
+                                  tr.get("class_weights"), (data_info or {}).get("heads"))
     if seq:                                                    # 구간 분할: 시점마다 교차 엔트로피
         loss, ytype = f"lambda out, t: F.cross_entropy(out.reshape(len(t), {seq['n_cls']}, -1), t)", "torch.long"
-    elif task in ("regression", "forecast", "anomaly"):       # 이상 탐지는 y = X (입력을 되살림)
+    elif task in ("regression", "forecast", "anomaly", "multi"):   # 이상 탐지는 y = X (입력을 되살림)
         loss, ytype = "nn.MSELoss()", "torch.float32"
     else:
         loss, ytype = "nn.CrossEntropyLoss()", "torch.long"
     lines += [
         f"def train(model, X, y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
-        f'    """X: 위 입력 모양의 배열, y: {"정답 클래스 번호" if task not in ("regression", "forecast", "anomaly") else "다음 값들 (샘플, 예측 길이)" if task == "forecast" else "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요" if task == "anomaly" else "정답 값"}. Adam으로 학습."""',
+        f'    """X: 위 입력 모양의 배열, y: {_y_doc(task)}. Adam으로 학습."""',
         "    X = torch.as_tensor(X, dtype=torch.float32)",
-        f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(len(X), -1)" if task in ("regression", "forecast", "anomaly") else ""),
+        f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(len(X), -1)" if task in ("regression", "forecast", "anomaly", "multi") else ""),
         f"    opt, loss_fn = torch.optim.Adam(model.parameters(), lr=lr), {'lambda out, t: studio_loss(out, t, model)' if custom else loss}",
         "    for epoch in range(epochs):",
         "        model.train()",
@@ -412,6 +416,8 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
                   else "out.tolist()                                         # 다음 값들 (원래 단위)" if task == "forecast"
                   else "((out - x.reshape(len(x), -1)) ** 2).mean(1).tolist()  # 이상 점수 (클수록 이상)" if task == "anomaly"
                   else f'[[str(info["classes"][k]) for k in row] for row in out.reshape(len(x), {seq["n_cls"]}, -1).argmax(1).tolist()]  # 시점마다 상태' if seq
+                  else ('[{h["name"]: (h["classes"][int(r[h["start"]:h["start"] + h["size"]].argmax())] if h["kind"] == "class" '
+                        'else float(r[h["start"]])) for h in HEADS} for r in out.numpy()]  # 정답마다') if task == "multi"
                   else '[str(info["classes"][i]) for i in out.argmax(1)]      # 클래스 이름')
         lines += [
             f'def load_trained(path="{weights_file}"):',
@@ -443,38 +449,67 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     return "\n".join(lines)
 
 
-def _torch_loss_code(spec: list, task: str, K: int, cw) -> list:
-    """조립한 손실 → studio_loss(out, y, model) 코드 (losses.build와 같은 식)."""
+def _y_doc(task: str) -> str:
+    return {"regression": "정답 값", "forecast": "다음 값들 (샘플, 예측 길이)", "anomaly": "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요",
+            "multi": "정답 표 (샘플, 정답 수): 분류 정답은 클래스 번호, 값 정답은 숫자"}.get(task, "정답 클래스 번호")
+
+
+def _heads_code(heads: list) -> list:
+    """정답 여러 개: 출력 한 줄에서 정답마다의 칸 (start·size)."""
+    rows = [f"    {{'name': {h['name']!r}, 'kind': {h['kind']!r}, 'classes': {h['classes']!r}, 'start': {h['start']}, 'size': {h['size']}}},"
+            for h in heads]
+    return ["HEADS = [                         # 정답마다 출력 칸: 분류는 클래스 점수 size개, 값은 1개"] + rows + ["]", ""]
+
+
+def _torch_loss_code(spec: list, task: str, K: int, cw, heads: Optional[list] = None) -> list:
+    """조립한 손실 → studio_loss(out, y, model) 코드 (losses.build와 같은 식). heads: 정답 여러 개의 머리."""
     from dlstudio import losses
     seg = task == "segmentation"
-    out = ([f"CLASS_WEIGHTS = torch.tensor({[round(float(v), 6) for v in cw]})   # 드문 클래스를 무겁게", ""] if cw else []) + [
+    col = {h["name"]: (j, h) for j, h in enumerate(heads or [])}
+    out = _heads_code(heads) if heads else []
+    if isinstance(cw, dict) and cw:
+        out += ["CLASS_WEIGHTS = {                 # 정답마다 드문 클래스를 무겁게"] + [
+            f"    {k!r}: torch.tensor({[round(float(v), 6) for v in w]})," for k, w in cw.items()] + ["}", ""]
+    elif cw:
+        out += [f"CLASS_WEIGHTS = torch.tensor({[round(float(v), 6) for v in cw]})   # 드문 클래스를 무겁게", ""]
+    out += [
         "def studio_loss(out, y, model):",
         f'    """손실 = {" + ".join(losses.label(t) for t in spec)} (DL studio에서 조립한 것)."""',
         "    total = 0"]
     for t in spec:
         n, w = t["term"], t["w"]
+        O, Y, KK, CW = "out", "y", K, "CLASS_WEIGHTS"
+        if t.get("head") is not None and n not in ("l2", "l1"):
+            j, h = col[t["head"]]
+            s, e = h["start"], h["start"] + h["size"]
+            if h["kind"] == "class":
+                out.append(f"    o, yh = out[:, {s}:{e}], y[:, {j}].long()          # 정답 '{h['name']}'")
+                KK = h["size"]
+            else:
+                out.append(f"    o, yh = out[:, {s}], y[:, {j}]                     # 정답 '{h['name']}'")
+            O, Y, CW = "o", "yh", f"CLASS_WEIGHTS[{h['name']!r}]"
         if n in ("ce", "focal"):
-            out.append(f"    logp = F.log_softmax(out.reshape(len(y), {K}, -1), 1).transpose(1, 2).reshape(-1, {K}); yy = y.reshape(-1)"
-                       if seg else "    logp, yy = F.log_softmax(out, 1), y")
+            out.append(f"    logp = F.log_softmax({O}.reshape(len({Y}), {KK}, -1), 1).transpose(1, 2).reshape(-1, {KK}); yt = {Y}.reshape(-1)"
+                       if seg else f"    logp, yt = F.log_softmax({O}, 1), {Y}")
             if n == "ce":
                 sm = t.get("smooth", 0.0)
-                out += [f"    q = F.one_hot(yy, {K}).float() * {1 - sm} + {sm / K}", "    per = -(q * logp).sum(1)"]
+                out += [f"    q = F.one_hot(yt, {KK}).float() * {1 - sm} + {sm / KK}", "    per = -(q * logp).sum(1)"]
             else:
-                out += ["    lp = logp.gather(1, yy[:, None])[:, 0]", f"    per = -((1 - lp.exp()).clamp_min(0) ** {t['gamma']}) * lp"]
+                out += ["    lp = logp.gather(1, yt[:, None])[:, 0]", f"    per = -((1 - lp.exp()).clamp_min(0) ** {t['gamma']}) * lp"]
             if t.get("balance") and cw:
-                out += ["    cw = CLASS_WEIGHTS.to(out.device)[yy]", "    v = (per * cw).sum() / cw.sum().clamp_min(1e-12)"]
+                out += [f"    cw = {CW}.to(out.device)[yt]", "    v = (per * cw).sum() / cw.sum().clamp_min(1e-12)"]
             else:
                 out.append("    v = per.mean()")
         elif n == "dice":
-            out += [f"    p = F.softmax(out.reshape(len(y), {K}, -1), 1)", f"    oh = F.one_hot(y, {K}).permute(0, 2, 1).float()",
+            out += [f"    p = F.softmax({O}.reshape(len({Y}), {KK}, -1), 1)", f"    oh = F.one_hot({Y}, {KK}).permute(0, 2, 1).float()",
                     "    v = (1 - (2 * (p * oh).sum((0, 2)) + 1) / (p.sum((0, 2)) + oh.sum((0, 2)) + 1)).mean()"]
         elif n == "mse":
-            out.append("    v = ((out - y) ** 2).mean()")
+            out.append(f"    v = (({O} - {Y}) ** 2).mean()")
         elif n == "mae":
-            out.append("    v = (out - y).abs().mean()")
+            out.append(f"    v = ({O} - {Y}).abs().mean()")
         elif n == "huber":
             d = t["delta"]
-            out += ["    e = (out - y).abs()", f"    v = torch.where(e < {d}, 0.5 * e * e, {d} * (e - {0.5 * d})).mean()"]
+            out += [f"    e = ({O} - {Y}).abs()", f"    v = torch.where(e < {d}, 0.5 * e * e, {d} * (e - {0.5 * d})).mean()"]
         elif n in ("l2", "l1"):
             f = "(p * p).sum()" if n == "l2" else "p.abs().sum()"
             out.append(f"    v = sum({f} for p in model.parameters() if p.requires_grad)")
@@ -913,6 +948,19 @@ def to_keras(graph: dict, length: int, n_out: int, image: tuple = None, data_inf
                     "        loss += tf.reduce_sum(-tf.reduce_sum(t[:, 5:] * tf.nn.log_softmax(o[:, 5:], axis=1), 1) * pos)",
                     "    return loss / tf.cast(tf.shape(out)[0], tf.float32)"]
         loss, metric = "det_loss", "[]"
+    elif task == "multi" and (data_info or {}).get("heads"):
+        helpers += [""] + _heads_code(data_info["heads"]) + [
+            "def multi_loss(target, out):",
+            '    """정답마다: 분류는 교차 엔트로피, 값은 MSE (DL studio의 기본), 모두 더함."""',
+            "    total = 0.0",
+            "    for j, h in enumerate(HEADS):",
+            '        o = out[:, h["start"]:h["start"] + h["size"]]',
+            '        if h["kind"] == "class":',
+            "            total += tf.reduce_mean(keras.losses.sparse_categorical_crossentropy(tf.cast(target[:, j], tf.int32), o, from_logits=True))",
+            "        else:",
+            "            total += tf.reduce_mean((o[:, 0] - target[:, j]) ** 2)",
+            "    return total"]
+        loss, metric = "multi_loss", "[]"
     elif task in ("regression", "forecast", "anomaly"):
         loss, metric = '"mse"', '["mae"]'
     else:
@@ -925,7 +973,7 @@ def to_keras(graph: dict, length: int, n_out: int, image: tuple = None, data_inf
     lines += body
     lines += [f'    return keras.Model(x, {plan.out}, name="studio_model")', "", "",
               f"def train(model, X, y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
-              f'    """X: 위 입력 모양의 배열, y: {"정답 클래스 번호" if task not in ("regression", "forecast", "anomaly") else "다음 값들 (샘플, 예측 길이)" if task == "forecast" else "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요" if task == "anomaly" else "정답 값"}. Adam으로 학습."""',
+              f'    """X: 위 입력 모양의 배열, y: {_y_doc(task)}. Adam으로 학습."""',
               f"    model.compile(optimizer=keras.optimizers.Adam(lr), loss={loss}, metrics={metric})",
               "    model.fit(X, y, epochs=epochs, batch_size=batch_size)",
               "    return model", "", "",

@@ -590,6 +590,7 @@ function label(b, summary) {
     case "output":
       if (b.head === "distance") return "Output · 정상과의 거리";
       if (!summary) return "Output";
+      if (summary.task === "multi" && summary.targets) return `Output · 정답 ${summary.targets.length}개 (${summary.targets.map((t) => t.name).join(" · ")})`.slice(0, 60);
       if (summary.task !== "classification") return "Output · regression";
       {
         const names = summary.classes.join(" · ");           // 클래스가 많으면 상자를 넘지 않게 개수만

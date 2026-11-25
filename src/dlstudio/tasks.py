@@ -212,6 +212,17 @@ T_SEG_GRU = {"id": "seg_bigru", "name": "양방향 GRU",
              "blocks": [_conv(16, 5), P2, {"type": "gru", "hidden": 32, "layers": 1, "bidirectional": True, "return_sequences": True}, OUT]}
 
 
+# 정답 여러 개: 모든 정답이 같은 몸통을 함께 쓰고, 출력 블록이 정답마다 머리를 냄
+T_MULTI_MLP = {"id": "multi_mlp", "name": "MLP (몸통 함께 쓰기)",
+               "desc": "Dense 층 몸통을 모든 정답이 함께 쓰고, 마지막 출력 블록이 정답마다 머리(분류는 클래스 점수, 값은 숫자 하나)를 냄",
+               "when": "처음 시작할 때. 정답끼리 관련이 있으면 함께 배워 서로 도움",
+               "blocks": [_dense(64), P2, _dense(32), P2, OUT]}
+T_MULTI_DEEP = {"id": "multi_deep_mlp", "name": "깊은 MLP (몸통 함께 쓰기)",
+                "desc": "몸통을 더 깊게 쌓고 BatchNorm·Dropout을 더한 모델",
+                "when": "MLP로 부족할 때",
+                "blocks": [_dense(128), BN, P2, _drop(0.1), _dense(64), BN, P2, _dense(32), P2, OUT]}
+
+
 def _soon(id_, name, input_, examples_text, desc):
     return {"id": id_, "name": name, "input": input_, "available": False, "desc": desc,
             "examples_text": examples_text}
@@ -300,6 +311,15 @@ CATALOG = [
           "examples_text": "설비 전류로 지금 어떤 공정 단계인지 나누기, 심전도에서 박동 구간 표시",
           "example_data": [["pneumatic_seg", "출하 검사 기계 전류 — 시점마다 공정 단계 5묶음 (제조, 100Hz)"]],
           "templates": [T_SEG_TCN, T_SEG_UNET, T_SEG_GRU]},
+     ]},
+    {"id": "multi", "name": "여러 정답 동시에", "icon": "🧩",
+     "desc": "한 입력으로 여러 정답(분류·숫자 섞어서)을 함께 맞힙니다",
+     "subtasks": [
+         {"id": "multi_tab", "name": "표 데이터 여러 정답", "input": "tabular", "available": True, "task": "multi",
+          "desc": "한 행(여러 측정값)을 보고 정답 여러 개를 한 모델로 함께 예측. 정답마다 손실을 따로 조립할 수 있음",
+          "examples_text": "설비 부품마다의 상태를 한 번에 진단, 공정 조건으로 품질 지표 여러 개 예측",
+          "example_data": [["hydraulic_multi", "유압 시스템 — 냉각기·펌프 상태(분류)와 밸브 %·축압기 압력(숫자)을 한 번에 (제조)"]],
+          "templates": [T_MULTI_MLP, T_MULTI_DEEP]},
      ]},
 ]
 

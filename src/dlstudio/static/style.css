@@ -798,3 +798,14 @@ td.seg-cell { text-align: left; }
 .loss-term .ldel { border: 0; background: none; padding: 0 4px; color: var(--muted); }
 .lplus { color: var(--muted); }
 .loss-parts { margin-top: 6px; font-size: 12.5px; }
+.loss-box .loss-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+.loss-row .loss-k { min-width: 92px; }
+.loss-row .ladd { padding: 2px 8px; }
+.head-tabs { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 6px; }
+.head-tabs button { border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; background: none; }
+.head-tabs button[aria-selected="true"] { background: var(--accent-bg); border-color: var(--accent); }
+.loss-box.multi { flex-direction: column; align-items: stretch; }
+.loss-box.multi #loss-terms { display: flex; flex-direction: column; gap: 6px; }
+.loss-box.multi > .loss-k { align-self: flex-start; }
+.loss-row .loss-k { font-weight: 500; color: var(--text); }
+.loss-box.multi > button { align-self: flex-start; }

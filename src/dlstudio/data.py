@@ -70,6 +70,9 @@ class Dataset:
         if self.task == "segmentation":
             from dlstudio.segment import SegOut
             return SegOut(len(self.classes), self.length)
+        if self.task == "multi":
+            from dlstudio.multi import MultiOut
+            return MultiOut(self.extra["targets"])
         return len(self.classes) if self.task == "classification" else 1
 
     @property
@@ -89,6 +92,9 @@ class Dataset:
         if self.task == "segmentation":
             from dlstudio.segment import states_text
             return states_text(y[i], self.classes)
+        if self.task == "multi":
+            from dlstudio.multi import label_text
+            return label_text(y[i], self.n_out.heads)
         return self.classes[int(y[i])] if self.task == "classification" else float(y[i])
 
     def raw(self, X: np.ndarray) -> np.ndarray:
@@ -101,8 +107,12 @@ class Dataset:
 
     def _losses(self) -> dict:
         from dlstudio import losses
-        return {"allowed": losses.allowed(self.task), "names": losses.NAMES, "default": losses.default(self.task),
-                "options": {k: {o: list(v) for o, v in opts.items()} for k, opts in losses.OPTIONS.items()}}
+        heads = self.n_out.heads if self.task == "multi" else None
+        r = {"allowed": losses.allowed(self.task), "names": losses.NAMES, "default": losses.default(self.task, heads),
+             "options": {k: {o: list(v) for o, v in opts.items()} for k, opts in losses.OPTIONS.items()}}
+        if heads:                                           # 정답마다 칩 줄 (그 정답 종류의 항만)
+            r["heads"] = [{"name": h["name"], "kind": h["kind"], "allowed": losses.TERMS[h["kind"]]} for h in heads]
+        return r
 
     def summary(self) -> dict:
         s = self._summary()
@@ -116,6 +126,8 @@ class Dataset:
             return self._fc_summary()
         if self.task == "segmentation":
             return self._seg_summary()
+        if self.task == "multi":
+            return self._multi_summary()
         y_all = np.concatenate([self.y_train, self.y_test])
         if self.task in ("classification", "anomaly"):
             counts = {name: int((y_all == k).sum()) for k, name in enumerate(self.classes)}
@@ -171,6 +183,24 @@ class Dataset:
                     segment={"n_classes": len(self.classes), "length": int(self.length)},
                     preview=[{"label": states_text(self.y_train[i], self.classes), "values": [round(float(v), 5) for v in raw[i]],
                               "states": [int(v) for v in self.y_train[i]]} for i in picks])
+
+    def _multi_summary(self) -> dict:
+        """정답 여러 개: 정답마다 클래스 수·값 범위, 미리보기 이름은 정답들을 이어 쓴 것."""
+        from dlstudio.multi import label_text
+        heads = self.n_out.heads
+        Y = np.concatenate([self.y_train, self.y_test])
+        tg = []
+        for j, h in enumerate(heads):
+            if h["kind"] == "class":
+                tg.append({"name": h["name"], "kind": "class", "classes": h["classes"],
+                           "counts": {c: int((Y[:, j] == k).sum()) for k, c in enumerate(h["classes"])}})
+            else:
+                tg.append({"name": h["name"], "kind": "value", "range": [float(Y[:, j].min()), float(Y[:, j].max())]})
+        raw = self.raw(self.X_train)
+        return dict(self._base_summary(), class_counts={}, target_range=None, targets=tg,
+                    feature_means=None if self.length > 40 else [round(float(v), 4) for v in raw.mean(0)],
+                    preview=[{"label": label_text(self.y_train[i], heads), "values": [round(float(v), 5) for v in raw[i]]}
+                             for i in range(min(6, len(raw)))])
 
     def _ae_summary(self, counts: dict) -> dict:
         raw_tr, raw_te = self.raw(self.X_train), self.raw(self.X_test)
@@ -831,6 +861,19 @@ def _hydraulic_states(z: dict) -> np.ndarray:
     return np.where(bad.sum(1) == 0, 0, np.where(bad.sum(1) > 1, 4, 1 + bad.argmax(1))).astype(np.int64)
 
 
+# 정답 여러 개: 유압 시스템 냉각기·밸브·펌프·축압기 상태를 한 번에 (분류 2 + 값 2)
+HYDRAULIC_TARGETS = [{"name": "냉각기", "kind": "class", "classes": ["정상", "효율 저하", "거의 고장"]},
+                     {"name": "밸브 (%)", "kind": "value"},
+                     {"name": "펌프 누설", "kind": "class", "classes": ["없음", "약함", "심함"]},
+                     {"name": "축압기 (bar)", "kind": "value"}]
+
+
+def _hydraulic_multi(z: dict) -> tuple:
+    """유압 사이클 → (X 17개 측정값, 정답 표: 냉각기 상태 번호 (100%·20%·3%), 밸브 %, 펌프 누설 0·1·2, 축압기 bar)."""
+    cool = np.select([z["cooler"] >= 100, z["cooler"] >= 20], [0, 1], 2)
+    return _float(z["X"]), np.stack([cool, z["valve"], z["pump"], z["acc"]], 1).astype(np.float64)
+
+
 PLATE_FEATURES = ["X 최소", "X 최대", "Y 최소", "Y 최대", "면적 (픽셀)", "X 둘레", "Y 둘레", "밝기 합", "최소 밝기", "최대 밝기",
                   "컨베이어 길이", "강종 A300", "강종 A400", "판 두께", "가장자리 지수", "빈 공간 지수", "정사각 지수",
                   "바깥 X 지수", "가장자리 X 지수", "가장자리 Y 지수", "바깥 전체 지수", "면적 로그", "X 로그 지수",
@@ -858,10 +901,12 @@ AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic", "steelblast
                "pneumonia_ae": "pneumonia"}         # 이상 탐지: 분류 예시를 정상만 학습으로
 DET_EXAMPLES = {"pcb_det": ("pcb_det", 64)}                                    # 탐지: 종류 → (파일, 그림 크기)
 SEG_EXAMPLES = {"pneumatic_seg": "pneumatic_seg"}                               # 구간 분할: 종류 → 파일 (창 X·시점마다 상태 y)
+MULTI_EXAMPLES = {"hydraulic_multi": ("hydraulic", _hydraulic_multi, HYDRAULIC_TARGETS, HYDRAULIC_FEATURES)}   # 정답 여러 개
 ALIASES = {"vibration": "bearing", "process_cls": "steel_plates", "process_reg": "concrete", "wear_rul": "hydraulic_valve",
            "surface": "steelblast", "parts_det": "pcb_det", "factory_power": "steel_power", "vibration_ae": "bearing_ae",
            "process_ae": "hydraulic_ae"}                                       # 예전(합성) 예시 이름 → 바꾼 실제 데이터
-EXAMPLE_KINDS = sorted(set(EXAMPLES) | set(FC_EXAMPLES) | set(AE_EXAMPLES) | set(DET_EXAMPLES) | set(SEG_EXAMPLES))
+EXAMPLE_KINDS = sorted(set(EXAMPLES) | set(FC_EXAMPLES) | set(AE_EXAMPLES) | set(DET_EXAMPLES) | set(SEG_EXAMPLES)
+                       | set(MULTI_EXAMPLES))
 
 
 def example_files(kind: str) -> list:
@@ -873,6 +918,8 @@ def example_files(kind: str) -> list:
         return [DET_EXAMPLES[kind][0] + ".npz"]
     if kind in SEG_EXAMPLES:
         return [SEG_EXAMPLES[kind] + ".npz"]
+    if kind in MULTI_EXAMPLES:
+        return [MULTI_EXAMPLES[kind][0] + ".npz"]
     kind = AE_EXAMPLES.get(kind, kind)
     return [EXAMPLES[kind][0] + ".npz"] if kind in EXAMPLES else []
 
@@ -895,6 +942,10 @@ def example_new(d) -> dict:
         X = _float(z["X_new"])
         return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None,
                 "truth": z["y_new"].astype(np.int64).tolist()}
+    if kind in MULTI_EXAMPLES:
+        f, make = MULTI_EXAMPLES[kind][:2]
+        X, Y = make({k[:-4]: v for k, v in _npz(f).items() if k.endswith("_new")})
+        return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None, "truth": Y.tolist()}
     if kind in DET_EXAMPLES:
         z = _npz(DET_EXAMPLES[kind][0])
         X, boxes, _ = _det_arrays({"X": z["X_new"], "boxes": z["boxes_new"], "names": z["names"]})
@@ -934,6 +985,12 @@ def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 
         z = _npz(SEG_EXAMPLES[kind])
         return make_segment_dataset(_float(z["X"]), z["y"].astype(np.int64), [str(c) for c in z["names"]], test_ratio=test_ratio,
                                     seed=seed, normalize=normalize, source={"example": kind})
+    if kind in MULTI_EXAMPLES:
+        from dlstudio.multi import make_multi_dataset
+        f, make, targets, feats = MULTI_EXAMPLES[kind]
+        X, Y = make(_npz(f))
+        return make_multi_dataset(X, Y, targets, test_ratio=test_ratio, seed=seed, normalize=normalize,
+                                  source={"example": kind}, features=feats)
     if kind in AE_EXAMPLES:
         from dlstudio.anomaly import to_anomaly
         d = load_example(AE_EXAMPLES[kind], normalize=normalize, test_ratio=test_ratio, seed=seed)

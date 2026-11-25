@@ -73,6 +73,7 @@ function metaText() {                                   // 첫 화면 카드의 
       (!a || r.results.test_metric > a.results.test_metric) ? r : a), null);
     const name = best && best.results.metric_name;
     const score = !best ? "아직 학습 안 함" : name === "r2" ? `최고 R² ${best.results.test_metric.toFixed(3)}`
+      : name === "mean" ? `최고 평균 ${best.results.test_metric.toFixed(3)}`
       : name === "auc" ? `최고 AUC ${best.results.test_metric.toFixed(3)}` : name === "recon" ? "학습함 (정상만)"
       : `최고 시험 ${name === "map50" ? "mAP@0.5" : "정확도"} ${(best.results.test_metric * 100).toFixed(1)}%`;
     return [st.sub ? st.sub.name : "", runs.length ? `학습 ${runs.length}번` : "", score].filter(Boolean).join(" · ");

@@ -838,43 +838,56 @@ function aeMetric(out, X, y) {
   const s = aeScores(out, X, y.length);
   return aeHasBoth(y) ? aeAuc(s, y) : s.reduce((a, b) => a + b, 0) / s.length;
 }
-// 손실 조립 (losses.py와 같은 식): 전체 = Σ w × 항. ctx: {task, K, seg, det, cw (클래스 가중치), reg}
+// 손실 조립 (losses.py와 같은 식): 전체 = Σ w × 항. ctx: {seg, det, cw (클래스 가중치 — 정답 여러 개면 {정답 이름: 가중치}), reg,
+// heads (정답 여러 개의 머리: 정답 항은 head 이름으로 그 머리 칸·정답 열만, 정답 yb는 (B, 정답 수))}
 function buildLoss(spec, ctx) {
-  const cwT = ctx.cw ? tf.tensor1d(Float32Array.from(ctx.cw)) : null;
-  const flat = (out, yb) => (ctx.seg                         // 구간 분할: (B, K·L)·(B, L, K) → 시점마다 한 줄 (B·L, K)
-    ? [out.reshape([-1, ctx.seg.n_cls, ctx.seg.length]).transpose([0, 2, 1]).reshape([-1, ctx.seg.n_cls]), yb.reshape([-1, ctx.seg.n_cls])]
-    : [out, yb]);
-  const wmean = (per, oh, t) => {
+  const cwOf = {};
+  if (Array.isArray(ctx.cw)) cwOf[""] = tf.tensor1d(Float32Array.from(ctx.cw));
+  else if (ctx.cw) for (const [k, v] of Object.entries(ctx.cw)) cwOf[k] = tf.tensor1d(Float32Array.from(v));
+  const heads = ctx.heads ? Object.fromEntries(ctx.heads.map((h, j) => [h.name, [j, h]])) : null;
+  const flat = (out, yb) => [out.reshape([-1, ctx.seg.n_cls, ctx.seg.length]).transpose([0, 2, 1]).reshape([-1, ctx.seg.n_cls]),
+    yb.reshape([-1, ctx.seg.n_cls])];                      // 구간 분할: (B, K·L)·(B, L, K) → 시점마다 한 줄 (B·L, K)
+  const wmean = (per, oh, t, cwT) => {
     if (!t.balance || !cwT) return per.mean();
     const w = tf.matMul(oh, cwT.reshape([-1, 1])).reshape([-1]);
     return per.mul(w).sum().div(tf.maximum(w.sum(), 1e-12));
   };
   const term = (t, out, yb, net) => {
+    if (t.term === "l2") return tf.addN(net.trainable.map((v) => v.square().sum()));
+    if (t.term === "l1") return tf.addN(net.trainable.map((v) => v.abs().sum()));
+    let o = out, y = yb, cwT = cwOf[""] || null, seg = ctx.seg;
+    if (heads && t.head !== undefined && t.head !== null) {   // 정답 여러 개: 그 정답의 머리 칸·정답 열
+      const [j, h] = heads[t.head];
+      o = out.slice([0, h.start], [-1, h.size]);
+      const yj = yb.slice([0, j], [-1, 1]).reshape([-1]);
+      if (h.kind === "class") y = tf.oneHot(yj.toInt(), h.size).toFloat();
+      else { o = o.reshape([-1]); y = yj; }
+      cwT = cwOf[h.name] || null;
+      seg = null;
+    }
     switch (t.term) {
       case "ce": case "focal": {
         // log-softmax = o − logΣexp(o): tf.logSoftmax의 기울기는 WebGL에서 묶음 크기가 홀수 등일 때 NaN이 됨
-        const [o, oh] = flat(out, yb), K = o.shape[1], logp = o.sub(tf.logSumExp(o, 1, true));
+        const [p, oh] = seg ? flat(o, y) : [o, y], K = p.shape[1], logp = p.sub(tf.logSumExp(p, 1, true));
         if (t.term === "ce") {
           const sm = t.smooth || 0, q = oh.mul(1 - sm).add(sm / K);
-          return wmean(q.mul(logp).sum(1).neg(), oh, t);
+          return wmean(q.mul(logp).sum(1).neg(), oh, t, cwT);
         }
         const lp = oh.mul(logp).sum(1);
-        return wmean(tf.pow(tf.relu(tf.scalar(1).sub(tf.exp(lp))), t.gamma).mul(lp).neg(), oh, t);
+        return wmean(tf.pow(tf.relu(tf.scalar(1).sub(tf.exp(lp))), t.gamma).mul(lp).neg(), oh, t, cwT);
       }
       case "dice": {
-        const K = ctx.seg.n_cls, p = tf.softmax(out.reshape([-1, K, ctx.seg.length]).transpose([0, 2, 1]));   // (B, L, K)
-        const inter = p.mul(yb).sum([0, 1]), tot = p.sum([0, 1]).add(yb.sum([0, 1]));
+        const K = ctx.seg.n_cls, p = tf.softmax(o.reshape([-1, K, ctx.seg.length]).transpose([0, 2, 1]));   // (B, L, K)
+        const inter = p.mul(y).sum([0, 1]), tot = p.sum([0, 1]).add(y.sum([0, 1]));
         return tf.scalar(1).sub(inter.mul(2).add(1).div(tot.add(1))).mean();
       }
-      case "mse": return out.sub(yb).square().mean();
-      case "mae": return out.sub(yb).abs().mean();
-      case "huber": {
-        const e = out.sub(yb).abs(), d = t.delta;
-        return tf.where(e.less(d), e.square().mul(0.5), e.sub(0.5 * d).mul(d)).mean();
+      case "mse": return o.sub(y).square().mean();
+      case "mae": return o.sub(y).abs().mean();
+      case "huber": {                                       // 0.5·min(e,δ)² + δ·(e − min(e,δ)) (tf.where의 비교는 기울기가 없음)
+        const e = o.sub(y).abs(), m = tf.minimum(e, t.delta);
+        return m.square().mul(0.5).add(e.sub(m).mul(t.delta)).mean();
       }
-      case "det": return detLoss(out, yb, ctx.det.grid, ctx.det.per_cell);
-      case "l2": return tf.addN(net.trainable.map((v) => v.square().sum()));
-      case "l1": return tf.addN(net.trainable.map((v) => v.abs().sum()));
+      case "det": return detLoss(o, y, ctx.det.grid, ctx.det.per_cell);
       default: throw new Error("모르는 손실: " + t.term);
     }
   };
@@ -887,8 +900,30 @@ function buildLoss(spec, ctx) {
     });
     return { total, parts };
   };
-  fn.dispose = () => { if (cwT) cwT.dispose(); };
+  fn.dispose = () => Object.values(cwOf).forEach((t) => t.dispose());
   return fn;
+}
+
+// 정답 여러 개 (multi.py와 같음): 정답마다 분류 정확도·값 R², 전체는 평균
+function multiMetric(out, y, heads, nOut) {
+  const T = heads.length, n = y.length / T, vals = [];
+  heads.forEach((h, j) => {
+    if (h.kind === "class") {
+      let ok = 0;
+      for (let i = 0; i < n; i++) {
+        let b = 0;
+        for (let k = 1; k < h.size; k++) if (out[i * nOut + h.start + k] > out[i * nOut + h.start + b]) b = k;
+        if (b === Math.round(y[i * T + j])) ok++;
+      }
+      vals.push(ok / n);
+    } else {
+      let m = 0, v = 0, e = 0;
+      for (let i = 0; i < n; i++) m += y[i * T + j] / n;
+      for (let i = 0; i < n; i++) { v += (y[i * T + j] - m) ** 2 / n; e += (out[i * nOut + h.start] - y[i * T + j]) ** 2 / n; }
+      if (v > 0) vals.push(1 - e / v);
+    }
+  });
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN;
 }
 
 // 구간 분할 (segment.py와 같음): 시점 정확도. out은 창마다 (상태 K, 길이 L)을 펼친 것
@@ -924,9 +959,10 @@ async function train(plan, d, s, onEpoch, isCancelled) {
   const net = new Net(plan, s.seed || 0);
   const det = d.task === "detection" ? d.det : null;       // 탐지: {grid, per_cell, n_cls, train, test (그림마다 정답 상자)}
   const seg = d.task === "segmentation" ? d.seg : null;    // 구간 분할: {n_cls, length}, 정답은 시점마다 상태 번호
-  const reg = !det && !seg && d.task !== "classification";        // 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화 (jobs.target_scale)
+  const multi = d.task === "multi" ? d.multi : null;      // 정답 여러 개: {heads}, 정답은 (샘플, 정답 수)
+  const reg = !det && !seg && !multi && d.task !== "classification";   // 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화 (jobs.target_scale)
   const ae = d.task === "anomaly", fc = d.task === "forecast";
-  const nY = ae || fc ? d.n_out : 1;
+  const nY = ae || fc || multi ? d.n_out : 1;
   const target = ae ? d.X_train : d.y_train;              // 이상 탐지는 입력을 되살림
   const score = (out, which) => {
     const y = which === "test" ? d.y_test : d.y_train;
@@ -934,6 +970,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     if (fc) return fcMetric(out, y);
     if (ae) return aeMetric(out, which === "test" ? d.X_test : d.X_train, y);
     if (seg) return segMetric(out, y, seg.n_cls, seg.length);
+    if (multi) return multiMetric(out, y, multi.heads, d.n_out);
     return metric(out, y, d.task, d.n_out);
   };
   const mu = new Float64Array(nY), sd = new Float64Array(nY).fill(1);
@@ -943,18 +980,28 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     for (let i = 0; i < d.n_train; i++) for (let j = 0; j < nY; j++) q[j] += (target[i * nY + j] - mu[j]) ** 2;
     for (let j = 0; j < nY; j++) sd[j] = Math.sqrt(q[j] / d.n_train) || 1;
   }
-  const back = (out) => (reg ? out.map((v, i) => v * sd[i % nY] + mu[i % nY]) : out);
+  const T = multi ? multi.heads.length : 0;
+  if (multi) multi.heads.forEach((h, j) => {              // 값 정답만 정규화 (multi.target_scale): 출력 칸 h.start의 평균·표준편차
+    if (h.kind !== "value") return;
+    let m = 0, q = 0;
+    for (let i = 0; i < d.n_train; i++) m += d.y_train[i * T + j] / d.n_train;
+    for (let i = 0; i < d.n_train; i++) q += (d.y_train[i * T + j] - m) ** 2;
+    mu[h.start] = m; sd[h.start] = Math.sqrt(q / d.n_train) || 1;
+  });
+  const back = (out) => (reg || multi ? out.map((v, i) => v * sd[i % nY] + mu[i % nY]) : out);
   const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image);
   const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image);
   const head = frozenHead(plan);                           // 고정한 사전학습 층: 특징을 한 번만 뽑고 뒷부분만 학습
   const Ftr = head ? await headFeatures(net, Xtr) : Xtr, Fte = head ? await headFeatures(net, Xte) : Xte;
   const ytr = seg ? tf.tidy(() => tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), seg.n_cls).toFloat().reshape([d.n_train, seg.length, seg.n_cls]))
     : det ? tf.tensor2d(d.y_train, [d.n_train, d.n_out])
+    : multi ? tf.tensor2d(Float32Array.from(d.y_train, (v, i) => { const h = multi.heads[i % T]; return h.kind === "value" ? (v - mu[h.start]) / sd[h.start] : v; }), [d.n_train, T])
     : reg ? tf.tensor2d(Float32Array.from(target, (v, i) => (v - mu[i % nY]) / sd[i % nY]), [d.n_train, nY])
     : tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), d.n_out).toFloat();
   const opt = tf.train.adam(s.lr || 1e-3, 0.9, 0.999, 1e-8);
   const rand = rng((s.seed || 0) * 104729 + 3);
-  const custom = s.loss ? buildLoss(s.loss, { seg, det, cw: s.class_weights, reg }) : null;   // 조립한 손실 (없으면 과제의 기본)
+  const spec = s.loss || (multi ? multi.heads.map((h) => ({ term: h.kind === "class" ? "ce" : "mse", w: 1, head: h.name, label: h.name })) : null);
+  const custom = spec ? buildLoss(spec, { seg, det, cw: s.class_weights, reg, heads: multi && multi.heads }) : null;   // 조립한 손실 (없으면 과제의 기본)
   const lossOf = (out, yb) => (custom ? custom(out, yb, net).total
     : det ? detLoss(out, yb, det.grid, det.per_cell)
     : seg ? tf.losses.softmaxCrossEntropy(yb, out.reshape([-1, seg.n_cls, seg.length]).transpose([0, 2, 1]))   // 시점마다
@@ -1027,7 +1074,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       await yieldNow();
     }
     if (bestState) { for (const [k, v] of Object.entries(bestState)) net.P[k].assign(v); dropBest(); }   // 가장 좋았던 epoch로
-    if (reg) {                                              // 정규화한 정답으로 배운 출력층에 되돌림을 접어 넣음 (원래 단위로 냄)
+    if (reg || multi) {                                     // 정규화한 정답으로 배운 출력층에 되돌림을 접어 넣음 (원래 단위로 냄)
       const last = plan.steps.find((st) => st.name === plan.out);
       const kk = last.key + (last.in_shape.length >= 2 ? ".1" : "");
       const W = net.P[kk + ".weight"], b = net.P[kk + ".bias"];
@@ -1041,14 +1088,14 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     net.start = null;
     const out = te.out, outTr = tr.out;
     const r = { epochs_done: done, test_metric: score(out, "test"),
-      metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
+      metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : multi ? "mean" : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
       train_metric: score(outTr, "train"),   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
       best_epoch: bestEpoch, early_stopped: early, n_val: vIdx ? vIdx.length : 0 };
     if (!te.ok || !tr.ok)
       r.warnings.push({ message: "학습 중 이 브라우저의 GPU 계산이 불안정했습니다. 아래 결과는 CPU로 다시 계산한 값이지만, 학습이 덜 됐을 수 있습니다",
         hint: "페이지를 새로 고친 뒤 다시 학습해 보세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
     if (det) Object.assign(r, detResult(out, det.test, det));
-    else if (ae || fc || seg) return { net, result: r, out, outTr };   // 결과 화면 값은 Python (jobs.task_result)이 출력으로 만듦
+    else if (ae || fc || seg || multi) return { net, result: r, out, outTr };   // 결과 화면 값은 Python (jobs.task_result)이 출력으로 만듦
     else if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);
     else {
       [r.confusion, r.recall] = confusion(out, d.y_test, d.n_out);
@@ -1176,13 +1223,18 @@ function detResult(out, gts, det) {
 // GPU로 예측하고 앞 몇 개만 CPU로 맞춰 봄 → {out, ok}. 맞지 않으면 전체를 CPU로 다시 (ok false)
 async function checkedPredict(net, X, n, k = 32) {
   const out = net.predict(X);
-  const m = Math.min(k, n);
-  if (!m || tf.getBackend() === "cpu") return { out, ok: true };
-  const head = X.slice([0], [m]);
+  if (!n || tf.getBackend() === "cpu") return { out, ok: true };
+  const B = 256, nb = Math.ceil(n / B), per = Math.max(1, Math.min(4, Math.floor(k / nb))), rows = [];
+  for (let i = 0; i < n; i += B) {                         // 묶음(predict의 256개)마다 앞 몇 개와 마지막 하나: GPU가 한 묶음만 틀려도 잡음
+    const e = Math.min(n, i + B);
+    for (let j = i; j < Math.min(e, i + per); j++) rows.push(j);
+    if (rows[rows.length - 1] !== e - 1) rows.push(e - 1);
+  }
+  const idx = tf.tensor1d(rows, "int32"), pick = tf.gather(X, idx);
   try {
-    const cpu = await onCpu(() => net.predict(head));
-    if (same(out.subarray(0, cpu.length), cpu)) return { out, ok: true };
-  } finally { head.dispose(); }
+    const cpu = await onCpu(() => net.predict(pick)), w = out.length / n;
+    if (rows.every((r, t) => same(out.subarray(r * w, (r + 1) * w), cpu.subarray(t * w, (t + 1) * w)))) return { out, ok: true };
+  } finally { idx.dispose(); pick.dispose(); }
   return { out: await onCpu(() => net.predict(X)), ok: false };
 }
 async function onCpu(fn) {
@@ -1215,7 +1267,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, fitDistance, segMetric, buildLoss, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
+const API = { Net, train, fitDistance, segMetric, buildLoss, multiMetric, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;

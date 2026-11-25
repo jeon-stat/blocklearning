@@ -7,7 +7,7 @@
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
 const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "losses.py", "nn_extra.py",
-  "labeling.py", "labeling_sources.py", "predict.py", "pretrained.py", "project.py", "segment.py", "tasks.py", "web.py", "weblabel.py"];
+  "labeling.py", "labeling_sources.py", "predict.py", "pretrained.py", "project.py", "multi.py", "segment.py", "tasks.py", "web.py", "weblabel.py"];
 const PRETRAINED = BASE + "pretrained/";                 // 사전학습 가중치 (그 블록을 쓸 때만 받음)
 const gotData = new Set();                               // 받아 둔 예시 데이터 파일 (예시를 누를 때만 받음)
 const E = () => window.DLEngine;
@@ -179,6 +179,12 @@ function activations(body) {
     pred = `이상 점수 ${Number(sc.toPrecision(3))}` + (th === undefined || th === null ? "" : sc > th ? " → 이상" : " → 정상");
   }
   else if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; }
+  else if (d.task === "multi") pred = d.multi.heads.map((h) => {      // 정답마다: 분류는 가장 큰 클래스, 값은 그 칸
+    if (h.kind !== "class") return `${h.name} ${Number(out[h.start].toPrecision(4))}`;
+    let b = 0;
+    for (let k = 1; k < h.size; k++) if (out[h.start + k] > out[h.start + b]) b = k;
+    return `${h.name} ${h.classes[b]}`;
+  }).join(" · ");
   else pred = out[0];
   return { index: i, label: s.label, prediction: pred, input: s.input, values, attention, order: s.order };
 }

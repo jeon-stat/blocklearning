@@ -263,6 +263,9 @@ def table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=N
     """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌, 이상 탐지는 점수에).
     results: 학습 결과 (이상 탐지의 기준값)."""
     out = np.asarray(out, dtype=np.float64).reshape(len(names), -1)
+    if d.task == "multi":
+        from dlstudio import multi
+        return multi.table(d, names, out, truth)
     if d.task == "detection":
         return _table_det(d, names, out, X, truth)
     if d.task == "forecast":
@@ -322,6 +325,8 @@ def new_data_kinds(d) -> list:
         return ex + ["csv"]
     if d.task == "segmentation":
         return ex
+    if d.task == "multi":                                   # 정답 열이 여럿인 CSV는 ② 역할 표가 생기면
+        return ex + (["rows"] if d.X_train.shape[1] <= 40 else [])
     if d.source.get("series_folder"):
         return ex + ["series", "csv"]
     if d.image:

@@ -54,8 +54,10 @@ def test_engine_matches_torch(tmp_path):
         spec = [dict(t, label=losses.label(t)) for t in losses.normalize(spec, task)]
         K = 3
         fn = losses.build(spec, task, n_cls=K, seg_K=seg[0] if seg else 0, cw=None if cw is None else torch.as_tensor(cw))
-        total, parts = fn(torch.as_tensor(o), torch.as_tensor(y), torch.nn.Linear(1, 1))
-        want.append((float(total), {k: float(v) for k, v in parts.items()}))
+        ot = torch.as_tensor(o).clone().requires_grad_(True)
+        total, parts = fn(ot, torch.as_tensor(y), torch.nn.Linear(1, 1))
+        total.backward()
+        want.append((float(total.detach()), {k: float(v.detach()) for k, v in parts.items()}, ot.grad.numpy().ravel()))
         if task == "classification":
             yy = np.eye(K, dtype=np.float32)[y]
         elif task == "segmentation":
@@ -69,8 +71,9 @@ def test_engine_matches_torch(tmp_path):
     f.write_text(json.dumps(fx), encoding="utf-8")
     r = subprocess.run(["node", str(JS / "run_loss.js"), str(f)], capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stderr[-2000:]
-    for g, (tot, parts) in zip(json.loads(r.stdout), want):
+    for g, (tot, parts, grad) in zip(json.loads(r.stdout), want):
         assert g["total"] == pytest.approx(tot, rel=1e-4, abs=1e-5)
+        assert np.allclose(g["grad"], grad, rtol=1e-3, atol=1e-5)
         for k, v in parts.items():
             assert g["parts"][k] == pytest.approx(v, rel=1e-4, abs=1e-5), k
 
