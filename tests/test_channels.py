@@ -114,7 +114,7 @@ def test_csv_roles(tmp_path):
     f.write_text("\n".join(rows), encoding="utf-8")
     d = load_csv(str(f))                                              # 기본: 마지막 열이 정답
     s = d.summary()
-    assert d.task == "regression" and [c["role"] for c in s["columns"]] == ["input"] * 4 + ["skip", "target"]   # 글자 열은 안 씀
+    assert d.task == "regression" and [c["role"] for c in s["columns"]] == ["skip", "input", "input", "input", "skip", "target"]   # 번호·글자 열은 안 씀
     d = load_csv(str(f), targets=[4, 5], skip=[0])                    # 정답 둘 (분류 + 값), ID는 안 씀
     assert d.task == "multi" and [h["kind"] for h in d.n_out.heads] == ["class", "value"] and d.X_train.shape[1] == 3
     assert [c["role"] for c in d.summary()["columns"]] == ["skip", "input", "input", "input", "target", "target"]

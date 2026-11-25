@@ -99,7 +99,7 @@ def is_default(spec: list, task: str, heads: list = None) -> bool:
 
 def class_weights(y, K: int) -> np.ndarray:
     """드문 클래스를 무겁게: 가중치 = 전체 수 / (K × 그 클래스 수). 없는 클래스는 0."""
-    c = np.bincount(np.asarray(y, dtype=np.int64).ravel(), minlength=K).astype(np.float64)
+    c = np.bincount(np.asarray(y).astype(np.intp).ravel(), minlength=K).astype(np.float64)   # intp: 웹(Pyodide, 32비트)의 bincount는 int64를 못 받음
     w = np.where(c > 0, c.sum() / (K * np.maximum(c, 1)), 0.0)
     return w.astype(np.float32)
 

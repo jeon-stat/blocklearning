@@ -808,7 +808,7 @@ td.seg-cell { text-align: left; }
 .loss-box.multi #loss-terms { display: flex; flex-direction: column; gap: 6px; }
 .loss-box.multi > .loss-k { align-self: flex-start; }
 .loss-row .loss-k { font-weight: 500; color: var(--text); }
-.loss-box.multi > button { align-self: flex-start; }
+.loss-box.multi > button, .loss-box.multi > select { align-self: flex-start; }
 .ch-stack { display: flex; flex-direction: column; gap: 2px; }
 .series-cols { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .series-cols .chk { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
@@ -834,4 +834,8 @@ td.seg-cell { text-align: left; }
   .grid4 { grid-template-columns: 1fr 1fr; }
   .loss-row .loss-k { min-width: 0; width: 100%; }
   .head-tabs button { padding: 3px 8px; font-size: 13px; }
+}
+@media (max-width: 1000px) {                               /* 위쪽 줄: 프로젝트 이름이 길어도 화면을 넘지 않게 */
+  .proj-switch { min-width: 0; max-width: 100%; }
+  .proj-switch .proj-btn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

@@ -583,9 +583,9 @@ function clearTrainView() {
 }
 const lossKey = (s) => (s && s.losses ? JSON.stringify([s.losses.allowed, (s.losses.heads || []).map((h) => h.name)]) : "");
 function onData(s) {
-  const prevLoss = lossKey(st.summary);
   st.summary = s;
-  if (lossKey(s) !== prevLoss) st.loss = null;                // 정답 종류가 바뀌면 손실은 기본으로
+  if (lossKey(s) !== st.lossKey) st.loss = null;              // 정답 종류가 바뀌면 손실은 기본으로 (자동 과제는 요약을 먼저 넣으므로 따로 기억)
+  st.lossKey = lossKey(s);
   renderLoss();
   st.dataSrc = s.example || null;
   st.trained = false;
@@ -648,7 +648,7 @@ function renderRoleBox(s) {                               // ② 역할 표: CSV
   st.roles = cols.map((c) => c.role);
   $("role-channels").value = s.csv_channels || 1;
   const seg = s.task === "segmentation";                    // 구간 분할: 값 열이 곧 채널, 대신 창 길이
-  $("role-ch-box").hidden = seg;
+  $("role-ch-box").hidden = seg || inputKind() === "tabular";  // 표 데이터에는 채널이 없음
   $("role-len-box").hidden = !seg;
   if (seg) $("role-length").value = s.length;
   drawRoles();
@@ -930,6 +930,7 @@ $("btn-redo").onclick = () => st.ed && st.ed.redo();
 
 // ------------------------------------------------------------ ③ 학습
 function trainSettings() {
+  lossTerms();                                              // 맞지 않는 손실 설정은 여기서 기본으로
   return { epochs: Number($("epochs").value) || 30, lr: Number($("lr").value) || 0.001, batch_size: Number($("batch").value) || 32,
     device: $("device").value, keep_best: $("keep-best").checked, early_stop: Number($("early-stop").value) || 0,
     ...(st.loss ? { loss: st.loss } : {}) };
@@ -1058,7 +1059,8 @@ function renderMultiResult(r, pick = 0) {                  // 정답 여러 개:
   const one = (h, v) => (v === null || v === undefined ? "-" : h.kind === "class" ? pct(v) : `R² ${v.toFixed(3)}`);
   const h = r.heads[pick];
   const rows = [["Epochs", epochsText(r)], ["시험 평균", `<b>${r.test_metric.toFixed(3)}</b>`], ["학습 평균", r.train_metric === null || r.train_metric === undefined ? "-" : r.train_metric.toFixed(3)]];
-  const detail = [[`시험 ${h.kind === "class" ? "정확도" : "R²"}`, `<b>${one(h, h.metric)}</b>`], [`학습 ${h.kind === "class" ? "정확도" : "R²"}`, one(h, h.train_metric)]];
+  const val = (v) => (v === null || v === undefined ? "-" : h.kind === "class" ? pct(v) : v.toFixed(3));   // 이름 칸에 정확도·R²가 있으니 값만
+  const detail = [[`시험 ${h.kind === "class" ? "정확도" : "R²"}`, `<b>${val(h.metric)}</b>`], [`학습 ${h.kind === "class" ? "정확도" : "R²"}`, val(h.train_metric)]];
   if (h.kind === "value") detail.push(["시험 평균 오차 MAE", Number(h.mae.toPrecision(4))]);
   $("train-result").innerHTML = kv(rows) +
     `<div class="head-tabs" role="tablist">${r.heads.map((x, i) => `<button type="button" role="tab" data-head="${i}" aria-selected="${i === pick}">${esc(x.name)} <b>${one(x, x.metric)}</b></button>`).join("")}</div>` +
@@ -1494,7 +1496,15 @@ function applySettings(s) {                              // 학습 설정 칸에
 // ------------------------------------------------------------ 손실 조립 (losses.py): 손실 = Σ 가중치 × 항, 정답 종류에 맞는 항만
 const LOSS_OPT_LABEL = { smooth: "라벨 스무딩", gamma: "γ", delta: "δ", balance: "드문 클래스 무겁게" };
 function lossInfo() { return st.summary && st.summary.losses; }
-function lossTerms() { const L = lossInfo(); return st.loss || (L ? L.default.map((t) => Object.assign({}, t)) : []); }
+function lossFits(L, terms) {                              // 이 데이터에 맞는 손실인지 (정답 이름·항)
+  const heads = Object.fromEntries((L.heads || []).map((h) => [h.name, h]));
+  return terms.every((t) => (t.head ? heads[t.head] && heads[t.head].allowed.includes(t.term) : L.allowed.includes(t.term)));
+}
+function lossTerms() {
+  const L = lossInfo();
+  if (st.loss && L && !lossFits(L, st.loss)) st.loss = null;   // 다른 데이터의 손실 설정이 남았으면 기본으로
+  return st.loss || (L ? L.default.map((t) => Object.assign({}, t)) : []);
+}
 function lossGroups(L) {                                    // 칩 줄: [{head, allowed}] — 정답이 하나면 한 줄
   return L.heads ? L.heads.map((h) => ({ head: h.name, allowed: h.allowed })).concat([{ head: null, allowed: L.allowed }])
     : [{ head: null, allowed: L.allowed }];

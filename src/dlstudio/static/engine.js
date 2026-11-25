@@ -676,9 +676,17 @@ class Net {
   }
 
   predict(X, batch = 256) {                           // eval, 묶음으로 나눠 계산 → Float32Array (N × n_out)
+    // 묶음 크기는 batch 또는 2의 거듭제곱으로만 (모자라면 0으로 채우고 결과에서 잘라냄): 처음 보는 크기의 GPU 프로그램은
+    // 탭이 뒤에 있을 때 가끔 틀린 값을 냄 (같은 크기를 다시 쓰면 맞음). 평가 모드는 샘플끼리 섞지 않아 채운 줄이 영향 없음
     const N = X.shape[0], out = [];
     for (let i = 0; i < N; i += batch) {
-      const y = tf.tidy(() => this.forward(X.slice(i, Math.min(batch, N - i)), false));
+      const m = Math.min(batch, N - i), size = m === batch ? batch : Math.min(batch, 2 ** Math.ceil(Math.log2(Math.max(m, 8))));
+      const y = tf.tidy(() => {
+        let xb = X.slice(i, m);
+        if (size > m) xb = tf.concat([xb, tf.zeros([size - m].concat(X.shape.slice(1)), X.dtype)]);
+        const o = this.forward(xb, false);
+        return size > m ? o.slice(0, m) : o;
+      });
       out.push(y.dataSync().slice());
       y.dispose();
     }
@@ -1132,8 +1140,9 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       train_metric: score(outTr, "train"),   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
       best_epoch: bestEpoch, early_stopped: early, n_val: vIdx ? vIdx.length : 0 };
     if (!te.ok || !tr.ok)
-      r.warnings.push({ message: "학습 중 이 브라우저의 GPU 계산이 불안정했습니다. 아래 결과는 CPU로 다시 계산한 값이지만, 학습이 덜 됐을 수 있습니다",
-        hint: "페이지를 새로 고친 뒤 다시 학습해 보세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
+      // 탭이 뒤에 있을 때 GPU가 결과 일부를 가끔 틀리게 읽어 옴 (학습 자체는 같았음 — 시드가 같으면 가중치가 똑같음)
+      r.warnings.push({ message: "이 브라우저의 GPU가 결과 일부를 틀리게 내서, 아래 성적은 CPU로 다시 계산했습니다 (성적은 맞음)",
+        hint: "학습하는 동안 다른 탭을 보고 있으면 생길 수 있습니다. 자주 나오면 이 탭을 띄워 둔 채 학습하세요" });
     if (det) Object.assign(r, detResult(out, det.test, det));
     else if (ae || fc || seg || multi) return { net, result: r, out, outTr };   // 결과 화면 값은 Python (jobs.task_result)이 출력으로 만듦
     else if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);

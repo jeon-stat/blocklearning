@@ -331,6 +331,14 @@ def _read_table(path) -> tuple:
     return [f"열 {j + 1}" for j in range(len(first))], rows
 
 
+def _is_row_number(cells: list) -> bool:
+    """행 번호(ID) 열: 0이나 1부터 정수가 1씩 늘어남 (측정값이 우연히 1씩 느는 것과 가르려고 시작을 봄). 특징이 아니라 빼는 게 맞음."""
+    v = [_num(c) for c in cells]
+    if len(v) < 3 or any(x is None or not float(x).is_integer() for x in v) or v[0] not in (0, 1):
+        return False
+    return all(b - a == 1 for a, b in zip(v, v[1:]))
+
+
 def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", normalize: bool = True,
              test_ratio: float = 0.2, seed: int = 0, image_width: Optional[int] = None, targets: Optional[list] = None,
              skip: Optional[list] = None, channels: int = 1) -> Dataset:
@@ -364,6 +372,7 @@ def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", nor
     if not targets and not skip and image_width is None:      # 역할을 안 정했으면: 글자뿐인 열(이름·날짜·등급 등)은 안 씀
         head = [r for _, r in numbered[:20]]
         text = [j for j in feats if head and sum(_num(r[j]) is None for r in head if j < len(r)) >= 0.9 * len(head)]
+        text += [j for j in feats if j not in text and _is_row_number([r[j] if j < len(r) else "" for _, r in numbered])]   # 1, 2, 3, … 번호 열
         if text and len(text) < len(feats):
             skips |= set(text)
             feats = [j for j in feats if j not in skips]
