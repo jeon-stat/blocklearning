@@ -1,12 +1,14 @@
 """DL studio 데이터: CSV(한 행 = 샘플, 정답 열 하나)와 합성 예시 데이터 → Dataset."""
 import json
+from pathlib import Path
 import sys
 
 import numpy as np
 import pytest
 
 import dlstudio.data as data_mod
-from dlstudio.data import (DataError, example_arrays, load_csv, load_example, load_image_folder, load_series_folder,
+from tests.synth import example_arrays
+from dlstudio.data import (DataError, load_csv, load_example, load_image_folder, load_series_folder,
                               make_dataset, read_series_folder, scan_series_folder)
 
 
@@ -100,9 +102,9 @@ def test_non_ascii_path(tmp_path):
 
 def test_example_data():
     d = load_example()
-    assert d.length == 140 and len(d.y_train) + len(d.y_test) == 1000
+    assert d.length == 140 and len(d.y_train) + len(d.y_test) == 5000          # MIT-BIH 박동 (정상·이상 각 2,500)
     y = np.concatenate([d.y_train, d.y_test])
-    assert (y == 0).sum() >= 400 and (y == 1).sum() >= 400
+    assert (y == 0).sum() == 2500 and (y == 1).sum() == 2500
     assert d.classes == ["정상", "이상"]
     json.dumps(d.summary(), ensure_ascii=False)
 
@@ -115,13 +117,6 @@ def test_make_dataset_from_arrays():
     assert s["n_train"] + s["n_test"] == 200 and len(s["preview"]) <= 6
 
 
-def test_vibration_example_is_imbalanced_manufacturing_data():
-    """제조 예시: 합성 설비 진동 (정상·결함), 결함이 적은 불균형 데이터."""
-    d = load_example("vibration")
-    assert d.classes == ["정상", "결함"] and d.length == 200
-    y = np.concatenate([d.y_train, d.y_test])
-    assert 0.15 <= float(np.mean(y == 1)) <= 0.25
-    assert set(d.y_test.tolist()) == {0, 1}
 
 
 def test_example_kind_unknown():
@@ -148,25 +143,10 @@ def test_korean_excel_cp949_csv(tmp_path):
 
 # ---------------------------------------------------------------- 과제별 예시 데이터
 
-def test_process_classification_example_is_tabular():
-    d = load_example("process_cls")
-    assert d.task == "classification" and d.classes == ["정상", "불량"] and d.length == 8
-    assert len(d.summary()["features"]) == 8
-    y = np.concatenate([d.y_train, d.y_test])
-    assert 0.15 <= float(np.mean(y == 1)) <= 0.4
 
 
-def test_process_regression_example():
-    d = load_example("process_reg")
-    assert d.task == "regression" and d.length == 8 and d.classes == []
-    assert d.summary()["features"][0] == "온도"
 
 
-def test_wear_rul_regression_example_is_timeseries():
-    d = load_example("wear_rul")
-    assert d.task == "regression" and d.length == 200
-    y = np.concatenate([d.y_train, d.y_test])
-    assert 0 <= y.min() and y.max() <= 110
 
 
 def test_csv_header_becomes_feature_names(tmp_path):
@@ -176,14 +156,6 @@ def test_csv_header_becomes_feature_names(tmp_path):
     assert d.summary()["features"] == [f"열 {i}" for i in range(1, 9)]
 
 
-def test_digits_example_is_image():
-    d = load_example("digits")
-    assert d.image == (8, 8) and d.length == 64 and d.classes == [str(i) for i in range(10)]
-    assert len(d.y_train) + len(d.y_test) == 1797
-    s = d.summary()
-    assert s["image"] == [8, 8] and len(s["preview"][0]["values"]) == 64 and s["features"] == []
-    raw = d.raw(d.X_train)
-    assert raw.min() >= -1e-9 and raw.max() <= 1 + 1e-9                  # 0–1 픽셀로 되돌아옴
 
 
 def test_image_normalization_uses_one_mean_for_all_pixels():
@@ -285,17 +257,6 @@ def test_image_folder_16bit_transparent_and_mac_junk(tmp_path):
     assert max(kinds) > 2                      # 16비트 그라데이션이 0/1 두 값으로 뭉개지지 않음
 
 
-@pytest.mark.parametrize("kind,size,classes,n", [
-    ("surface", (32, 32), ["정상", "스크래치", "얼룩", "구멍"], 1200),
-    ("pneumonia", (28, 28), ["정상", "폐렴"], 1200),
-])
-def test_image_examples(kind, size, classes, n):
-    d = load_example(kind)
-    assert d.image == size and d.classes == classes and len(d.y_train) + len(d.y_test) == n
-    counts = np.bincount(np.concatenate([d.y_train, d.y_test]))
-    assert counts.min() == counts.max()                                   # 클래스마다 같은 수
-    raw = d.raw(d.X_train)
-    assert raw.min() >= -1e-9 and raw.max() <= 1 + 1e-9 and raw.std() > 0.05
 
 
 def _series(tmp, files):          # files: {"상대경로": [값...]} → 머리글 t,value,stage의 CSV
@@ -420,3 +381,50 @@ def test_label_table_mode_ignores_unmatched_subfolders(tmp_path):
     lab = tmp_path / "y.csv"
     lab.write_text("file,y\n" + "\n".join(f"c{i},{'ab'[i % 2]}" for i in range(12)), encoding="utf-8")
     assert len(load_series_folder(str(f), "value", 8, label_file=str(lab)).y_test) > 0
+
+
+
+# ---------------------------------------------------------------- 예시 데이터: 모두 공개된 실제 데이터 (출처 파일과 함께)
+
+REAL = [  # 종류, 과제, 클래스 수(회귀 0), 길이, 그림, 샘플 수
+    ("ecg", "classification", 2, 140, None, 5000),
+    ("bearing", "classification", 5, 512, None, 1200),
+    ("steel_plates", "classification", 7, 27, None, 1941),
+    ("concrete", "regression", 0, 8, None, 1030),
+    ("hydraulic_valve", "regression", 0, 200, None, 2205),
+    ("steelblast", "classification", 2, 64 * 64, (64, 64), 1654),
+    ("pneumonia", "classification", 2, 28 * 28, (28, 28), 1200),
+    ("digits", "classification", 10, 32 * 32, (32, 32), 4677),
+]
+
+
+@pytest.mark.parametrize("kind,task,k,length,image,n", REAL, ids=[r[0] for r in REAL])
+def test_real_examples(kind, task, k, length, image, n):
+    from dlstudio.data import EXAMPLES
+    d = load_example(kind)
+    assert d.task == task and len(d.classes) == k and d.length == length and d.image == image
+    assert len(d.X_train) + len(d.X_test) == n and np.isfinite(d.X_train).all()
+    json.dumps(d.summary(), ensure_ascii=False)
+    src = Path(__file__).resolve().parents[1] / "src" / "dlstudio" / "data" / f"{EXAMPLES[kind][0]}.SOURCE.txt"
+    assert "CC BY 4.0" in src.read_text(encoding="utf-8") or "Open Data Commons Attribution" in src.read_text(encoding="utf-8")
+    if image:
+        raw = d.raw(d.X_train)
+        assert raw.min() >= -1e-6 and raw.max() <= 1 + 1e-6            # 0–1 픽셀로 되돌아옴
+
+
+def test_old_synthetic_names_load_real_data():
+    """예전(합성) 예시 이름으로 저장한 프로젝트도 열림 → 바꾼 실제 데이터."""
+    from dlstudio.data import ALIASES, EXAMPLE_KINDS
+    assert set(ALIASES.values()) <= set(EXAMPLE_KINDS)
+    assert load_example("vibration").classes == load_example("bearing").classes
+    assert load_example("process_reg").features[0] == "시멘트 (kg/m³)"
+
+
+def test_example_files_and_no_synthetic_generators():
+    import dlstudio.data as D
+    from dlstudio.data import EXAMPLE_KINDS, example_files
+    for kind in EXAMPLE_KINDS:
+        fs = example_files(kind)
+        assert fs and all((Path(D.__file__).parent / "data" / f).exists() for f in fs), kind
+    for name in ("example_arrays", "vibration_arrays", "surface_arrays", "parts_det_arrays", "wear_arrays"):
+        assert not hasattr(D, name)                                        # 화면 예시에 합성 데이터 없음

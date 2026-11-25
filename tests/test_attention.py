@@ -54,8 +54,8 @@ def test_attn_view_pool_shape():
     assert v == {"q": 1, "k": 2, "map": [[0.2, 0.8]], "mean": [0.2, 0.8], "first": [0.2, 0.8]}
 
 
-@pytest.mark.parametrize("tid,kind", [("transformer", "ecg"), ("ft_transformer", "process_cls"), ("vit", "digits"),
-                                      ("cnn_transformer", "surface")])
+@pytest.mark.parametrize("tid,kind", [("transformer", "ecg"), ("ft_transformer", "steel_plates"), ("vit", "digits"),
+                                      ("cnn_transformer", "steelblast")])
 def test_api_activations_has_attention(tid, kind, tmp_path):
     from dlstudio.core import Studio
     from dlstudio.data import load_example

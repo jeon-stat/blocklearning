@@ -221,6 +221,21 @@ def project_bytes(studio: Studio, state) -> bytes:
     return buf.getvalue()
 
 
+def example_files_json(kind: str) -> str:
+    """예시 하나에 필요한 데이터 파일 (화면이 누를 때만 내려받아 /app/dlstudio/data/에 둠)."""
+    from dlstudio.data import example_files
+    return json.dumps(example_files(str(kind or "")))
+
+
+def project_example(path: str) -> str:
+    """프로젝트 파일의 데이터가 예시면 그 이름 (열기 전에 예시 파일을 받아 두게). 아니면 빈 글자."""
+    from dlstudio.project import open_project as _open
+    try:
+        return str(dict(_open(path)["data_source"]).get("example") or "")
+    except Exception:                                    # 못 읽으면 여는 단계가 알맞은 오류를 냄
+        return ""
+
+
 @_wrap
 def open_project(studio: Studio, path: str) -> dict:
     """프로젝트 파일 열기. 예시 데이터면 다시 불러오고, 아니면 지금 불러온 데이터를 씀 (웹은 파일 위치를 기억 못 함).

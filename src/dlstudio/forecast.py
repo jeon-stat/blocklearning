@@ -58,24 +58,6 @@ def make_forecast_dataset(series, L: int, H: int, stride: int = 1, test_ratio: f
                    src, [], None, None, extra)
 
 
-def power_series(days: int = 120, seed: int = 0) -> np.ndarray:
-    """합성 공장 전력 사용량 (kW, 1시간마다): 근무 시간(8–18시)에 높고 점심에 조금 내려감, 주말은 낮음,
-    천천히 느는 추세와 날씨 같은 느린 흔들림, 잡음."""
-    rng = np.random.default_rng(seed)
-    t = np.arange(24 * days)
-    hour, dow = t % 24, (t // 24) % 7
-    work = 1 / (1 + np.exp(-(hour - 7.5) * 2)) * 1 / (1 + np.exp((hour - 18.5) * 2))      # 근무 시간 (부드러운 계단)
-    lunch = np.exp(-((hour - 12.5) ** 2) / 0.8)
-    weekday = np.where(dow < 5, 1.0, 0.3)
-    slow = np.cumsum(rng.normal(0, 4, len(t)))                 # 느린 흔들림 (날씨·생산량)
-    k = min(24 * 14, len(t))
-    slow = slow - np.convolve(slow, np.ones(k) / k, mode="same")
-    ar = np.zeros(len(t))
-    for i in range(1, len(t)):
-        ar[i] = 0.7 * ar[i - 1] + rng.normal(0, 12)
-    return 320 + 0.03 * t + weekday * (420 * work - 90 * lunch * work) + 0.5 * slow + ar
-
-
 def metric(out: np.ndarray, y: np.ndarray) -> float:
     """다음 H개 전체를 펼쳐 R² (1이면 완벽, 0이면 늘 평균을 답하는 것과 같음)."""
     o = np.asarray(out, dtype=float).reshape(len(y), -1)

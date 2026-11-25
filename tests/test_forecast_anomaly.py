@@ -37,7 +37,7 @@ def test_windows_and_time_split_do_not_leak():
 
 
 def test_forecast_example_and_summary():
-    d = load_example("factory_power")
+    d = load_example("steel_power")
     s = d.summary()
     json.dumps(s, ensure_ascii=False)
     assert s["task"] == "forecast" and s["forecast"]["horizon"] == 24 and len(s["preview"][0]["future"]) == 24
@@ -64,26 +64,27 @@ def test_forecast_csv_loader_and_reload(tmp_path):
     r = s.api_data_load({"forecast_reload": {"column": "온도", "L": 30, "H": 6}})
     assert r["summary"]["forecast"]["column"] == "온도" and r["summary"]["length"] == 30 and s.data.n_out == 6
     assert s.load_source(s.data.source)["forecast"]["horizon"] == 6        # 프로젝트를 다시 열 때도 같은 설정
-    r = s.api_data_load({"example": "factory_power"})
+    r = s.api_data_load({"example": "steel_power"})
     r = s.api_data_load({"forecast_reload": {"L": 48, "H": 12}})            # 예시도 길이만 바꿔 다시
-    assert r["summary"]["length"] == 48 and r["summary"]["forecast"]["horizon"] == 12 and r["summary"]["example"] == "factory_power"
+    assert r["summary"]["length"] == 48 and r["summary"]["forecast"]["horizon"] == 12 and r["summary"]["example"] == "steel_power"
 
 
 # ---------------------------------------------------------------- 이상 탐지
 
 def test_to_anomaly_trains_on_normals_only():
-    base = load_example("vibration")
-    d = load_example("vibration_ae")
-    assert d.task == "anomaly" and d.classes == ["정상", "이상"] and d.extra["others"] == ["결함"]
+    base = load_example("bearing")
+    d = load_example("bearing_ae")
+    assert d.task == "anomaly" and d.classes == ["정상", "이상"] and d.extra["others"] == ["내륜 결함", "외륜 결함", "볼 결함", "복합 결함"]
     assert (d.y_train == 0).all() and len(d.X_train) == int((base.y_train == 0).sum())
-    assert int(d.y_test.sum()) == int((base.y_train == 1).sum() + (base.y_test == 1).sum())   # 이상은 모두 시험으로
-    assert d.n_out == d.length == 200 and np.allclose(d.X_train.mean(0), 0, atol=1e-9)        # 정규화는 학습 정상으로
+    assert int(d.y_test.sum()) == int((base.y_train != 0).sum() + (base.y_test != 0).sum())   # 이상은 모두 시험으로
+    assert d.n_out == d.length == 512 and np.allclose(d.X_train.mean(0), 0, atol=1e-6)        # 정규화는 학습 정상으로
     assert np.allclose(d.target_train, d.X_train)
     s = d.summary()
     json.dumps(s, ensure_ascii=False)
     assert s["anomaly"]["n_anomaly"] == int(d.y_test.sum()) and s["class_counts"]["이상"] == int(d.y_test.sum())
     assert any(p["label"] == "이상" for p in s["preview"])
-    assert load_example("process_ae").extra["others"] == ["전류 이상", "진동 이상", "압력 저하"]
+    h = load_example("hydraulic_ae")
+    assert h.extra["others"] == ["냉각기 저하", "밸브 지연", "펌프 누설", "복합 고장"] and len(h.X_train) >= 200
 
 
 def test_pick_normal_and_single_class_csv(tmp_path):
@@ -129,8 +130,8 @@ def test_subtasks_available_and_templates_check(sid):
         assert c.ok, (t["id"], [i.message for i in c.issues])
 
 
-@pytest.mark.parametrize("kind,tid,ep,need", [("factory_power", "fc_mlp", 12, 0.6), ("vibration_ae", "ae_dense", 25, 0.75),
-                                              ("process_ae", "ae_tab_dense", 40, 0.75)])
+@pytest.mark.parametrize("kind,tid,ep,need", [("steel_power", "fc_mlp", 15, 0.5), ("bearing_ae", "ae_dense", 25, 0.75),
+                                              ("hydraulic_ae", "ae_tab_dense", 40, 0.85)])
 def test_train_job_learns_and_result_is_json(kind, tid, ep, need):
     from dlstudio.jobs import Job, TrainSettings, train_job
     d = load_example(kind)
@@ -144,7 +145,7 @@ def test_train_job_learns_and_result_is_json(kind, tid, ep, need):
     else:
         assert r["metric_name"] == "auc" and r["auc"] == r["test_metric"] and r["train_metric"] is None
         assert len(r["scores"]) == len(d.X_test) and r["threshold"] > 0 and len(r["ae_samples"]) >= 6
-        assert np.mean(np.asarray(r["train_scores"]) <= r["threshold"]) >= 0.95   # 기준값: 학습 정상의 95%
+        assert 0.93 <= np.mean(np.asarray(r["train_scores"]) <= r["threshold"]) <= 0.97   # 기준값: 학습 정상의 95% 지점
 
 
 # ---------------------------------------------------------------- 웹 엔진 (TF.js): 같은 지표·학습
@@ -175,7 +176,7 @@ def test_engine_metrics_match_python():
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node 또는 tests/js/node_modules 없음")
-@pytest.mark.parametrize("kind,tid", [("factory_power", "fc_linear"), ("process_ae", "ae_tab_dense")])
+@pytest.mark.parametrize("kind,tid", [("steel_power", "fc_linear"), ("hydraulic_ae", "ae_tab_dense")])
 def test_engine_trains_and_python_builds_same_result(tmp_path, kind, tid):
     """웹 엔진 학습 → 출력(원래 단위로 접힘)을 Python task_result에 넘김. 엔진 가중치를 PyTorch에 넣으면 같은 출력·성적."""
     import torch
@@ -187,7 +188,7 @@ def test_engine_trains_and_python_builds_same_result(tmp_path, kind, tid):
     g = from_blocks(T[tid]["blocks"])
     o = _train_js(tmp_path, g, d, {"epochs": 4, "lr": 0.003, "batch_size": 32, "seed": 0})
     r = o["result"]
-    assert r["metric_name"] == ("r2" if kind == "factory_power" else "auc") and len(o["out"]) == len(d.X_test) * d.n_out
+    assert r["metric_name"] == ("r2" if kind == "steel_power" else "auc") and len(o["out"]) == len(d.X_test) * d.n_out
     net = build_graph_model(g, d.length, d.n_out, image=d.image).eval()
     net.load_state_dict({k: torch.tensor(v["data"]).reshape(v["shape"]).to(net.state_dict()[k].dtype)
                          for k, v in o["state"].items()})
@@ -196,7 +197,7 @@ def test_engine_trains_and_python_builds_same_result(tmp_path, kind, tid):
     assert np.allclose(out.ravel(), o["out"], rtol=1e-4, atol=1e-3 * max(1.0, float(np.abs(out).max())))
     full = task_result(d, np.asarray(o["out"]).reshape(len(d.X_test), -1), np.asarray(o["outTr"]).reshape(len(d.X_train), -1))
     json.dumps(full)
-    if kind == "factory_power":
+    if kind == "steel_power":
         assert abs(forecast.metric(out, d.y_test) - r["test_metric"]) < 1e-3 and full["mae"] > 0
     else:
         assert abs(anomaly.auc(anomaly.scores(out, d.X_test), d.y_test) - r["test_metric"]) < 1e-3 and full["auc"] > 0.5

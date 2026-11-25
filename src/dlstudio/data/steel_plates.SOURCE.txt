@@ -1,0 +1,4 @@
+강판 결함 7종 (결함 영역의 모양·밝기 특징 27개) — Buscema M, Terzi S, Tastle W. Steel Plates Faults.
+UCI Machine Learning Repository (2010), doi:10.24432/C5J88N, CC BY 4.0 (Semeion, Research Center of Sciences of Communication)
+바꾼 내용: 없음 (열 이름만 한국어로). 정답: Pastry·Z_Scratch·K_Scatch·Stains·Dirtiness·Bumps·Other_Faults →
+페이스트리·Z 긁힘·K 긁힘·얼룩·오염·돌기·기타 결함.

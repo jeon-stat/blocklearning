@@ -56,17 +56,17 @@ python -m dlstudio          # 또는 dlstudio
 
 | 과제 | 예시 데이터 | 대표 모델 |
 |---|---|---|
-| 분류 · 시계열 | 심전도 정상·이상 (의료, 합성), 설비 진동 정상·결함 (제조, 합성) | 1D CNN, ResNet1D, InceptionTime, TCN, LSTM, Transformer |
-| 분류 · 표 | 공정 조건 → 양품·불량 (제조, 합성) | MLP, 깊은 MLP, FT-Transformer식 |
-| 회귀 · 시계열 | 진동 → 남은 수명 (제조, 합성) | 1D CNN, TCN, LSTM, Transformer |
-| 회귀 · 표 | 공정 조건 → 수율 (제조, 합성) | MLP, FT-Transformer식 |
-| 객체 탐지 · 이미지 | 부품 위치 찾기 — 원형·사각 64×64 (제조, 합성) | 작은 탐지 모델, 깊은 탐지 모델 |
-| 이상 탐지 · 시계열 | 설비 진동 — 정상만 학습해 결함 찾기 (제조, 합성) | Dense 오토인코더, Conv 오토인코더 |
-| 이상 탐지 · 표 | 공정 조건 — 정상만 학습해 전류 이상·진동 이상·압력 저하 찾기 (제조, 합성) | 오토인코더 |
-| 예측 · 시계열 | 공장 전력 사용량 1시간마다 — 지난 4일로 다음 하루 (제조, 합성) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
-| 분류 · 이미지 | 금속 표면 결함 32×32 (합성) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/) 1,200장, CC BY 4.0, 진단용 아님) / 손글씨 숫자 8×8 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet, CNN + Transformer, ViT |
+| 분류 · 시계열 | 베어링 진동 정상·내륜·외륜·볼·복합 결함 ([오타와대](https://doi.org/10.17632/v43hmbwxpm.2), CC BY 4.0) / 심전도 박동 정상·이상 ([MIT-BIH](https://physionet.org/content/mitdb/1.0.0/), ODC-By 1.0, 진단용 아님) | 1D CNN, ResNet1D, InceptionTime, TCN, LSTM, Transformer |
+| 분류 · 표 | 강판 결함 7종 — 결함 영역의 모양·밝기 27가지 ([UCI Steel Plates Faults](https://archive.ics.uci.edu/dataset/198), CC BY 4.0) | MLP, 깊은 MLP, FT-Transformer식 |
+| 회귀 · 시계열 | 유압 압력 신호 → 밸브 상태 % ([UCI 유압 시스템](https://archive.ics.uci.edu/dataset/447), CC BY 4.0) | ResNet1D, 1D CNN, TCN, LSTM, Transformer |
+| 회귀 · 표 | 콘크리트 배합 → 압축강도 MPa ([UCI](https://archive.ics.uci.edu/dataset/165), CC BY 4.0) | MLP, FT-Transformer식 |
+| 객체 탐지 · 이미지 | PCB 결함 위치 6종 64×64 ([PCB-Defect](https://doi.org/10.17632/vdj74sngvn.2), CC BY 4.0) | 작은 탐지 모델, 깊은 탐지 모델 |
+| 이상 탐지 · 시계열 | 베어링 진동 — 정상만 학습해 결함 찾기 (오타와대, CC BY 4.0) | Dense 오토인코더, Conv 오토인코더 |
+| 이상 탐지 · 표 | 유압 시스템 — 정상만 학습해 냉각기·밸브·펌프 고장 찾기 (UCI, CC BY 4.0) | 오토인코더 |
+| 예측 · 시계열 | 철강 공장 전력 사용량 1시간마다 — 지난 4일로 다음 하루 ([UCI, 광양 철강 공장](https://archive.ics.uci.edu/dataset/851), CC BY 4.0) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
+| 분류 · 이미지 | 강판 표면 양호·불량 64×64 ([SteelBlastQC](https://doi.org/10.34894/EKZNN0), CC BY 4.0) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/), CC BY 4.0, 진단용 아님) / 손글씨 숫자 32×32 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet, CNN + Transformer, ViT |
 
-이미지 예시 데이터의 출처·라이선스는 `src/dlstudio/data/*.SOURCE.txt`에 있습니다.
+예시 데이터는 모두 공개된 실제 데이터입니다 (합성 데이터 없음). 원본을 작게 줄인 파일과 출처·라이선스·바꾼 내용은 `src/dlstudio/data/*.npz`·`*.SOURCE.txt`, 원본에서 다시 만드는 법은 `tools/build_examples.py`. 웹 버전은 예시를 누를 때만 그 파일을 받습니다.
 
 **객체 탐지**는 YOLO 첫 버전과 같은 격자 방식입니다: 그림을 2×2 AvgPool로 세 번 줄여 8×8 격자(64×64 그림 기준)로 만들고, 출력 블록이 격자 칸마다 1×1 필터로 '사물의 가운데가 이 칸에 있나 · 칸 안 위치 · 너비·높이 · 클래스'를 냅니다 (출력 앞이 격자가 아니면 모델 검사가 막음). 손실은 있음(BCE, 빈 칸은 무게 0.5) + 위치·크기 제곱 오차 × 5 + 클래스 교차 엔트로피, 찾은 상자는 같은 클래스끼리 50% 넘게 겹치면 점수 높은 것만 남깁니다. 같은 칸에 사물 가운데가 둘이면 큰 것만 배웁니다 (작은 사물이 빽빽하면 그림 크기를 키우세요).
 

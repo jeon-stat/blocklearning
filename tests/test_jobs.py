@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 from dlstudio.graph import build_graph_model, from_blocks
-from dlstudio.data import example_arrays, make_dataset
+from dlstudio.data import make_dataset
+from tests.synth import example_arrays
 from dlstudio.jobs import JobManager, TrainSettings, train_job
 
 CNN = [{"type": "conv", "channels": 8, "kernel": 5}, {"type": "act", "kind": "relu"}, {"type": "global_avg"},

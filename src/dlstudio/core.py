@@ -16,7 +16,7 @@ import numpy as np
 
 from dlstudio import tasks
 from dlstudio.blocks import to_model_input
-from dlstudio.data import (EXAMPLES, DataError, _read_table, load_csv, load_example, load_image_folder,
+from dlstudio.data import (EXAMPLE_KINDS, ALIASES, DataError, _read_table, load_csv, load_example, load_image_folder,
                            load_series_folder, scan_series_folder)
 from dlstudio.graph import build_graph_model, check_graph, from_blocks
 from dlstudio.jobs import JobManager, TrainSettings, confusion, regression_view, train_job
@@ -97,8 +97,8 @@ class Studio:
             return {"summary": d.summary(), "source": d.source}
         if b.get("example"):
             kind = b["example"] if isinstance(b["example"], str) else "ecg"
-            if kind not in EXAMPLES:
-                raise UserError(f"예시 데이터 종류를 모름: {kind}", ", ".join(EXAMPLES))
+            if kind not in EXAMPLE_KINDS and kind not in ALIASES:
+                raise UserError(f"예시 데이터 종류를 모름: {kind}", ", ".join(EXAMPLE_KINDS))
             d = load_example(kind, **opts, **{k: b[k] for k in ("L", "H", "stride") if b.get(k)})
         elif b.get("series_folder"):
             lf = _path(b.get("label_file")) or None

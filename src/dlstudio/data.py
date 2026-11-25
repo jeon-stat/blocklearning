@@ -684,42 +684,6 @@ def load_detection_folder(path: str, det_file: str, size: int = 64, normalize: b
     return make_det_dataset(np.asarray(X), boxes, classes, size, normalize, test_ratio, seed, src)
 
 
-def parts_det_arrays(n: int = 400, size: int = 64, seed: int = 0) -> tuple:
-    """합성 부품 사진 (제조, 탐지): 결이 있는 판 위에 원형 부품(밝은 원·가운데 구멍)·사각 부품(어두운 사각형)이 1–3개.
-    → (픽셀 0–1로 펼친 X (n, size²), 그림마다 상자 [[클래스 번호, x, y, w, h], …])."""
-    rng = np.random.default_rng(seed)
-    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64) + 0.5
-    X, B = [], []
-    for _ in range(n):
-        img = 0.45 + rng.normal(0, 0.05, size)[None, :] * np.ones((size, 1)) + rng.normal(0, 0.04, (size, size))
-        img += rng.uniform(-0.08, 0.08) * (xx / size - 0.5)
-        boxes, taken = [], []
-        for _ in range(int(rng.integers(1, 4))):
-            for _try in range(20):
-                k = int(rng.integers(0, 2))
-                r = rng.uniform(5, 11) if k == 0 else rng.uniform(4.5, 9)        # 원은 반지름, 사각형은 반 변
-                cx, cy = rng.uniform(r + 1, size - r - 1, 2)
-                if all(np.hypot(cx - a, cy - b) > r + q + 2 for a, b, q in taken):
-                    break
-            else:
-                continue
-            taken.append((cx, cy, r))
-            if k == 0:
-                d2 = (xx - cx) ** 2 + (yy - cy) ** 2
-                img = np.where(d2 < r ** 2, 0.85 + rng.normal(0, 0.03, (size, size)), img)
-                img = np.where(d2 < (0.35 * r) ** 2, 0.3, img)
-            else:
-                inside = (np.abs(xx - cx) < r) & (np.abs(yy - cy) < r)
-                img = np.where(inside, 0.12 + rng.normal(0, 0.03, (size, size)), img)
-            boxes.append([k, (cx - r) / size, (cy - r) / size, 2 * r / size, 2 * r / size])
-        X.append(np.clip(img, 0, 1).reshape(-1))
-        B.append([[b[0]] + [round(float(v), 5) for v in b[1:]] for b in boxes])
-    return np.asarray(X), B
-
-
-DET_EXAMPLES = {"parts_det": (parts_det_arrays, ["원형 부품", "사각 부품"], 64)}
-
-
 def _series_key_img(s: str) -> str:
     """정답 표와 그림 이름 맞추기: 공백·대소문자·확장자 무시."""
     s = s.strip().lower()
@@ -804,218 +768,113 @@ def make_dataset(X: np.ndarray, y: np.ndarray, task: str = "auto", normalize: bo
                    mean, std, src, list(features or []), tuple(image) if image else None)
 
 
-def example_arrays(n: int = 1000, length: int = 140, seed: int = 0) -> tuple:
-    """합성 심전도형 박동: 0 = 정상(뾰족한 R파와 T파), 1 = 이상(넓은 QRS 또는 ST 내려감 또는 뒤집힌 T파). 대략 반반."""
-    rng = np.random.default_rng(seed)
-    t = np.linspace(0.0, 1.0, length)
-    g = lambda c, w, a: a * np.exp(-((t - c) / w) ** 2)
-    y = rng.permutation(np.arange(n) % 2)
-    X = np.empty((n, length))
-    for i in range(n):
-        s = rng.normal(0, 0.015)                                  # 박동 위치 흔들림
-        a = rng.normal(1.0, 0.08)
-        x = g(0.2 + s, 0.035, 0.12 * a)                           # P파
-        if y[i] == 0:
-            x = x + g(0.4 + s, 0.012, a) - g(0.37 + s, 0.01, 0.15 * a) - g(0.43 + s, 0.012, 0.25 * a)
-            x = x + g(0.65 + s, 0.05, 0.3 * a)                    # T파
-        else:
-            kind = rng.integers(3)
-            if kind == 0:                                         # 넓은 QRS
-                x = x + g(0.41 + s, 0.04, 0.7 * a) - g(0.48 + s, 0.03, 0.3 * a) + g(0.68 + s, 0.05, 0.25 * a)
-            elif kind == 1:                                       # ST 내려감
-                x = x + g(0.4 + s, 0.012, a) - g(0.43 + s, 0.012, 0.25 * a)
-                x = x - 0.15 * a * ((t > 0.45 + s) & (t < 0.6 + s)) + g(0.68 + s, 0.05, 0.2 * a)
-            else:                                                 # 뒤집힌 T파
-                x = x + g(0.4 + s, 0.012, a) - g(0.43 + s, 0.012, 0.25 * a) - g(0.65 + s, 0.05, 0.3 * a)
-        X[i] = x + rng.normal(0, 0.03, length)
-    return X, y
+# ---------------------------------------------------------------- 예시 데이터 (모두 공개된 실제 데이터)
+# 원본을 작게 줄인 npz는 dlstudio/data/ (만드는 법: tools/build_examples.py), 출처·라이선스는 <파일>.SOURCE.txt.
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
+CONCRETE_FEATURES = ["시멘트 (kg/m³)", "고로슬래그 (kg/m³)", "플라이애시 (kg/m³)", "물 (kg/m³)", "감수제 (kg/m³)",
+                     "굵은 골재 (kg/m³)", "잔골재 (kg/m³)", "재령 (일)"]
+HYDRAULIC_FEATURES = ["압력 PS1 (bar)", "압력 PS2 (bar)", "압력 PS3 (bar)", "압력 PS4 (bar)", "압력 PS5 (bar)",
+                      "압력 PS6 (bar)", "모터 전력 (W)", "유량 FS1 (l/min)", "유량 FS2 (l/min)", "온도 TS1 (°C)",
+                      "온도 TS2 (°C)", "온도 TS3 (°C)", "온도 TS4 (°C)", "진동 (mm/s)", "냉각 효율 (%)",
+                      "냉각 동력 (kW)", "효율 계수 (%)"]
+HYDRAULIC_STATES = ["정상", "냉각기 저하", "밸브 지연", "펌프 누설", "복합 고장"]
 
 
-def vibration_arrays(n: int = 1000, length: int = 200, defect_ratio: float = 0.2, seed: int = 0) -> tuple:
-    """합성 설비 진동 (제조): 0 = 정상(회전 주파수와 배음 + 잡음), 1 = 결함(베어링 결함처럼 일정 간격의 충격이
-    공진으로 울리다 줄어듦). 결함이 적은 불균형 데이터 (기본 20%)."""
-    rng = np.random.default_rng(seed)
-    t = np.arange(length) / length
-    y = (rng.permutation(n) < int(round(n * defect_ratio))).astype(np.int64)
-    X = np.empty((n, length))
-    for i in range(n):
-        f = rng.uniform(4.0, 6.0)                                 # 회전 주파수 (한 창에 4–6바퀴)
-        x = np.sin(2 * np.pi * f * t + rng.uniform(0, 2 * np.pi))             + 0.3 * np.sin(2 * np.pi * 2 * f * t + rng.uniform(0, 2 * np.pi))
-        if y[i]:
-            period = rng.uniform(0.08, 0.14)                      # 충격 간격
-            start = rng.uniform(0, period)
-            for t0 in np.arange(start, 1.0, period):
-                k = t >= t0
-                x[k] += rng.uniform(0.6, 1.0) * np.exp(-(t[k] - t0) * 60) * np.sin(2 * np.pi * 40 * (t[k] - t0))
-        X[i] = x + rng.normal(0, 0.25, length)
-    return X, y
+def _npz(name: str) -> dict:
+    """예시 파일 하나 (웹: 화면이 누를 때 내려받아 둠 — example_files)."""
+    path = DATA_DIR / f"{name}.npz"
+    if not path.exists():
+        raise DataError([Issue(None, None, f"예시 데이터 파일이 없음: {name}.npz", "페이지를 새로 고친 뒤 다시 누르세요")])
+    with np.load(path, allow_pickle=False) as z:
+        return {k: z[k] for k in z.files}
 
 
-PROCESS_FEATURES = ["온도", "압력", "회전 속도", "습도", "이송 속도", "공구 마모", "진동 RMS", "전류"]
+def _float(X) -> np.ndarray:
+    return np.asarray(X, dtype=np.float64).reshape(len(X), -1)
 
 
-def _process_features(n: int, rng) -> np.ndarray:
-    """합성 공정 변수 8개 (표 데이터): 온도·압력·회전 속도·습도·이송 속도·공구 마모·진동 RMS·전류."""
-    temp = rng.normal(200, 15, n)
-    press = rng.normal(5.0, 0.6, n)
-    speed = rng.normal(1500, 150, n)
-    hum = rng.uniform(30, 70, n)
-    feed = rng.normal(0.3, 0.05, n)
-    wear = rng.uniform(0, 1, n)
-    vib = 0.5 + 1.5 * wear ** 2 + rng.normal(0, 0.15, n)
-    cur = 10 + 0.004 * speed + 3 * feed + rng.normal(0, 0.4, n)
-    return np.stack([temp, press, speed, hum, feed, wear, vib, cur], axis=1)
+def _hydraulic_states(z: dict) -> np.ndarray:
+    """유압 사이클의 상태: 냉각기(100%)·밸브(100%)·펌프(누설 0)가 모두 정상이면 정상, 하나만 나쁘면 그것, 둘 이상이면 복합.
+    어큐뮬레이터 압력 차이는 정상 범위의 흔들림으로 봄 (정상 293 사이클)."""
+    bad = np.stack([z["cooler"] < 100, z["valve"] < 100, z["pump"] > 0], 1)
+    return np.where(bad.sum(1) == 0, 0, np.where(bad.sum(1) > 1, 4, 1 + bad.argmax(1))).astype(np.int64)
 
 
-def process_cls_arrays(n: int = 1000, seed: int = 0) -> tuple:
-    """공정 변수 → 불량 여부 (0 정상, 1 불량). 온도가 높고 압력이 낮거나, 공구 마모·진동이 크면 불량. 약 25%."""
-    rng = np.random.default_rng(seed)
-    X = _process_features(n, rng)
-    z = (0.06 * (X[:, 0] - 200) - 1.2 * (X[:, 1] - 5) + 2.5 * (X[:, 5] - 0.5) + 1.5 * (X[:, 6] - 1.0)
-         + 0.02 * (X[:, 3] - 50) + rng.normal(0, 0.7, n))
-    return X, (z > np.quantile(z, 0.75)).astype(np.int64)
+PLATE_FEATURES = ["X 최소", "X 최대", "Y 최소", "Y 최대", "면적 (픽셀)", "X 둘레", "Y 둘레", "밝기 합", "최소 밝기", "최대 밝기",
+                  "컨베이어 길이", "강종 A300", "강종 A400", "판 두께", "가장자리 지수", "빈 공간 지수", "정사각 지수",
+                  "바깥 X 지수", "가장자리 X 지수", "가장자리 Y 지수", "바깥 전체 지수", "면적 로그", "X 로그 지수",
+                  "Y 로그 지수", "방향 지수", "밝기 지수", "면적 시그모이드"]
+PLATE_FAULTS = ["페이스트리", "Z 긁힘", "K 긁힘", "얼룩", "오염", "돌기", "기타 결함"]
 
 
-def process_reg_arrays(n: int = 1000, seed: int = 1) -> tuple:
-    """공정 변수 → 수율(%). 적정 온도(200)·압력(5)에서 높고, 공구 마모·습도가 크면 낮아짐."""
-    rng = np.random.default_rng(seed)
-    X = _process_features(n, rng)
-    y = (95 - 0.02 * (X[:, 0] - 200) ** 2 - 3 * (X[:, 1] - 5) ** 2 - 8 * X[:, 5] - 0.05 * (X[:, 3] - 50)
-         - 1.5 * X[:, 6] + rng.normal(0, 0.8, n))
-    return X, y
-
-
-def process_anomaly_arrays(n: int = 1000, ratio: float = 0.15, seed: int = 2) -> tuple:
-    """공정 변수 → 0 정상, 1 전류 이상 (회전 속도·이송에 안 맞는 전류: 모터·부하 고장), 2 진동 이상 (공구 마모는 적은데
-    진동이 큼: 베어링 고장), 3 압력 저하 (누설). 이상은 값 하나하나는 흔한 범위여도 열끼리 관계가 깨진 것 (약 15%)."""
-    rng = np.random.default_rng(seed)
-    X = _process_features(n, rng)
-    y = np.zeros(n, dtype=np.int64)
-    ab = rng.permutation(n)[:int(round(n * ratio))]
-    y[ab] = 1 + np.arange(len(ab)) % 3
-    for i in ab:
-        if y[i] == 1:
-            X[i, 7] += rng.choice([-1, 1]) * rng.uniform(2.0, 3.5)
-        elif y[i] == 2:
-            X[i, 5] = rng.uniform(0, 0.4)
-            X[i, 6] = 0.5 + 1.5 * X[i, 5] ** 2 + rng.uniform(0.8, 1.5)
-        else:
-            X[i, 1] -= rng.uniform(1.2, 2.0)
-    return X, y
-
-
-def wear_arrays(n: int = 1000, length: int = 200, seed: int = 0) -> tuple:
-    """설비 마모 진동 신호 → 잔여 수명(RUL, 0–100). 마모가 진행될수록 잡음·충격이 커지고 주파수가 조금 내려감."""
-    rng = np.random.default_rng(seed)
-    t = np.arange(length) / length
-    w = rng.uniform(0, 1, n)
-    X = np.empty((n, length))
-    for i in range(n):
-        f = 5.0 - 0.8 * w[i] + rng.normal(0, 0.1)
-        x = np.sin(2 * np.pi * f * t + rng.uniform(0, 2 * np.pi))
-        period = rng.uniform(0.08, 0.14)
-        for t0 in np.arange(rng.uniform(0, period), 1.0, period):
-            k = t >= t0
-            x[k] += 1.2 * w[i] ** 2 * np.exp(-(t[k] - t0) * 60) * np.sin(2 * np.pi * 40 * (t[k] - t0))
-        X[i] = x + rng.normal(0, 0.15 + 0.35 * w[i], length)
-    return X, np.clip(100 * (1 - w) + rng.normal(0, 2, n), 0, 105)
-
-
-# 종류 → (배열 함수, 클래스 이름(회귀는 None), 열 이름)
+# 종류 → (파일, (X, y) 만들기, 클래스 이름(회귀는 None), 열 이름 만들기, 그림 (H, W))
 EXAMPLES = {
-    "ecg": (example_arrays, ["정상", "이상"], None),
-    "vibration": (vibration_arrays, ["정상", "결함"], None),
-    "process_cls": (process_cls_arrays, ["정상", "불량"], PROCESS_FEATURES),
-    "process_reg": (process_reg_arrays, None, PROCESS_FEATURES),
-    "wear_rul": (wear_arrays, None, None),
-    "digits": (None, [str(i) for i in range(10)], None),      # 이미지: load_example에서 IMAGE_EXAMPLES로
-    "surface": (None, ["정상", "스크래치", "얼룩", "구멍"], None),
-    "pneumonia": (None, ["정상", "폐렴"], None),
-    "parts_det": (None, ["원형 부품", "사각 부품"], None),           # 탐지: load_example에서 DET_EXAMPLES로
-    "factory_power": (None, None, None),                          # 예측: FC_EXAMPLES
-    "vibration_ae": (None, ["정상", "결함"], None),                 # 이상 탐지: AE_EXAMPLES (분류 예시를 정상만 학습으로)
-    "process_ae": (None, ["정상", "전류 이상", "진동 이상", "압력 저하"], PROCESS_FEATURES),
-    "process_anom": (process_anomaly_arrays, ["정상", "전류 이상", "진동 이상", "압력 저하"], PROCESS_FEATURES),
+    "ecg": ("ecg_mitdb", lambda z: (_float(z["X"]), z["y"].astype(np.int64)), ["정상", "이상"], None, None),
+    "bearing": ("bearing_uottawa", lambda z: (_float(z["X"]), z["y"].astype(np.int64)),
+                ["정상", "내륜 결함", "외륜 결함", "볼 결함", "복합 결함"], None, None),
+    "steel_plates": ("steel_plates", lambda z: (_float(z["X"]), z["y"].astype(np.int64)), PLATE_FAULTS,
+                     lambda z: PLATE_FEATURES, None),
+    "hydraulic": ("hydraulic", lambda z: (_float(z["X"]), _hydraulic_states(z)), HYDRAULIC_STATES,
+                  lambda z: HYDRAULIC_FEATURES, None),
+    "concrete": ("concrete", lambda z: (_float(z["X"]), z["y"].astype(np.float64)), None, lambda z: CONCRETE_FEATURES, None),
+    "hydraulic_valve": ("hydraulic", lambda z: (_float(z["ps2"]), z["valve"].astype(np.float64)), None, None, None),
+    "steelblast": ("steelblast", lambda z: (_float(z["X"]) / 255.0, z["y"].astype(np.int64)), ["양호", "불량"], None, (64, 64)),
+    "pneumonia": ("pneumonia28", lambda z: (_float(z["X"]) / 255.0, z["y"].astype(np.int64)), ["정상", "폐렴"], None, (28, 28)),
+    "digits": ("digits32", lambda z: (_float(z["X"]), z["y"].astype(np.int64)), [str(i) for i in range(10)], None, (32, 32)),
 }
-FC_EXAMPLES = {"factory_power": ("전력 사용량 (kW)", 96, 24, 2)}       # 종류 → (열 이름, 입력 길이, 예측 길이, 간격)
-AE_EXAMPLES = {"vibration_ae": "vibration", "process_ae": "process_anom"}
+FC_EXAMPLES = {"steel_power": ("steel_power", "전력 사용량 (kWh)", 96, 24, 1)}   # 종류 → (파일, 열 이름, 입력·예측 길이, 간격)
+AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic"}         # 이상 탐지: 분류 예시를 정상만 학습으로
+DET_EXAMPLES = {"pcb_det": ("pcb_det", 64)}                                    # 탐지: 종류 → (파일, 그림 크기)
+ALIASES = {"vibration": "bearing", "process_cls": "steel_plates", "process_reg": "concrete", "wear_rul": "hydraulic_valve",
+           "surface": "steelblast", "parts_det": "pcb_det", "factory_power": "steel_power", "vibration_ae": "bearing_ae",
+           "process_ae": "hydraulic_ae"}                                       # 예전(합성) 예시 이름 → 바꾼 실제 데이터
+EXAMPLE_KINDS = sorted(set(EXAMPLES) | set(FC_EXAMPLES) | set(AE_EXAMPLES) | set(DET_EXAMPLES))
 
 
-def surface_arrays(n_per: int = 300, size: int = 32, seed: int = 0):
-    """합성 금속 표면 (제조): 결 방향 무늬 + 조명 기울기 위에 정상 / 스크래치(가는 선) / 얼룩(흐린 큰 반점) / 구멍(작고 진한 점).
-    픽셀 0–1로 펼친 X (4·n_per, size²), 정답 0–3 (클래스마다 n_per장)."""
-    rng = np.random.default_rng(seed)
-    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
-    X, y = [], []
-    for k in range(4):
-        for _ in range(n_per):
-            streak = rng.normal(0, 0.06, size)[:, None] * np.ones((1, size))      # 가로 결
-            light = rng.uniform(-0.1, 0.1) * (xx / size - 0.5) + rng.uniform(-0.1, 0.1) * (yy / size - 0.5)
-            img = 0.6 + streak + light + rng.normal(0, 0.04, (size, size))
-            cx, cy = rng.uniform(6, size - 6, 2)
-            if k == 1:                                                            # 스크래치: 기울어진 가는 어두운 선
-                a, L = rng.uniform(0, np.pi), rng.uniform(10, 24)
-                t = (xx - cx) * np.cos(a) + (yy - cy) * np.sin(a)
-                dist = np.abs(-(xx - cx) * np.sin(a) + (yy - cy) * np.cos(a))
-                img -= rng.uniform(0.3, 0.45) * np.exp(-dist ** 2 / 0.6) * (np.abs(t) < L / 2)
-            elif k == 2:                                                          # 얼룩: 흐리고 넓은 반점
-                r = rng.uniform(3.5, 7)
-                img -= rng.uniform(0.18, 0.3) * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * r ** 2))
-            elif k == 3:                                                          # 구멍: 작고 진한 점 + 밝은 테두리
-                r = rng.uniform(1.2, 2.5)
-                d2 = (xx - cx) ** 2 + (yy - cy) ** 2
-                img = np.where(d2 < r ** 2, 0.05, img + 0.15 * np.exp(-(np.sqrt(d2) - r - 0.8) ** 2 / 0.5))
-            X.append(np.clip(img, 0, 1).reshape(-1))
-            y.append(k)
-    return np.asarray(X), np.asarray(y, dtype=np.int64)
+def example_files(kind: str) -> list:
+    """예시 하나에 필요한 npz 파일 이름 (웹이 누를 때만 내려받음)."""
+    kind = ALIASES.get(kind, kind)
+    if kind in FC_EXAMPLES:
+        return [FC_EXAMPLES[kind][0] + ".npz"]
+    if kind in DET_EXAMPLES:
+        return [DET_EXAMPLES[kind][0] + ".npz"]
+    kind = AE_EXAMPLES.get(kind, kind)
+    return [EXAMPLES[kind][0] + ".npz"] if kind in EXAMPLES else []
 
 
-def pneumonia_arrays():
-    """흉부 X-ray 정상·폐렴 28×28 (PneumoniaMNIST 일부 1,200장, CC BY 4.0 — dlstudio/data/pneumonia28.SOURCE.txt): 픽셀 0–1, 정답 0 정상·1 폐렴."""
-    z = np.load(Path(__file__).resolve().parent / "data" / "pneumonia28.npz")
-    return z["X"].astype(np.float64) / 255.0, z["y"].astype(np.int64)
-
-
-# 이미지 예시: 종류 → (배열 함수, 클래스 이름, (H, W))
-IMAGE_EXAMPLES = {
-    "digits": (lambda: digits_arrays(), [str(i) for i in range(10)], (8, 8)),
-    "surface": (lambda: surface_arrays(), ["정상", "스크래치", "얼룩", "구멍"], (32, 32)),
-    "pneumonia": (lambda: pneumonia_arrays(), ["정상", "폐렴"], (28, 28)),
-}
-
-
-def digits_arrays():
-    """손글씨 숫자 8×8 (UCI, CC BY 4.0 — dlstudio/data/digits8.SOURCE.txt): 픽셀 0–1로 펼친 X (1797, 64), 정답 0–9."""
-    z = np.load(Path(__file__).resolve().parent / "data" / "digits8.npz")
-    return z["X"].astype(np.float64) / 16.0, z["y"].astype(np.int64)
+def _det_arrays(z: dict) -> tuple:
+    """탐지 npz: X (그림, H, W) 0–255, boxes (상자, 6) = [그림 번호, 클래스, x, y, w, h] (0–1 비율)."""
+    X = _float(z["X"]) / 255.0
+    boxes = [[] for _ in range(len(X))]
+    for i, k, x, y, w, h in z["boxes"]:
+        boxes[int(i)].append([int(k), round(float(x), 5), round(float(y), 5), round(float(w), 5), round(float(h), 5)])
+    return X, boxes, [str(c) for c in z["names"]]
 
 
 def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 0.2, seed: int = 0,
                  L=None, H=None, stride=None) -> Dataset:
-    """예시 데이터 (모두 합성): "ecg" 심전도 정상·이상 (길이 140, 의료), "vibration" 설비 진동 정상·결함 20% (길이 200),
-    "process_cls" 공정 변수 8개 → 불량 여부, "process_reg" 공정 변수 8개 → 수율, "wear_rul" 마모 진동 → 잔여 수명."""
-    if kind not in EXAMPLES:
-        raise ValueError(f"예시 데이터 종류는 {', '.join(EXAMPLES)} 중 하나: {kind}")
+    """예시 데이터 (모두 공개된 실제 데이터, 출처는 dlstudio/data/*.SOURCE.txt). 예전 합성 예시 이름은 ALIASES로 바꿔 읽음."""
+    kind = ALIASES.get(kind, kind)
+    if kind not in EXAMPLE_KINDS:
+        raise ValueError(f"예시 데이터 종류는 {', '.join(EXAMPLE_KINDS)} 중 하나: {kind}")
     if kind in FC_EXAMPLES:
-        from dlstudio.forecast import make_forecast_dataset, power_series
-        col, L0, H0, s0 = FC_EXAMPLES[kind]
-        return make_forecast_dataset(power_series(), int(L or L0), int(H or H0), int(stride or s0), test_ratio=test_ratio, normalize=normalize,
-                                     source={"example": kind}, column=col)
+        from dlstudio.forecast import make_forecast_dataset
+        f, col, L0, H0, s0 = FC_EXAMPLES[kind]
+        return make_forecast_dataset(_npz(f)["series"], int(L or L0), int(H or H0), int(stride or s0), test_ratio=test_ratio,
+                                     normalize=normalize, source={"example": kind}, column=col)
     if kind in AE_EXAMPLES:
         from dlstudio.anomaly import to_anomaly
         d = load_example(AE_EXAMPLES[kind], normalize=normalize, test_ratio=test_ratio, seed=seed)
         d.source = dict(d.source, example=kind)
         return to_anomaly(d)
     if kind in DET_EXAMPLES:
-        fn, names, size = DET_EXAMPLES[kind]
-        X, boxes = fn()
+        f, size = DET_EXAMPLES[kind]
+        X, boxes, names = _det_arrays(_npz(f))
         return make_det_dataset(X, boxes, names, size, normalize, test_ratio, seed, {"example": kind})
-    if kind in IMAGE_EXAMPLES:
-        fn, names, image = IMAGE_EXAMPLES[kind]
-        X, y = fn()
-        return make_dataset(X, y, task="classification", normalize=normalize, test_ratio=test_ratio, seed=seed,
-                            classes=names, source={"example": kind}, image=image)
-    fn, names, feats = EXAMPLES[kind]
-    X, y = fn()
+    f, make, names, feats, image = EXAMPLES[kind]
+    z = _npz(f)
+    X, y = make(z)
     return make_dataset(X, y, task="classification" if names else "regression", normalize=normalize,
-                        test_ratio=test_ratio, seed=seed, classes=names, source={"example": kind}, features=feats)
+                        test_ratio=test_ratio, seed=seed, classes=names, source={"example": kind},
+                        features=feats(z) if feats else None, image=image)

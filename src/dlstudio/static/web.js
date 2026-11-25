@@ -8,7 +8,7 @@ const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
 const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "nn_extra.py",
   "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
-const DATA_FILES = ["data/digits8.npz", "data/pneumonia28.npz"];
+const gotData = new Set();                               // 받아 둔 예시 데이터 파일 (예시를 누를 때만 받음)
 const E = () => window.DLEngine;
 
 const W = { py: null, mod: null, studio: null, data: null, trained: null, jobs: {}, running: null, n: 0 };
@@ -32,7 +32,6 @@ async function boot() {
   await py.loadPackage(["numpy", "pillow"]);
   py.FS.mkdirTree("/app/dlstudio/data");
   await Promise.all(PY_FILES.map(async (f) => py.FS.writeFile(`/app/dlstudio/${f}`, await (await fetch(BASE + f, { cache: "no-cache" })).text())));
-  await Promise.all(DATA_FILES.map(async (f) => py.FS.writeFile(`/app/dlstudio/${f}`, new Uint8Array(await (await fetch(BASE + f, { cache: "no-cache" })).arrayBuffer()))));
   py.FS.mkdirTree("/data");
   py.runPython("import sys; sys.path.insert(0, '/app')");
   W.mod = py.pyimport("dlstudio.web");
@@ -361,12 +360,24 @@ function recordBytes(name, opts = {}) {
     throw err;
   } finally { if (st) st.destroy(); }
 }
+// 예시 데이터 파일 받기: 예시 하나에 필요한 npz만 (처음 열 때 모두 받지 않게)
+async function ensureExample(kind) {
+  if (!kind) return;
+  for (const f of JSON.parse(W.mod.example_files_json(kind))) {
+    if (gotData.has(f)) continue;
+    const res = await fetch(BASE + "data/" + f, { cache: "no-cache" });
+    if (!res.ok) throw { message: `예시 데이터를 받지 못함: ${f}`, hint: "인터넷 연결을 확인하고 다시 누르세요" };
+    W.py.FS.writeFile(`/app/dlstudio/data/${f}`, new Uint8Array(await res.arrayBuffer()));
+    gotData.add(f);
+  }
+}
 // 기록 바이트 → 열기 (화면용 응답). data는 없어도 됨 (예시 데이터, 또는 프로젝트 zip 안에 데이터가 있음)
 async function openRecord(project, data) {
   await ready;
   W.py.FS.mkdirTree("/work");
   W.py.FS.writeFile("/work/open.dlstudio", project);
   if (data && data.length) W.py.FS.writeFile("/work/open.zip", data);
+  await ensureExample(W.mod.project_example("/work/open.dlstudio"));
   return api("/api/project/open", { path: "/work/open.dlstudio", data_path: data && data.length ? "/work/open.zip" : "" });
 }
 
@@ -392,7 +403,7 @@ async function api(path, body) {
     }
     if (path.startsWith("/api/label/")) return labelCall(path.slice("/api/label/".length), body || {});
     if (path === "/api/data/load" && body && body.label_job) return await useLabelJob(body);
-    if (path === "/api/data/load") clearTrained();
+    if (path === "/api/data/load") { clearTrained(); if (body && body.example) await ensureExample(body.example); }
     const r = pyCall(method, path, body);
     if (method === "POST") {
       if (path === "/api/data/load") changed("data");

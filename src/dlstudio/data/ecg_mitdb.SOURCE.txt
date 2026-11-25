@@ -1,0 +1,5 @@
+심전도 박동 (정상·이상) — MIT-BIH Arrhythmia Database (PhysioNet), Open Data Commons Attribution License v1.0
+Moody GB, Mark RG. The impact of the MIT-BIH Arrhythmia Database. IEEE Eng in Med and Biol 20(3):45-50 (2001).
+Goldberger A, et al. PhysioBank, PhysioToolkit, and PhysioNet. Circulation 101(23):e215-e220 (2000). https://physionet.org/content/mitdb/1.0.0/
+바꾼 내용: 기록 31개의 첫 채널(MLII)에서 전문가 주석 박동마다 R파 0.25초 앞 ~ 0.45초 뒤를 잘라 140점으로 다시 뽑고 중앙값을 뺌(mV).
+정상 = N, 이상 = L·R·a·V·F·J·A·S·E·j (페이스메이커 박동 제외). 각 2,500개를 무작위로 고름. 진단용 아님.

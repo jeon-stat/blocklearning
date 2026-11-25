@@ -58,7 +58,7 @@ def _wait(s, jid, timeout=120):
 
 def test_vibration_example_loads(server):
     code, d = _call(server, "/api/data/load", {"example": "vibration"})
-    assert code == 200 and d["summary"]["classes"] == ["정상", "결함"]
+    assert code == 200 and d["summary"]["classes"] == ["정상", "내륜 결함", "외륜 결함", "볼 결함", "복합 결함"]
 
 
 def test_flow_example_to_trained(server, tmp_path):
@@ -195,7 +195,7 @@ def test_tasks_catalog_and_selection(server):
     code, _ = _call(server, "/api/task/select", sel)
     assert code == 200 and _call(server, "/api/state")[1]["selection"] == sel
     code, d = _call(server, "/api/data/load", {"example": "process_reg"})
-    assert code == 200 and d["summary"]["task"] == "regression" and d["summary"]["features"][0] == "온도"
+    assert code == 200 and d["summary"]["task"] == "regression" and d["summary"]["features"][0] == "시멘트 (kg/m³)"
     code, e = _call(server, "/api/task/select", {"family": "x", "subtask": "y", "template": "z"})
     assert code == 400
 
@@ -203,17 +203,17 @@ def test_tasks_catalog_and_selection(server):
 def test_image_flow(server, tmp_path):
     from dlstudio.tasks import find
     code, d = _call(server, "/api/data/load", {"example": "digits"})
-    assert code == 200 and d["summary"]["image"] == [8, 8]
+    assert code == 200 and d["summary"]["image"] == [32, 32]
     blocks = find("classification", "cls_img", "cnn2d")[2]["blocks"]
     code, c = _call(server, "/api/model/check", {"blocks": blocks})
-    assert code == 200 and c["ok"] and c["shapes"]["b0"] == [8, 8, 8], c
+    assert code == 200 and c["ok"] and c["shapes"]["b0"] == [8, 32, 32], c
     _, j = _call(server, "/api/train", {"blocks": blocks, "settings": {"epochs": 1}})
     assert _wait(server, j["id"])["state"] == "done"
     code, a = _call(server, "/api/activations", {"sample_index": 0})
-    assert code == 200 and len(a["values"]["b0"]) == 8 and len(a["values"]["b0"][0]) == 8     # (C, H, W)
+    assert code == 200 and len(a["values"]["b0"]) == 8 and len(a["values"]["b0"][0]) == 32     # (C, H, W)
     _call(server, "/api/project/save", {"path": str(tmp_path / "i.dlstudio")})
     code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "i.dlstudio")})
-    assert code == 200 and o["summary"]["image"] == [8, 8] and o["trained"]
+    assert code == 200 and o["summary"]["image"] == [32, 32] and o["trained"]
 
 
 def test_image_folder_and_csv_load(server, tmp_path):

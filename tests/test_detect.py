@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from dlstudio import codegen, detect
-from dlstudio.data import make_det_dataset, parts_det_arrays
+from dlstudio.data import make_det_dataset
+from tests.synth import parts_det_arrays
 from dlstudio.graph import build_graph_model, check_graph, from_blocks
 from dlstudio.tasks import T_CNN2D, T_DET_RES, T_DET_SMALL
 
