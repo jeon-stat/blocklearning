@@ -136,6 +136,16 @@ async function openProject(kind, p) {
     showMessage(`'${p.name}'을(를) 열었음`, r.notice || "", "", true);
   } catch (e) { status("열지 못함", true); showError(e.message !== undefined ? e : { message: String(e) }); }
 }
+async function closeProject() {                          // 지금 프로젝트 닫기: 저장하고 아무것도 열지 않은 첫 화면으로 (새로 고침)
+  await saveNow();
+  cur = null;
+  selId = null;
+  if (WEBB().hasData()) { location.reload(); return; }
+  showCurrent();
+  status("");
+  render();
+  showSteps();
+}
 async function startFresh(then) {                        // 새 프로젝트: 지금 작업이 있으면 저장하고 깨끗한 화면으로 (새로 고침)
   await saveNow();
   cur = null;
@@ -191,6 +201,7 @@ const ICON = {
   code: svgI('<path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/>'),
   folder: svgI('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
   pen: svgI('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
+  close: svgI('<path d="M6 6l12 12M18 6 6 18"/>'),
   trash: svgI('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
 };
 // 첫 화면 그림: 블록 그래프 (Input → Conv1D → ReLU → Output, 옆에 학습 곡선)
@@ -263,6 +274,7 @@ function ensureHome() {
     try {
       if (!b && selId !== item.id) return selectCard(item.id);   // 처음 누르면 고르기만, 한 번 더 누르면 열기
       if (!b || b.dataset.a === "open") return openProject(kind, item);
+      if (b.dataset.a === "close") return closeProject();
       if (b.dataset.a === "rename") {
         const name = prompt("새 이름", item.name);
         if (!name || name.trim() === item.name) return;
@@ -320,7 +332,7 @@ async function render() {
         <div class="pn">${esc(p.name)}</div>
         <div class="pm">${esc(p.meta || "아직 학습 안 함")}</div>
         <div class="pc-foot"><span class="pt">${esc(when(p.updated))} 저장</span>
-          <span class="pa"><button data-a="rename" class="ghost icon" title="이름 바꾸기" aria-label="이름 바꾸기">${ICON.pen}</button><button data-a="remove" class="ghost danger icon" title="지우기" aria-label="지우기">${ICON.trash}</button></span></div></div>`;
+          <span class="pa">${now ? `<button data-a="close" class="ghost icon" title="닫기" aria-label="닫기">${ICON.close}</button>` : ""}<button data-a="rename" class="ghost icon" title="이름 바꾸기" aria-label="이름 바꾸기">${ICON.pen}</button><button data-a="remove" class="ghost danger icon" title="지우기" aria-label="지우기">${ICON.trash}</button></span></div></div>`;
     }).join("") : `<div class="empty"><span class="fi">${ICON.folder}</span><b>아직 프로젝트가 없습니다</b>
       <span>[새 프로젝트]나 [예시로 바로 해 보기]로 시작하세요. 데이터를 넣으면 자동으로 저장됩니다.</span></div>`;
   } catch (e) { list.innerHTML = `<p class="bad">${esc(e.message || e)}</p>`; }
