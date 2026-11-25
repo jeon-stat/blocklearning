@@ -43,6 +43,29 @@ async function uniqueName(kind, name) {               // 같은 이름이 있으
     return n;
   } catch (e) { return name; }
 }
+function stepsText() {                                  // 만들기 단계 진행: 과제·데이터·모델·학습(다시 해야 하면 stale)
+  const train = st.trained ? (st.trainedJson !== st.graphJson ? "stale" : true) : false;
+  return JSON.stringify({ task: !!st.tpl, data: !!st.summary, model: !!(st.checked && st.checked.ok), train });
+}
+function stepsOf(card) {                                // 카드에 적힌 진행 (예전 기록은 한 줄 요약에서 어림)
+  try { if (card.dataset.steps) return JSON.parse(card.dataset.steps); } catch (e) { /* 아래 */ }
+  const meta = card.dataset.meta || "";
+  return { task: !!meta, data: true, model: !!meta, train: /학습 \d+번/.test(meta) };
+}
+function paintSteps(p) {                                // 고른 (열지 않은) 프로젝트의 진행을 왼쪽 만들기 흐름에
+  const set = (name, done, stale, locked) => {
+    const b = document.querySelector(`.step[data-step="${name}"]`);
+    if (!b) return;
+    b.classList.toggle("done", !!done && !stale);
+    b.classList.toggle("stale", !!stale);
+    b.classList.toggle("locked", !!locked);
+  };
+  set("task", p.task);
+  set("data", p.data);
+  set("model", p.model, false, !p.data);
+  set("train", p.train === true, p.train === "stale", !p.data);
+  set("predict", false, false, !p.data || !p.train);
+}
 function metaText() {                                   // 첫 화면 카드의 한 줄 요약: 과제 · 학습 횟수 · 최고 시험 성적
   try {
     const runs = (st.runs || []).filter((r) => r.data_ok);
@@ -99,7 +122,7 @@ async function saveNow() {
         cur = { kind, id: p.id, name: p.name };
         remember(); showCurrent();
       }
-      await store(cur.kind).save(cur.id, Object.assign(wantData ? rec : { project: rec.project }, { meta: metaText() }));
+      await store(cur.kind).save(cur.id, Object.assign(wantData ? rec : { project: rec.project }, { meta: metaText(), steps: stepsText() }));
       if (wantData) dataDirty = false;
       status("자동 저장됨 " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
@@ -326,7 +349,7 @@ async function render() {
     const items = await store(tab).list();
     list.innerHTML = items.length ? items.map((p) => {
       const now = cur && cur.id === p.id, recent = !now && last && last.id === p.id;
-      return `<div class="proj-card${selId === p.id ? " sel" : ""}" data-id="${esc(p.id)}" data-name="${esc(p.name)}">
+      return `<div class="proj-card${selId === p.id ? " sel" : ""}" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-meta="${esc(p.meta || "")}" data-steps="${esc(p.steps || "")}">
         <div class="pc-top"><span class="pc-icon">${esc((p.name || "?").trim().charAt(0))}</span>
           ${recent ? '<span class="badge">최근</span>' : ""}</div>
         <div class="pn">${esc(p.name)}</div>
@@ -342,6 +365,9 @@ let selId = null;
 function selectCard(id) {
   selId = id;
   document.querySelectorAll("#home-list .proj-card").forEach((c) => c.classList.toggle("sel", c.dataset.id === id));
+  const card = id && document.querySelector(`#home-list .proj-card[data-id="${CSS.escape(id)}"]`);
+  if (card && !(cur && cur.id === id)) paintSteps(stepsOf(card));   // 열지 않은 프로젝트: 저장해 둔 진행
+  else markSteps();                                                   // 지금 연 프로젝트 (또는 고르지 않음): 지금 상태
   showSteps();
 }
 // 왼쪽 '만들기' 흐름(과제~예측): 내 프로젝트 화면에서는 프로젝트를 골랐을 때만, 다른 단계에서는 늘

@@ -54,13 +54,14 @@ const local = {
     await tx(["projects"], "readwrite", (t) => t.objectStore("projects").put(p));
     return p;
   },
-  async save(id, { project, data, meta }) {
+  async save(id, { project, data, meta, steps }) {
     await tx(["projects", "blobs"], "readwrite", async (t) => {
       const ps = t.objectStore("projects");
       const p = await req(ps.get(id));
       if (!p) throw new Error("프로젝트가 없음");
       p.updated = Date.now();
       if (meta !== undefined) p.meta = meta;
+      if (steps !== undefined) p.steps = steps;              // 만들기 단계 진행 (첫 화면에서 고른 카드의 진행 표시)
       ps.put(p);
       t.objectStore("blobs").put(project, id + "/project");
       if (data !== undefined) t.objectStore("blobs").put(data, id + "/data");
@@ -183,7 +184,7 @@ async function gapi(path, opt = {}) {
 const q = (s) => encodeURIComponent(s);
 const esc = (s) => String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 async function findChildren(parent, extra = "") {
-  const r = await gapi(`files?q=${q(`'${parent}' in parents and trashed=false${extra}`)}&fields=${q("files(id,name,mimeType,modifiedTime,description)")}&pageSize=1000&spaces=drive`);
+  const r = await gapi(`files?q=${q(`'${parent}' in parents and trashed=false${extra}`)}&fields=${q("files(id,name,mimeType,modifiedTime,description,appProperties)")}&pageSize=1000&spaces=drive`);
   return (await r.json()).files || [];
 }
 async function makeFolder(name, parent) {
@@ -216,7 +217,7 @@ async function getFile(folder, name) {
   return new Uint8Array(await (await gapi(`files/${f.id}?alt=media`)).arrayBuffer());
 }
 
-const metaSent = {};
+const metaSent = {}, stepsSent = {};
 const drive = {
   kind: "drive",
   label: "구글 드라이브",
@@ -224,15 +225,19 @@ const drive = {
   signedIn, signIn, signOut, user: () => user,
   async list() {
     const items = await findChildren(await root(), ` and mimeType='${FOLDER}'`);
-    return items.map((f) => ({ id: f.id, name: f.name, updated: Date.parse(f.modifiedTime) || 0, meta: f.description || "" })).sort((a, b) => b.updated - a.updated);
+    return items.map((f) => ({ id: f.id, name: f.name, updated: Date.parse(f.modifiedTime) || 0, meta: f.description || "", steps: (f.appProperties || {}).steps || "" })).sort((a, b) => b.updated - a.updated);
   },
   async create(name) { const f = await makeFolder(name, await root()); return { id: f.id, name: f.name, updated: Date.now() }; },
-  async save(id, { project, data, meta }) {
+  async save(id, { project, data, meta, steps }) {
     await putFile(id, "project.dlstudio", project);
     if (data !== undefined && data !== null) await putFile(id, "data.zip", data);
     if (meta !== undefined && meta !== metaSent[id]) {        // 폴더 설명에 한 줄 요약 (첫 화면 카드에 보임)
       await gapi(`files/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: meta }) });
       metaSent[id] = meta;
+    }
+    if (steps !== undefined && steps !== stepsSent[id]) {      // 만들기 단계 진행 (폴더의 앱 속성)
+      await gapi(`files/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ appProperties: { steps } }) });
+      stepsSent[id] = steps;
     }
   },
   async load(id) { return { project: await getFile(id, "project.dlstudio"), data: await getFile(id, "data.zip") }; },
