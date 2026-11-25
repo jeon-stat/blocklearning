@@ -110,9 +110,16 @@ class TrainSettings:
         return cls(**known)
 
 
-def metric(out: np.ndarray, y: np.ndarray, task: str) -> float:
+def metric(out: np.ndarray, y: np.ndarray, task: str, X: Optional[np.ndarray] = None) -> float:
+    """시험 성적: 분류 정확도, 회귀 R², 예측 R²(다음 H개 전체), 이상 탐지 AUC (X = 모델 입력을 펼친 정규화 값)."""
     if task == "classification":
         return float(np.mean(out.argmax(1) == y))
+    if task == "forecast":
+        from dlstudio.forecast import metric as fc_metric
+        return fc_metric(out, y)
+    if task == "anomaly":
+        from dlstudio.anomaly import metric as ae_metric
+        return ae_metric(out, X, y)
     o = out[:, 0]
     var = float(np.var(y))
     return 1.0 - float(np.mean((o - y) ** 2)) / var if var > 0 else float("nan")
@@ -145,14 +152,23 @@ def _device(name: str):
     return None if name in ("cpu", "", None) else name
 
 
-def _fold_target_scale(net, mu: float, sd: float) -> None:
-    """정규화한 정답으로 학습한 출력층에 되돌림(× sd + mu)을 접어 넣음: 모델이 원래 단위로 냄."""
+def _fold_target_scale(net, mu, sd) -> None:
+    """정규화한 정답으로 학습한 출력층에 되돌림(× sd + mu, 출력마다)을 접어 넣음: 모델이 원래 단위로 냄."""
     import torch
     from dlstudio.graph import output_linear
     lin = output_linear(net)
+    mu_t = torch.as_tensor(np.asarray(mu, dtype=np.float64).reshape(-1), dtype=lin.weight.dtype)
+    sd_t = torch.as_tensor(np.asarray(sd, dtype=np.float64).reshape(-1), dtype=lin.weight.dtype)
     with torch.no_grad():
-        lin.weight.mul_(sd)
-        lin.bias.mul_(sd).add_(mu)
+        lin.weight.mul_(sd_t[:, None])
+        lin.bias.mul_(sd_t).add_(mu_t)
+
+
+def target_scale(Y: np.ndarray) -> tuple:
+    """맞힐 값 (샘플, 출력 수)의 출력마다 평균·표준편차 (표준편차 0이면 1)."""
+    Y = np.asarray(Y, dtype=np.float64).reshape(len(Y), -1)
+    sd = Y.std(0)
+    return Y.mean(0), np.where(sd > 0, sd, 1.0)
 
 
 def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None,
@@ -172,7 +188,7 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
     elif task == "classification":
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev), nn.CrossEntropyLoss()
     else:
-        yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(-1, 1), nn.MSELoss()
+        yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(len(Xt), -1), nn.MSELoss()
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     n = len(Xt)
     for epoch in range(1, epochs + 1):
@@ -208,10 +224,10 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     done = []
     if data.task == "detection":
         return _train_det(job, model, Xtr, Xte, Xte_t, data, settings, dev)
-    reg = data.task != "classification"
-    mu = float(np.mean(data.y_train)) if reg else 0.0         # 회귀 정답은 정규화해 학습 (21–96 같은 값도 잘 배움)
-    sd = (float(np.std(data.y_train)) or 1.0) if reg else 1.0
-    y_fit = (data.y_train - mu) / sd if reg else data.y_train
+    reg = data.task != "classification"                  # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
+    Y = np.asarray(data.target_train, dtype=np.float64).reshape(len(data.X_train), -1)
+    mu, sd = target_scale(Y) if reg else (0.0, 1.0)
+    y_fit = (Y - mu) / sd if reg else data.y_train
 
     def cb(info):
         net = info["model"]
@@ -219,7 +235,8 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         with torch.no_grad():
             out = net(Xte_t).detach().double().cpu().numpy() * sd + mu
         done.append(info["epoch"])
-        job.report({"epoch": info["epoch"], "loss": float(info["loss"]), "test_metric": metric(out, data.y_test, data.task)})
+        job.report({"epoch": info["epoch"], "loss": float(info["loss"]),
+                    "test_metric": metric(out, data.y_test, data.task, data.X_test)})
         return job.cancelled
 
     with warnings.catch_warnings():
@@ -230,12 +247,13 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         _fold_target_scale(net, mu, sd)
     with torch.no_grad():
         out = net(torch.as_tensor(Xte, dtype=torch.float32)).double().numpy()
-    result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task),
-              "metric_name": "accuracy" if data.task == "classification" else "r2", "warnings": [],
-              "confusion": None, "recall": None}
+    result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task, data.X_test),
+              "metric_name": metric_name(data), "warnings": [], "confusion": None, "recall": None}
     with torch.no_grad():                                   # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
         Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
         out_tr = np.concatenate([net(Xtr_t[i:i + 1024]).double().numpy() for i in range(0, len(Xtr_t), 1024)])
+    if data.task in ("forecast", "anomaly"):
+        return dict(result, **task_result(data, out, out_tr))
     result["train_metric"] = metric(out_tr, data.y_train, data.task)
     if data.task == "classification":
         result["confusion"], result["recall"] = confusion(out.argmax(1), data.y_test, len(data.classes))
@@ -243,6 +261,24 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     else:
         result["mae"], result["scatter"] = regression_view(out, data.y_test)
     return result
+
+
+def metric_name(data) -> str:
+    if data.task == "anomaly":
+        from dlstudio.anomaly import metric_name as ae_name
+        return ae_name(data)
+    return "accuracy" if data.task == "classification" else "r2"
+
+
+def task_result(data, out: np.ndarray, out_tr: np.ndarray) -> dict:
+    """예측·이상 탐지의 결과 화면 값 (시험·학습 출력에서). 웹 학습도 출력만 넘겨 이것을 씀 (web.task_result)."""
+    if data.task == "forecast":
+        from dlstudio import forecast
+        return dict(forecast.result(out, data), train_metric=forecast.metric(out_tr, data.y_train))
+    from dlstudio import anomaly
+    r = anomaly.result(out, out_tr, data)
+    tr = anomaly.scores(out_tr, data.X_train)
+    return dict(r, train_metric=None if metric_name(data) == "auc" else float(tr.mean()))
 
 
 def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, dev) -> dict:

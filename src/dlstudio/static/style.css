@@ -760,3 +760,13 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 
 /* 단계 아래 [← 이전] (왼쪽 끝) */
 .next .back { margin-right: auto; }
+
+/* 시계열 예측·이상 탐지 결과 */
+.fc-box { margin: 10px 0; }
+.fc-gallery, .ae-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px; }
+.fc-card { border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: #fff; }
+.fc-card.ab { border-color: #fecaca; background: #fff7f7; }
+.fc-card svg, .ae-hist { max-width: 100%; height: auto; }
+.fc-legend { font-size: 12px; }
+.ae-at { margin: 6px 0 10px; }
+#det-box .det-head button { margin-left: 8px; }

@@ -177,6 +177,11 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
         lines.append(f"출력: (샘플 수, {plan.n_out}) 클래스 점수 — 가장 큰 칸이 예측. 순서: {', '.join(map(str, info['classes']))}")
     elif info.get("task") == "regression":
         lines.append("출력: (샘플 수, 1) 예측값")
+    elif info.get("task") == "forecast":
+        lines.append(f"출력: (샘플 수, {plan.n_out}) 다음 {plan.n_out}개 값 (원래 단위). 입력 = 바로 앞의 값들 (신호 전체의 평균·표준편차로 정규화)")
+    elif info.get("task") == "anomaly":
+        lines.append(f"출력: (샘플 수, {plan.n_out}) 되살린 입력 (정규화한 값). 이상 점수 = (입력 − 출력)²의 평균, 클수록 이상. "
+                     "정상만으로 학습하세요")
     else:
         lines.append(f"출력: (샘플 수, {plan.n_out})")
     lines.append("데이터 준비: DL studio처럼 학습 데이터의 열마다 평균·표준편차로 정규화한 뒤 위 모양으로 바꿔 넣으세요.")
@@ -351,15 +356,15 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
     if head:
         return "\n".join(lines + _torch_det(head, tr, weights_file, plan))
-    if task == "regression":
+    if task in ("regression", "forecast", "anomaly"):         # 이상 탐지는 y = X (입력을 되살림)
         loss, ytype = "nn.MSELoss()", "torch.float32"
     else:
         loss, ytype = "nn.CrossEntropyLoss()", "torch.long"
     lines += [
         f"def train(model, X, y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
-        f'    """X: 위 입력 모양의 배열, y: {"정답 클래스 번호" if task != "regression" else "정답 값"}. Adam으로 학습."""',
+        f'    """X: 위 입력 모양의 배열, y: {"정답 클래스 번호" if task not in ("regression", "forecast", "anomaly") else "다음 값들 (샘플, 예측 길이)" if task == "forecast" else "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요" if task == "anomaly" else "정답 값"}. Adam으로 학습."""',
         "    X = torch.as_tensor(X, dtype=torch.float32)",
-        f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(-1, 1)" if task == "regression" else ""),
+        f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(len(X), -1)" if task in ("regression", "forecast", "anomaly") else ""),
         f"    opt, loss_fn = torch.optim.Adam(model.parameters(), lr=lr), {loss}",
         "    for epoch in range(epochs):",
         "        model.train()",
@@ -379,8 +384,10 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
             shape, n_feat = f"-1, {plan.in_shape[1]}, 1", plan.in_shape[1]
         else:
             shape, n_feat = f"-1, 1, {plan.in_shape[1]}", plan.in_shape[1]
-        answer = ('[str(info["classes"][i]) for i in out.argmax(1)]      # 클래스 이름' if task != "regression"
-                  else "out[:, 0].tolist()                                   # 예측값 (원래 단위)")
+        answer = ("out[:, 0].tolist()                                   # 예측값 (원래 단위)" if task == "regression"
+                  else "out.tolist()                                         # 다음 값들 (원래 단위)" if task == "forecast"
+                  else "((out - x.reshape(len(x), -1)) ** 2).mean(1).tolist()  # 이상 점수 (클수록 이상)" if task == "anomaly"
+                  else '[str(info["classes"][i]) for i in out.argmax(1)]      # 클래스 이름')
         lines += [
             f'def load_trained(path="{weights_file}"):',
             '    """DL studio에서 학습한 모델과 정규화 값을 불러옴 → (model, info)."""',
@@ -827,7 +834,7 @@ def to_keras(graph: dict, length: int, n_out: int, image: tuple = None, data_inf
                     "        loss += tf.reduce_sum(-tf.reduce_sum(t[:, 5:] * tf.nn.log_softmax(o[:, 5:], axis=1), 1) * pos)",
                     "    return loss / tf.cast(tf.shape(out)[0], tf.float32)"]
         loss, metric = "det_loss", "[]"
-    elif task == "regression":
+    elif task in ("regression", "forecast", "anomaly"):
         loss, metric = '"mse"', '["mae"]'
     else:
         loss, metric = "keras.losses.SparseCategoricalCrossentropy(from_logits=True)", '["accuracy"]'
@@ -839,7 +846,7 @@ def to_keras(graph: dict, length: int, n_out: int, image: tuple = None, data_inf
     lines += body
     lines += [f'    return keras.Model(x, {plan.out}, name="studio_model")', "", "",
               f"def train(model, X, y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
-              f'    """X: 위 입력 모양의 배열, y: {"정답 클래스 번호" if task != "regression" else "정답 값"}. Adam으로 학습."""',
+              f'    """X: 위 입력 모양의 배열, y: {"정답 클래스 번호" if task not in ("regression", "forecast", "anomaly") else "다음 값들 (샘플, 예측 길이)" if task == "forecast" else "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요" if task == "anomaly" else "정답 값"}. Adam으로 학습."""',
               f"    model.compile(optimizer=keras.optimizers.Adam(lr), loss={loss}, metrics={metric})",
               "    model.fit(X, y, epochs=epochs, batch_size=batch_size)",
               "    return model", "", "",

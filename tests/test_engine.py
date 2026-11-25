@@ -99,8 +99,8 @@ def test_engine_matches_torch(results, name):
 
 def _train_js(tmp_path, graph, d, settings):
     plan = codegen.plan_dict(graph, d.length, d.n_out, d.image)
-    data = {"X_train": d.X_train.ravel().tolist(), "X_test": d.X_test.ravel().tolist(), "y_train": d.y_train.tolist(),
-            "y_test": d.y_test.tolist(), "n_train": len(d.y_train), "n_test": len(d.y_test), "task": d.task, "n_out": d.n_out,
+    data = {"X_train": d.X_train.ravel().tolist(), "X_test": d.X_test.ravel().tolist(), "y_train": np.ravel(d.y_train).tolist(),
+            "y_test": np.ravel(d.y_test).tolist(), "n_train": len(d.y_train), "n_test": len(d.y_test), "task": d.task, "n_out": d.n_out,
             "length": d.length, "image": list(d.image) if d.image else None}
     f = tmp_path / "train.json"
     f.write_text(json.dumps({"plan": plan, "data": data, "settings": settings}), encoding="utf-8")

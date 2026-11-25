@@ -90,6 +90,17 @@ def data_payload(studio: Studio) -> dict:
                                  "train": d.det["train"], "test": d.det["test"]}})}
 
 
+@_wrap
+def task_result(studio: Studio, out_bytes, out_tr_bytes) -> dict:
+    """예측·이상 탐지: 화면이 학습한 모델의 시험·학습 출력(float32) → 결과 화면 값 (로컬 학습과 같은 jobs.task_result)."""
+    from dlstudio.jobs import task_result as tr
+    d = studio.need_data()
+    raw = lambda b: b.to_bytes() if hasattr(b, "to_bytes") else bytes(b)
+    out = np.frombuffer(raw(out_bytes), dtype=np.float32).reshape(len(d.X_test), -1).astype(np.float64)
+    out_tr = np.frombuffer(raw(out_tr_bytes), dtype=np.float32).reshape(len(d.X_train), -1).astype(np.float64)
+    return _clean(tr(d, out, out_tr))
+
+
 def set_trained(studio: Studio, graph_json: str, settings_json: str, results_json: str, state=None) -> None:
     """화면에서 학습이 끝났음을 기록 (코드·프로젝트 저장이 학습한 그래프를 알게). state가 있으면 학습 기록에도 더함."""
     studio.model_graph = json.loads(graph_json)
@@ -159,7 +170,7 @@ def predict_finish(studio: Studio, out_bytes) -> dict:
     raw = out_bytes.to_bytes() if hasattr(out_bytes, "to_bytes") else bytes(out_bytes)
     p, studio.pending = studio.pending, None
     out = np.frombuffer(raw, dtype=np.float32).reshape(len(p["names"]), -1)
-    return _clean(table(studio.data, p["names"], out, p["labels"], p["X"]))
+    return _clean(table(studio.data, p["names"], out, p["labels"], p["X"], studio.results))
 
 
 @_wrap

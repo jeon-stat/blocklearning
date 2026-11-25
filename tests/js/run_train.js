@@ -10,7 +10,7 @@ const E = require(path.join(__dirname, "../../src/dlstudio/static/engine.js"));
     y_train: Float32Array.from(f.data.y_train), y_test: Float32Array.from(f.data.y_test),
   });
   const progress = [];
-  const { net, result } = await E.train(f.plan, d, f.settings, (p) => { progress.push(p); return false; });
+  const { net, result, out, outTr } = await E.train(f.plan, d, f.settings, (p) => { progress.push(p); return false; });
   const state = net.state();
-  process.stdout.write(JSON.stringify({ result, progress, state: Object.fromEntries(Object.entries(state).map(([k, v]) => [k, { shape: v.shape, data: Array.from(v.data) }])) }));
+  process.stdout.write(JSON.stringify({ result, progress, out: out && Array.from(out), outTr: outTr && Array.from(outTr), state: Object.fromEntries(Object.entries(state).map(([k, v]) => [k, { shape: v.shape, data: Array.from(v.data) }])) }));
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -54,20 +54,35 @@ class Dataset:
     features: list = field(default_factory=list)      # 열 이름 (머리글이 없으면 빈 목록)
     image: Optional[tuple] = None                      # 이미지면 (H, W): X는 H·W로 펼친 픽셀
     det: Optional[dict] = None                         # 탐지면 {"grid": 격자, "train"·"test": 그림마다 [[클래스 번호, x, y, w, h], …]}
+    extra: Optional[dict] = None                       # 예측: {"horizon", "stride", "column", …} · 이상 탐지: {"normal", "others", …}
 
     @property
     def n_out(self) -> int:
-        """모델 출력 크기: 분류면 클래스 수, 회귀면 1, 탐지면 격자² × (5 + 클래스 수) (DetOut: 격자를 함께 지님)."""
+        """모델 출력 크기: 분류면 클래스 수, 회귀면 1, 탐지면 격자² × (5 + 클래스 수) (DetOut: 격자를 함께 지님),
+        예측이면 다음 H개, 이상 탐지면 입력 값 수 (입력을 되살림)."""
         if self.task == "detection":
             from dlstudio.detect import DetOut
             return DetOut(self.det["grid"], len(self.classes))
+        if self.task == "forecast":
+            return int(self.y_train.shape[1])
+        if self.task == "anomaly":
+            return int(self.X_train.shape[1])
         return len(self.classes) if self.task == "classification" else 1
 
+    @property
+    def target_train(self) -> np.ndarray:
+        """학습의 맞힐 값: 이상 탐지는 입력 그대로 (정규화한 값), 나머지는 정답."""
+        return self.X_train if self.task == "anomaly" else self.y_train
+
     def label_text(self, part: str, i: int):
-        """샘플 i의 정답 (화면용): 분류는 클래스 이름, 회귀는 값, 탐지는 상자 수."""
+        """샘플 i의 정답 (화면용): 분류·이상 탐지는 클래스 이름, 회귀는 값, 탐지는 상자 수, 예측은 다음 값들."""
         if self.task == "detection":
             return f"상자 {len(self.det[part][i])}개"
         y = self.y_train if part == "train" else self.y_test
+        if self.task == "forecast":
+            return f"다음 {y.shape[1]}개 (첫 값 {float(y[i][0]):.4g})"
+        if self.task == "anomaly":
+            return self.classes[int(y[i])]
         return self.classes[int(y[i])] if self.task == "classification" else float(y[i])
 
     def raw(self, X: np.ndarray) -> np.ndarray:
@@ -81,8 +96,10 @@ class Dataset:
     def summary(self) -> dict:
         if self.task == "detection":
             return self._det_summary()
+        if self.task == "forecast":
+            return self._fc_summary()
         y_all = np.concatenate([self.y_train, self.y_test])
-        if self.task == "classification":
+        if self.task in ("classification", "anomaly"):
             counts = {name: int((y_all == k).sum()) for k, name in enumerate(self.classes)}
             order, seen = [], set()
             for k in range(len(self.classes)):                 # 클래스마다 돌아가며 최대 6개
@@ -91,6 +108,8 @@ class Dataset:
             picks = [i for grp in zip(*[g + [None] * (3 - len(g)) for g in order]) for i in grp if i is not None]
             picks = [i for i in picks if not (i in seen or seen.add(i))][:6]
             label = lambda i: self.classes[int(self.y_train[i])]
+            if self.task == "anomaly":                          # 학습에는 정상만: 미리보기는 시험의 이상도 함께
+                return self._ae_summary(counts)
         else:
             counts = {}
             picks = list(range(min(6, len(self.y_train))))
@@ -106,6 +125,33 @@ class Dataset:
                 "feature_means": None if self.image or self.length > 40 else
                 [round(float(v), 4) for v in self.raw(self.X_train).mean(0)],    # ⑤ 직접 넣기 칸의 처음 값
                 "preview": [{"label": label(i), "values": [round(float(v), 5) for v in raw[i]]} for i in picks]}
+
+    def _base_summary(self) -> dict:
+        return {"n_train": int(len(self.X_train)), "n_test": int(len(self.X_test)), "length": int(self.length),
+                "task": self.task, "classes": list(self.classes), "image": list(self.image) if self.image else None,
+                "features": [] if self.image else (list(self.features) or [f"열 {i}" for i in range(1, self.length + 1)]),
+                "example": (self.source or {}).get("example"), "predict_kinds": self._predict_kinds()}
+
+    def _fc_summary(self) -> dict:
+        e, y = self.extra, np.concatenate([self.y_train, self.y_test])
+        raw = self.raw(self.X_train)
+        picks = sorted({int(round(i)) for i in np.linspace(0, len(raw) - 1, 6)})
+        return dict(self._base_summary(), class_counts={}, feature_means=None, features=[],
+                    target_range=[float(y.min()), float(y.max())],
+                    forecast={k: e[k] for k in ("horizon", "stride", "column", "columns", "n_points")},
+                    preview=[{"label": f"→ 다음 {e['horizon']}개", "values": [round(float(v), 5) for v in raw[i]],
+                              "future": [round(float(v), 5) for v in self.y_train[i]]} for i in picks])
+
+    def _ae_summary(self, counts: dict) -> dict:
+        raw_tr, raw_te = self.raw(self.X_train), self.raw(self.X_test)
+        ab = [int(i) for i in np.flatnonzero(self.y_test == 1)[:3]]
+        items = [(raw_tr[i], self.classes[0]) for i in range(min(6 - len(ab), len(raw_tr)))] + [(raw_te[i], "이상") for i in ab]
+        e = self.extra
+        return dict(self._base_summary(), class_counts=counts, target_range=None,
+                    feature_means=None if self.image or self.length > 40 else [round(float(v), 4) for v in raw_tr.mean(0)],
+                    anomaly={"normal": e["normal"], "others": e["others"], "n_anomaly": e["n_anomaly"],
+                             "train_normal": int(len(self.X_train))},
+                    preview=[{"label": lab, "values": [round(float(v), 5) for v in x]} for x, lab in items])
 
     def _det_summary(self) -> dict:
         boxes = self.det["train"] + self.det["test"]
@@ -715,7 +761,11 @@ def _labels(y: np.ndarray, task: str, classes: Optional[list]):
 def make_dataset(X: np.ndarray, y: np.ndarray, task: str = "auto", normalize: bool = True, test_ratio: float = 0.2,
                  seed: int = 0, classes: Optional[list] = None, source: Optional[dict] = None,
                  features: Optional[list] = None, image: Optional[tuple] = None) -> Dataset:
-    """배열 → Dataset: 과제 판단, 문자열 정답 변환, (분류면 클래스 비율을 지켜) 나누기, 학습 데이터로 정규화."""
+    """배열 → Dataset: 과제 판단, 문자열 정답 변환, (분류면 클래스 비율을 지켜) 나누기, 학습 데이터로 정규화.
+    task "anomaly": 분류처럼 읽되 종류가 하나(정상만)여도 됨 — 이상 탐지로 바꾸는 일은 anomaly.to_anomaly."""
+    one_ok = task == "anomaly"
+    if one_ok:
+        task = "classification"
     X = np.asarray(X, dtype=np.float64)
     if X.ndim != 2:
         raise ValueError(f"X는 (샘플, 길이) 2차원이어야 함: {X.shape}")
@@ -725,7 +775,7 @@ def make_dataset(X: np.ndarray, y: np.ndarray, task: str = "auto", normalize: bo
     task, names, yv = _labels(np.asarray(y), task, classes)
     rng = np.random.default_rng(seed)
     if task == "classification":
-        if len(names) < 2:
+        if len(names) < 2 and not one_ok:
             raise DataError([Issue(None, None, f"정답 종류가 하나뿐임 ({names[0] if names else '-'})",
                                    "분류하려면 정답이 두 종류 이상이어야 합니다")])
         test = []
@@ -835,6 +885,25 @@ def process_reg_arrays(n: int = 1000, seed: int = 1) -> tuple:
     return X, y
 
 
+def process_anomaly_arrays(n: int = 1000, ratio: float = 0.15, seed: int = 2) -> tuple:
+    """공정 변수 → 0 정상, 1 전류 이상 (회전 속도·이송에 안 맞는 전류: 모터·부하 고장), 2 진동 이상 (공구 마모는 적은데
+    진동이 큼: 베어링 고장), 3 압력 저하 (누설). 이상은 값 하나하나는 흔한 범위여도 열끼리 관계가 깨진 것 (약 15%)."""
+    rng = np.random.default_rng(seed)
+    X = _process_features(n, rng)
+    y = np.zeros(n, dtype=np.int64)
+    ab = rng.permutation(n)[:int(round(n * ratio))]
+    y[ab] = 1 + np.arange(len(ab)) % 3
+    for i in ab:
+        if y[i] == 1:
+            X[i, 7] += rng.choice([-1, 1]) * rng.uniform(2.0, 3.5)
+        elif y[i] == 2:
+            X[i, 5] = rng.uniform(0, 0.4)
+            X[i, 6] = 0.5 + 1.5 * X[i, 5] ** 2 + rng.uniform(0.8, 1.5)
+        else:
+            X[i, 1] -= rng.uniform(1.2, 2.0)
+    return X, y
+
+
 def wear_arrays(n: int = 1000, length: int = 200, seed: int = 0) -> tuple:
     """설비 마모 진동 신호 → 잔여 수명(RUL, 0–100). 마모가 진행될수록 잡음·충격이 커지고 주파수가 조금 내려감."""
     rng = np.random.default_rng(seed)
@@ -863,7 +932,13 @@ EXAMPLES = {
     "surface": (None, ["정상", "스크래치", "얼룩", "구멍"], None),
     "pneumonia": (None, ["정상", "폐렴"], None),
     "parts_det": (None, ["원형 부품", "사각 부품"], None),           # 탐지: load_example에서 DET_EXAMPLES로
+    "factory_power": (None, None, None),                          # 예측: FC_EXAMPLES
+    "vibration_ae": (None, ["정상", "결함"], None),                 # 이상 탐지: AE_EXAMPLES (분류 예시를 정상만 학습으로)
+    "process_ae": (None, ["정상", "전류 이상", "진동 이상", "압력 저하"], PROCESS_FEATURES),
+    "process_anom": (process_anomaly_arrays, ["정상", "전류 이상", "진동 이상", "압력 저하"], PROCESS_FEATURES),
 }
+FC_EXAMPLES = {"factory_power": ("전력 사용량 (kW)", 96, 24, 2)}       # 종류 → (열 이름, 입력 길이, 예측 길이, 간격)
+AE_EXAMPLES = {"vibration_ae": "vibration", "process_ae": "process_anom"}
 
 
 def surface_arrays(n_per: int = 300, size: int = 32, seed: int = 0):
@@ -915,11 +990,22 @@ def digits_arrays():
     return z["X"].astype(np.float64) / 16.0, z["y"].astype(np.int64)
 
 
-def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 0.2, seed: int = 0) -> Dataset:
+def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 0.2, seed: int = 0,
+                 L=None, H=None, stride=None) -> Dataset:
     """예시 데이터 (모두 합성): "ecg" 심전도 정상·이상 (길이 140, 의료), "vibration" 설비 진동 정상·결함 20% (길이 200),
     "process_cls" 공정 변수 8개 → 불량 여부, "process_reg" 공정 변수 8개 → 수율, "wear_rul" 마모 진동 → 잔여 수명."""
     if kind not in EXAMPLES:
         raise ValueError(f"예시 데이터 종류는 {', '.join(EXAMPLES)} 중 하나: {kind}")
+    if kind in FC_EXAMPLES:
+        from dlstudio.forecast import make_forecast_dataset, power_series
+        col, L0, H0, s0 = FC_EXAMPLES[kind]
+        return make_forecast_dataset(power_series(), int(L or L0), int(H or H0), int(stride or s0), test_ratio=test_ratio, normalize=normalize,
+                                     source={"example": kind}, column=col)
+    if kind in AE_EXAMPLES:
+        from dlstudio.anomaly import to_anomaly
+        d = load_example(AE_EXAMPLES[kind], normalize=normalize, test_ratio=test_ratio, seed=seed)
+        d.source = dict(d.source, example=kind)
+        return to_anomaly(d)
     if kind in DET_EXAMPLES:
         fn, names, size = DET_EXAMPLES[kind]
         X, boxes = fn()

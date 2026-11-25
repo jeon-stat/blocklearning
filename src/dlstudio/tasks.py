@@ -145,6 +145,40 @@ T_HYBRID = {"id": "cnn_transformer", "name": "CNN + Transformer",
                        *_encoder(32, 4), LN, GAP, OUT]}
 
 
+# 시계열 예측: 출력은 '다음 H개' (출력층 Dense가 H개를 냄)
+T_FC_LINEAR = {"id": "fc_linear", "name": "선형 (DLinear식)",
+               "desc": "지난 값들에 가중치를 곱해 더하는 것만으로 다음 값들을 내는 가장 단순한 모델. 단순해도 주기가 뚜렷한 "
+                       "신호에서 깊은 모델만큼 잘 맞히는 경우가 많아 기준으로 좋음",
+               "when": "처음 시작할 때. 아주 빠름",
+               "blocks": [OUT]}
+T_FC_CNN = {"id": "fc_cnn", "name": "1D CNN",
+            "desc": "필터로 신호의 짧은 모양을 찾은 뒤, 위치마다의 결과를 그대로 펼쳐 다음 값들을 냄 (어느 때의 모양인지가 남음)",
+            "when": "모양(패턴)이 반복되는 신호",
+            "blocks": [_conv(16, 5), P2, _conv(16, 5), P2, {"type": "max_pool", "size": 2}, {"type": "flatten"}, OUT]}
+T_FC_MLP = {"id": "fc_mlp", "name": "MLP",
+            "desc": "지난 값들을 Dense 층 몇 개로 섞어 다음 값들을 내는 모델. 선형보다 굽은 관계도 배움",
+            "when": "선형으로 부족할 때",
+            "blocks": [{"type": "flatten"}, _dense(64), P2, _dense(64), P2, OUT]}
+
+# 이상 탐지 (오토인코더): 좁은 가운데(병목)로 줄였다가 출력층에서 입력 값 전부를 되살림
+T_AE_DENSE = {"id": "ae_dense", "name": "Dense 오토인코더",
+              "desc": "신호를 Dense 층으로 16개 값까지 줄였다가(요약) 다시 원래 길이로 되살리는 모델. 정상의 모양만 배워서, "
+                      "평소와 다른 신호는 잘 못 되살림 → 되살린 오차가 이상 점수",
+              "when": "처음 시작할 때. 빠름",
+              "blocks": [{"type": "flatten"}, _dense(64), P2, _dense(16), P2, _dense(64), P2, OUT]}
+T_AE_CONV = {"id": "ae_conv", "name": "Conv 오토인코더",
+             "desc": "필터로 짧은 모양을 찾으며 줄인 뒤 16개 값으로 요약하고, 출력층에서 신호 전체를 되살리는 모델. "
+                     "충격·떨림 같은 짧은 모양의 이상에 강함",
+             "when": "Dense 오토인코더로 부족할 때",
+             "blocks": [_conv(16, 7), P2, {"type": "max_pool", "size": 2}, _conv(8, 5), P2, {"type": "max_pool", "size": 2},
+                        {"type": "flatten"}, _dense(16), P2, OUT]}
+T_AE_TAB = {"id": "ae_tab_dense", "name": "오토인코더",
+            "desc": "측정 항목들을 4개 값까지 줄였다가 다시 모든 항목을 되살리는 모델. 정상의 항목끼리 관계만 배워서, "
+                    "평소와 다른 조합은 잘 못 되살림",
+            "when": "열이 수십 개 이하인 표 데이터",
+            "blocks": [_dense(16), P2, _dense(4), P2, _dense(16), P2, OUT]}
+
+
 def _soon(id_, name, input_, examples_text, desc):
     return {"id": id_, "name": name, "input": input_, "available": False, "desc": desc,
             "examples_text": examples_text}
@@ -199,17 +233,25 @@ CATALOG = [
     {"id": "anomaly", "name": "이상 탐지", "icon": "🚨",
      "desc": "정상 데이터만으로 학습해, 평소와 다른 데이터를 찾아냅니다",
      "subtasks": [
-         _soon("ae_ts", "시계열 이상 탐지 (오토인코더)", "timeseries",
-               "정상 진동만 학습해 고장 전조 찾기, 정상 심전도와 다른 박동 찾기",
-               "정상 신호를 복원하도록 학습하고, 복원이 잘 안 되는 구간을 이상으로 봄"),
-         _soon("ae_tab", "표 데이터 이상 탐지", "tabular", "평소와 다른 공정 조건 조합 찾기",
-               "정상 행을 복원하도록 학습하고, 복원 오차가 큰 행을 이상으로 봄"),
+         {"id": "ae_ts", "name": "시계열 이상 탐지 (오토인코더)", "input": "timeseries", "available": True, "task": "anomaly",
+          "desc": "정상 신호만 되살리도록 학습하고, 잘 못 되살리는 신호를 이상으로 봄. 이상 샘플이 적거나 없어도 됨",
+          "examples_text": "정상 진동만 학습해 고장 전조 찾기, 정상 심전도와 다른 박동 찾기",
+          "example_data": [["vibration_ae", "설비 진동 — 정상만 학습해 결함 찾기 (제조)"]],
+          "templates": [T_AE_DENSE, T_AE_CONV]},
+         {"id": "ae_tab", "name": "표 데이터 이상 탐지", "input": "tabular", "available": True, "task": "anomaly",
+          "desc": "정상 행만 되살리도록 학습하고, 되살린 오차가 큰 행(평소와 다른 측정값 조합)을 이상으로 봄",
+          "examples_text": "평소와 다른 공정 조건 조합 찾기, 센서 값 이상 조합 찾기",
+          "example_data": [["process_ae", "공정 조건 — 양품만 학습해 불량 찾기 (제조)"]],
+          "templates": [T_AE_TAB]},
      ]},
     {"id": "forecast", "name": "예측 (미래 값)", "icon": "🔮",
      "desc": "지금까지의 흐름으로 앞으로의 값을 예측합니다",
      "subtasks": [
-         _soon("fc_ts", "시계열 예측", "timeseries", "다음 1시간 설비 온도, 다음 날 생산량",
-               "과거 구간을 보고 다음 몇 시점의 값을 예측"),
+         {"id": "fc_ts", "name": "시계열 예측", "input": "timeseries", "available": True, "task": "forecast",
+          "desc": "긴 신호 하나의 지난 구간을 보고 다음 몇 시점의 값을 예측. 시험은 신호의 뒤쪽 구간 (미래를 미리 보지 않게)",
+          "examples_text": "다음 날 공장 전력 사용량, 다음 1시간 설비 온도, 다음 주 생산량",
+          "example_data": [["factory_power", "공장 전력 사용량 — 지난 4일로 다음 하루 (제조, 1시간마다)"]],
+          "templates": [T_FC_LINEAR, T_FC_MLP, T_FC_CNN, T_LSTM, T_TRANSFORMER]},
      ]},
     {"id": "segmentation", "name": "구간 분할", "icon": "✂️",
      "desc": "긴 신호의 시점마다 어떤 상태인지 표시합니다",

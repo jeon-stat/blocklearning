@@ -633,6 +633,37 @@ function metric(out, y, task, nOut) {
   for (let i = 0; i < n; i++) { ss += (y[i] - mu) ** 2; se += (out[i * nOut] - y[i]) ** 2; }
   return ss > 0 ? 1 - se / ss : NaN;
 }
+// 시계열 예측: 다음 H개 전체를 펼친 R² (forecast.metric과 같음)
+function fcMetric(out, y) {
+  let mu = 0; for (let i = 0; i < y.length; i++) mu += y[i]; mu /= y.length;
+  let ss = 0, se = 0;
+  for (let i = 0; i < y.length; i++) { ss += (y[i] - mu) ** 2; se += (out[i] - y[i]) ** 2; }
+  return ss > 0 ? 1 - se / ss : NaN;
+}
+// 이상 탐지 (anomaly.py와 같음): 점수 = (입력 − 복원)²의 평균, AUC (같은 점수는 평균 순위), 정상만 있으면 평균 점수
+function aeScores(out, X, n) {
+  const m = X.length / n, s = new Float64Array(n);
+  for (let i = 0; i < n; i++) { let t = 0; for (let j = 0; j < m; j++) t += (out[i * m + j] - X[i * m + j]) ** 2; s[i] = t / m; }
+  return s;
+}
+function aeAuc(s, y) {
+  const idx = Array.from(s, (_, i) => i).sort((a, b) => s[a] - s[b]), r = new Float64Array(s.length);
+  for (let i = 0; i < idx.length;) {
+    let j = i;
+    while (j + 1 < idx.length && s[idx[j + 1]] === s[idx[i]]) j++;
+    for (let k = i; k <= j; k++) r[idx[k]] = (i + j) / 2 + 1;
+    i = j + 1;
+  }
+  let np = 0, rs = 0;
+  for (let i = 0; i < y.length; i++) if (y[i] === 1) { np++; rs += r[i]; }
+  const nn = y.length - np;
+  return np && nn ? (rs - (np * (np + 1)) / 2) / (np * nn) : NaN;
+}
+const aeHasBoth = (y) => y.some((v) => v === 1) && y.some((v) => v === 0);
+function aeMetric(out, X, y) {
+  const s = aeScores(out, X, y.length);
+  return aeHasBoth(y) ? aeAuc(s, y) : s.reduce((a, b) => a + b, 0) / s.length;
+}
 function argmax(out, i, k) { let b = 0; for (let j = 1; j < k; j++) if (out[i * k + j] > out[i * k + b]) b = j; return b; }
 function confusion(out, y, k) {
   const cm = Array.from({ length: k }, () => new Array(k).fill(0));
@@ -654,18 +685,29 @@ function regressionView(out, y, nOut) {
 async function train(plan, d, s, onEpoch, isCancelled) {
   const net = new Net(plan, s.seed || 0);
   const det = d.task === "detection" ? d.det : null;       // 탐지: {grid, per_cell, n_cls, train, test (그림마다 정답 상자)}
-  const reg = !det && d.task !== "classification";
-  const score = (out, which) => (det ? detMetric(out, det[which], det) : metric(out, which === "test" ? d.y_test : d.y_train, d.task, d.n_out));
-  let mu = 0, sd = 1;
+  const reg = !det && d.task !== "classification";        // 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화 (jobs.target_scale)
+  const ae = d.task === "anomaly", fc = d.task === "forecast";
+  const nY = ae || fc ? d.n_out : 1;
+  const target = ae ? d.X_train : d.y_train;              // 이상 탐지는 입력을 되살림
+  const score = (out, which) => {
+    const y = which === "test" ? d.y_test : d.y_train;
+    if (det) return detMetric(out, det[which], det);
+    if (fc) return fcMetric(out, y);
+    if (ae) return aeMetric(out, which === "test" ? d.X_test : d.X_train, y);
+    return metric(out, y, d.task, d.n_out);
+  };
+  const mu = new Float64Array(nY), sd = new Float64Array(nY).fill(1);
   if (reg) {
-    for (const v of d.y_train) mu += v; mu /= d.n_train;
-    let q = 0; for (const v of d.y_train) q += (v - mu) ** 2;
-    sd = Math.sqrt(q / d.n_train) || 1;
+    for (let i = 0; i < d.n_train; i++) for (let j = 0; j < nY; j++) mu[j] += target[i * nY + j] / d.n_train;
+    const q = new Float64Array(nY);
+    for (let i = 0; i < d.n_train; i++) for (let j = 0; j < nY; j++) q[j] += (target[i * nY + j] - mu[j]) ** 2;
+    for (let j = 0; j < nY; j++) sd[j] = Math.sqrt(q[j] / d.n_train) || 1;
   }
+  const back = (out) => (reg ? out.map((v, i) => v * sd[i % nY] + mu[i % nY]) : out);
   const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image);
   const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image);
   const ytr = det ? tf.tensor2d(d.y_train, [d.n_train, d.n_out])
-    : reg ? tf.tensor2d(Float32Array.from(d.y_train, (v) => (v - mu) / sd), [d.n_train, 1])
+    : reg ? tf.tensor2d(Float32Array.from(target, (v, i) => (v - mu[i % nY]) / sd[i % nY]), [d.n_train, nY])
     : tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), d.n_out).toFloat();
   const opt = tf.train.adam(s.lr || 1e-3, 0.9, 0.999, 1e-8);
   const rand = rng((s.seed || 0) * 104729 + 3);
@@ -697,7 +739,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
         nb++;
         if (nb % 8 === 0) await yieldNow();                   // 화면이 멈추지 않게
       }
-      const out = net.predict(Xte).map((v) => (reg ? v * sd + mu : v));
+      const out = back(net.predict(Xte));
       done = epoch;
       const stop = onEpoch && onEpoch({ epoch, loss: lossSum / Math.max(1, nb), test_metric: score(out, "test") });
       if (stop || (isCancelled && isCancelled())) break;
@@ -707,18 +749,21 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       const last = plan.steps.find((st) => st.name === plan.out);
       const kk = last.key + (last.in_shape.length >= 2 ? ".1" : "");
       const W = net.P[kk + ".weight"], b = net.P[kk + ".bias"];
-      W.assign(W.mul(sd)); b.assign(b.mul(sd).add(mu));
+      const sdT = tf.tensor1d(Float32Array.from(sd)), muT = tf.tensor1d(Float32Array.from(mu));
+      W.assign(W.mul(sdT.reshape([-1, 1]))); b.assign(b.mul(sdT).add(muT));
+      sdT.dispose(); muT.dispose();
     }
     // 마지막 평가는 CPU로 (브라우저 GPU(WebGL)가 드물게 묶음 크기에 따라 틀린 값을 냄). GPU 값과 다르면 알림
     const outGpu = net.predict(Xte);
     const [out, outTr] = await onCpu(() => [net.predict(Xte), net.predict(Xtr)]);
     const r = { epochs_done: done, test_metric: score(out, "test"),
-      metric_name: det ? "map50" : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
+      metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
       train_metric: score(outTr, "train") };   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
     if (!same(outGpu, out))
       r.warnings.push({ message: "학습 중 이 브라우저의 GPU 계산이 불안정했습니다. 아래 결과는 CPU로 다시 계산한 값이지만, 학습이 덜 됐을 수 있습니다",
         hint: "페이지를 새로 고친 뒤 다시 학습해 보세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
     if (det) Object.assign(r, detResult(out, det.test, det));
+    else if (ae || fc) return { net, result: r, out, outTr };   // 결과 화면 값은 Python (jobs.task_result)이 출력으로 만듦
     else if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);
     else {
       [r.confusion, r.recall] = confusion(out, d.y_test, d.n_out);
@@ -868,7 +913,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, toInput, metric, confusion, regressionView, thin, attnView, onCpu, ACT, tf,
+const API = { Net, train, toInput, metric, confusion, regressionView, thin, attnView, onCpu, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;

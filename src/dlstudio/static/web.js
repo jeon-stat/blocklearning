@@ -6,7 +6,7 @@
 "use strict";
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
-const PY_FILES = ["__init__.py", "analysis.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "graph.py", "jobs.py", "layers.py", "nn_extra.py",
+const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "nn_extra.py",
   "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
 const DATA_FILES = ["data/digits8.npz", "data/pneumonia28.npz"];
 const E = () => window.DLEngine;
@@ -108,8 +108,9 @@ function startTrain(body) {
   W.jobs[job.id] = job;
   W.running = job;
   E().train(plan, data, s, (p) => { job.progress.push(p); job.progress.splice(0, Math.max(0, job.progress.length - 100)); return job.cancelled; },
-    () => job.cancelled).then(({ net, result }) => {
+    () => job.cancelled).then(({ net, result, out, outTr }) => {
     if (job.cancelled || W.data !== data) { net.dispose(); job.state = "cancelled"; return; }
+    if (out) Object.assign(result, wrapped(W.mod.task_result(W.studio, new Uint8Array(out.buffer), new Uint8Array(outTr.buffer))));   // 예측·이상 탐지
     if (W.trained) W.trained.net.dispose();
     W.trained = { net, plan, graph: body.graph, settings: body.settings || {}, results: result };
     const st = stateForPython(net);
@@ -144,6 +145,13 @@ function activations(body) {
   x.dispose();
   let pred;
   if (d.task === "detection") pred = `상자 ${E().detDecode(out, 0, d.det, E().DET.show).length}개 찾음`;
+  else if (d.task === "forecast") pred = `다음 ${out.length}개 (첫 값 ${Number(out[0].toPrecision(4))})`;
+  else if (d.task === "anomaly") {
+    let t = 0;
+    for (let j = 0; j < out.length; j++) t += (out[j] - s.x[j]) ** 2;
+    const sc = t / out.length, th = W.trained.results && W.trained.results.threshold;
+    pred = `이상 점수 ${Number(sc.toPrecision(3))}` + (th === undefined || th === null ? "" : sc > th ? " → 이상" : " → 정상");
+  }
   else if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; }
   else pred = out[0];
   return { index: i, label: s.label, prediction: pred, input: s.input, values, attention, order: s.order };
@@ -377,6 +385,11 @@ async function api(path, body) {
     if (path === "/api/runs/restore") return runRestore(body);
     if (path === "/api/predict") return await predictNew(body);
     if (path === "/api/preview") return preview(body);
+    if (path === "/api/anomaly/threshold") {                // 이상 탐지 기준값: Python 결과와 엔진 쪽 결과 둘 다
+      const r = pyCall(method, path, body);
+      if (W.trained && W.trained.results) W.trained.results.threshold = r.threshold;
+      return r;
+    }
     if (path.startsWith("/api/label/")) return labelCall(path.slice("/api/label/".length), body || {});
     if (path === "/api/data/load" && body && body.label_job) return await useLabelJob(body);
     if (path === "/api/data/load") clearTrained();

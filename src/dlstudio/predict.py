@@ -5,6 +5,8 @@
 - 그림 폴더: 그림 파일들 (하위 폴더 이름이 클래스 이름이면 그것을 정답으로 봄)
 - 시계열 폴더: 샘플마다 CSV 하나 (학습 때와 같은 값 열·길이 맞추기)
 - 직접 넣은 값: [[값, …], …] (표 데이터)
+- 시계열 예측: 긴 시계열 CSV 하나 (한 행 = 한 시점) → 끝의 지난 L개로 그다음 H개
+- 이상 탐지: 분류와 같은 모양 → 샘플마다 이상 점수와 판정 (학습 결과의 기준값으로)
 """
 from __future__ import annotations
 
@@ -27,7 +29,11 @@ def _err(msg: str, hint: str):
 def read_new(d, b: dict) -> dict:
     """요청 → {"names": [...], "X": 정규화한 값 (n, 특징 수) float32, "labels": 정답 문자열 목록 또는 None}."""
     n_feat = int(d.X_train.shape[1])
-    if b.get("rows") is not None:
+    if d.task == "forecast":
+        if not b.get("path"):
+            raise _err("시계열 예측은 긴 시계열 CSV로 예측함", "한 행 = 한 시점인 CSV를 고르세요 (학습 때와 같은 값 열)")
+        names, X, labels = _read_forecast(d, str(b["path"]))
+    elif b.get("rows") is not None:
         rows = b["rows"]
         try:
             X = np.asarray(rows, dtype=np.float64).reshape(len(rows), -1)
@@ -60,6 +66,22 @@ def read_new(d, b: dict) -> dict:
     if labels is not None:
         labels = [str(v) for v in labels]
     return {"names": list(names), "X": Xn, "labels": labels}
+
+
+def _read_forecast(d, path: str) -> tuple:
+    """긴 시계열 CSV → 끝의 지난 L개 (창 하나). 값 열은 학습 때 이름이 있으면 그것, 없으면 마지막 숫자 열."""
+    from pathlib import Path
+    from dlstudio.data import _column_values, _numeric_columns, _read_table
+    names, rows = _read_table(path)
+    nums = _numeric_columns(names, rows)
+    if not nums:
+        raise _err("숫자 열이 없음", "한 행 = 한 시점, 열 = 측정값인 CSV를 고르세요")
+    col = d.extra.get("column") if d.extra.get("column") in nums else nums[-1]
+    v = _column_values(Path(path).name, names, rows, col)
+    L = int(d.length)
+    if len(v) < L:
+        raise _err(f"값이 {len(v)}개 (모델은 지난 {L}개를 봄)", f"'{col}' 열에 값이 {L}개 이상 있는 CSV를 고르세요")
+    return [f"'{col}' 끝 다음"], v[-L:][None], None
 
 
 def _read_csv(d, path: str) -> tuple:
@@ -168,11 +190,59 @@ def _table_det(d, names: list, out: np.ndarray, X) -> dict:
             "has_label": False, "pics": pics}
 
 
-def table(d, names: list, out: np.ndarray, labels, X=None) -> dict:
-    """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌)."""
+def _table_fc(d, out: np.ndarray, X) -> dict:
+    """예측: 다음 H개 (칸마다 한 줄) + 그림용 지난 값."""
+    pred = out[0]
+    hist = d.raw(np.asarray(X[0], dtype=np.float64))
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["몇 칸 뒤", "예측"])
+    rows = []
+    for k, v in enumerate(pred, 1):
+        w.writerow([k, f"{v:.6g}"])
+        rows.append({"name": f"{k}칸 뒤", "pred": float(v)})
+    summary = {"n": len(pred), "task": "forecast", "column": d.extra.get("column"), "history": np.round(hist, 5).tolist(),
+               "pred": np.round(pred, 5).tolist(), "mean": float(pred.mean()), "range": [float(pred.min()), float(pred.max())]}
+    return {"summary": summary, "rows": rows, "shown": len(rows), "csv": "\ufeff" + buf.getvalue(), "has_label": False}
+
+
+def _table_ae(d, names: list, out: np.ndarray, labels, X, results) -> dict:
+    """이상 탐지: 샘플마다 이상 점수, 학습 결과의 기준값보다 크면 이상. 정답이 있으면 (정상 이름이 아니면 이상) 맞았는지."""
+    from dlstudio.anomaly import scores
+    s = scores(out, np.asarray(X, dtype=np.float64))
+    th = (results or {}).get("threshold")
+    normal = d.extra["normal"]
+    truth = None if labels is None else [str(v) != str(normal) for v in labels]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["샘플", "이상 점수", "판정"] + (["정답", "맞음"] if labels else []))
+    rows = []
+    for i, nm in enumerate(names):
+        ab = None if th is None else bool(s[i] > th)
+        ok = None if truth is None or ab is None else ab == truth[i]
+        w.writerow([nm, f"{s[i]:.6g}", "" if ab is None else ("이상" if ab else "정상")] +
+                   ([labels[i], "O" if ok else "X"] if labels else []))
+        if i < SHOW_ROWS:
+            rows.append({"name": nm, "score": float(s[i]), "anomaly": ab, "label": None if labels is None else labels[i], "ok": ok})
+    summary = {"n": len(names), "task": "anomaly", "threshold": th, "normal": normal, "mean": float(s.mean())}
+    if th is not None:
+        summary["counts"] = {"정상": int((s <= th).sum()), "이상": int((s > th).sum())}
+        if truth is not None:
+            summary["accuracy"] = float(np.mean([(s[i] > th) == truth[i] for i in range(len(names))]))
+    return {"summary": summary, "rows": rows, "shown": min(len(names), SHOW_ROWS), "csv": "\ufeff" + buf.getvalue(),
+            "has_label": labels is not None}
+
+
+def table(d, names: list, out: np.ndarray, labels, X=None, results=None) -> dict:
+    """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌, 이상 탐지는 점수에).
+    results: 학습 결과 (이상 탐지의 기준값)."""
     out = np.asarray(out, dtype=np.float64).reshape(len(names), -1)
     if d.task == "detection":
         return _table_det(d, names, out, X)
+    if d.task == "forecast":
+        return _table_fc(d, out, X)
+    if d.task == "anomaly":
+        return _table_ae(d, names, out, labels, X, results)
     cls = d.task == "classification"
     rows, summary = [], {"n": len(names), "task": d.task}
     buf = io.StringIO()
@@ -221,6 +291,8 @@ def new_data_kinds(d) -> list:
     """이 모델에 넣을 수 있는 새 데이터 종류 (화면이 단추를 고름): series(시계열 폴더) · folder(그림 폴더) · csv · rows(직접)."""
     if d.task == "detection":
         return ["folder"]
+    if d.task == "forecast":
+        return ["csv"]
     if d.source.get("series_folder"):
         return ["series", "csv"]
     if d.image:

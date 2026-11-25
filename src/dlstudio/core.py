@@ -81,11 +81,25 @@ class Studio:
     def api_data_load(self, b: dict) -> dict:
         opts = {k: b[k] for k in ("normalize", "test_ratio", "seed") if k in b}
         self.cancel_training()
+        if b.get("forecast_reload"):                        # 예측: 지금 데이터를 값 열·입력·예측 길이만 바꿔 다시
+            src = dict(self.need_data().source or {})
+            if src.get("task") != "forecast":
+                raise UserError("지금 데이터는 시계열 예측 데이터가 아님", "② 데이터에서 시계열 예측 데이터를 불러오세요")
+            src.update({k: b["forecast_reload"].get(k) for k in ("column", "L", "H", "stride") if b["forecast_reload"].get(k)})
+            return {"summary": self.load_source(src), "source": self.data.source}
+        if b.get("task") == "forecast" and not b.get("example"):   # 긴 시계열 CSV 하나 (한 행 = 한 시점)
+            from dlstudio.forecast import load_forecast_csv
+            path = _path(b.get("path"))
+            if not os.path.isfile(path):
+                raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
+            d = load_forecast_csv(path, b.get("column"), b.get("L"), b.get("H"), b.get("stride"), **opts)
+            self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
+            return {"summary": d.summary(), "source": d.source}
         if b.get("example"):
             kind = b["example"] if isinstance(b["example"], str) else "ecg"
             if kind not in EXAMPLES:
                 raise UserError(f"예시 데이터 종류를 모름: {kind}", ", ".join(EXAMPLES))
-            d = load_example(kind, **opts)
+            d = load_example(kind, **opts, **{k: b[k] for k in ("L", "H", "stride") if b.get(k)})
         elif b.get("series_folder"):
             lf = _path(b.get("label_file")) or None
             d = load_series_folder(_path(b["series_folder"]), str(b.get("column", "")), int(b.get("length", 0)),
@@ -110,6 +124,9 @@ class Studio:
             iw = b.get("image_width")
             d = load_csv(path, label_col=b.get("label_col"), task=b.get("task", "auto"),
                          image_width=None if iw is None or iw == "" else int(iw), **opts)
+        if b.get("task") == "anomaly" and d.task != "anomaly":       # 분류처럼 읽은 것 → 정상만 학습하는 이상 탐지로
+            from dlstudio.anomaly import to_anomaly
+            d = to_anomaly(d, b.get("normal"))
         self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
         return {"summary": d.summary(), "source": d.source}
 
@@ -345,6 +362,11 @@ class Studio:
         if d.task == "detection":
             from dlstudio.detect import SHOW_SCORE, decode
             pred = f"상자 {len(decode(out, d.n_out.grid, d.n_out.n_cls, SHOW_SCORE))}개 찾음"
+        elif d.task == "forecast":
+            pred = f"다음 {len(out)}개 (첫 값 {float(out[0]):.4g})"
+        elif d.task == "anomaly":
+            s, th = float(np.mean((out - d.X_test[i]) ** 2)), (self.results or {}).get("threshold")
+            pred = f"이상 점수 {s:.3g}" + ("" if th is None else (" → 이상" if s > th else " → 정상"))
         else:
             pred = d.classes[int(out.argmax())] if d.task == "classification" else float(out[0])
         order = check_graph(self.model_graph, d.length, d.n_out, image=d.image).order
@@ -430,7 +452,22 @@ class Studio:
         with torch.no_grad():
             for i in range(0, len(X), 512):
                 outs.append(m.eval()(torch.as_tensor(X[i:i + 512], dtype=torch.float32)).numpy())
-        return predict.table(d, new["names"], np.concatenate(outs), new["labels"], new["X"])
+        return predict.table(d, new["names"], np.concatenate(outs), new["labels"], new["X"], self.results)
+
+    def api_anomaly_threshold(self, b: dict) -> dict:
+        """이상 탐지 기준값 바꾸기 (④ 결과의 분포에서 고른 값 → ⑤ 예측·샘플 따라가기의 판정)."""
+        d = self.need_data()
+        if d.task != "anomaly" or not self.results:
+            raise UserError("이상 탐지로 학습한 결과가 없음", "④ 학습을 먼저 하세요")
+        try:
+            th = float(b.get("threshold"))
+        except (TypeError, ValueError):
+            raise UserError("기준값이 숫자가 아님", "분포 아래 막대를 움직여 고르세요") from None
+        self.results["threshold"] = th
+        for r in self.runs:                                # 지금 기록에도 (다시 열 때 같은 기준값)
+            if r["n"] == self.current_run:
+                r["results"]["threshold"] = th
+        return {"threshold": th}
 
     def api_samples(self, b: dict) -> dict:
         """시험 샘플 여럿의 원래 값·정답 (틀린 샘플 모아 보기). cell=[정답, 예측]이면 그 칸의 샘플들."""
@@ -504,9 +541,12 @@ class Studio:
     def load_source(self, source: dict) -> dict:
         """프로젝트에 적힌 데이터 출처(예시·CSV·이미지 폴더·시계열 폴더)를 다시 불러와 요약을 돌려줌."""
         src = dict(source)
-        load = {k: src[k] for k in ("normalize", "test_ratio", "seed") if k in src}
+        load = {k: src[k] for k in ("normalize", "test_ratio", "seed", "normal") if k in src}
+        if src.get("task") == "forecast" and not src.get("example"):
+            return self.api_data_load(dict(load, task="forecast", path=src.get("path"),
+                                           **{k: src.get(k) for k in ("column", "L", "H", "stride")}))["summary"]
         if src.get("example"):
-            return self.api_data_load(dict(load, example=src["example"]))["summary"]
+            return self.api_data_load(dict(load, example=src["example"], **{k: src[k] for k in ("L", "H", "stride") if src.get(k)}))["summary"]
         if src.get("folder") and src.get("det_file"):
             return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 64), det_file=src["det_file"]))["summary"]
         if src.get("folder"):
@@ -634,6 +674,7 @@ def _err(message: str, hint: str = "", detail: str = "", issues=None) -> dict:
 ROUTES = {
     "/api/data/load": "api_data_load", "/api/model/check": "api_model_check", "/api/train": "api_train",
     "/api/activations": "api_activations",
+    "/api/anomaly/threshold": "api_anomaly_threshold",
     "/api/project/save": "api_project_save", "/api/project/open": "api_project_open",
     "/api/project/export": "api_project_export", "/api/task/select": "api_task_select",
     "/api/data/scan_folder": "api_data_scan_folder", "/api/code": "api_code", "/api/code/save": "api_code_save",
