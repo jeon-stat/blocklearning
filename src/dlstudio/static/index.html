@@ -219,9 +219,10 @@
         <label>조기 종료 <select id="early-stop"><option value="0">끔</option><option value="5">5 epoch</option><option value="10">10 epoch</option><option value="20">20 epoch</option></select></label>
         <label>장치 <select id="device"><option value="auto">자동 (GPU 있으면 GPU)</option><option value="cpu">CPU</option><option value="cuda">GPU</option></select></label>
       </div>
+      <div class="loss-box"><span class="loss-k">손실 =</span><span id="loss-terms"></span><button id="loss-add" type="button">+ 항</button><button id="loss-reset" type="button" hidden>기본으로</button></div>
     </details>
     <div class="train-layout">
-      <div class="box"><h3>학습 곡선</h3><svg id="curve" class="curve" viewBox="0 0 560 220"></svg></div>
+      <div class="box"><h3>학습 곡선</h3><svg id="curve" class="curve" viewBox="0 0 560 220"></svg><div id="loss-parts" class="kv loss-parts"></div></div>
       <div class="box"><h3>결과</h3><div id="train-result" class="kv"><p class="muted">학습이 끝나면 나옵니다</p></div>
         <ul id="train-warnings" class="warns"></ul><div id="train-confusion"></div><div id="cm-pick" class="cm-pick" hidden></div>
         <div id="train-scatter"></div></div>

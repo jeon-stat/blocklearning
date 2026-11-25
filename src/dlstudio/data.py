@@ -99,7 +99,17 @@ class Dataset:
         from dlstudio.predict import new_data_kinds
         return new_data_kinds(self)
 
+    def _losses(self) -> dict:
+        from dlstudio import losses
+        return {"allowed": losses.allowed(self.task), "names": losses.NAMES, "default": losses.default(self.task),
+                "options": {k: {o: list(v) for o, v in opts.items()} for k, opts in losses.OPTIONS.items()}}
+
     def summary(self) -> dict:
+        s = self._summary()
+        s.setdefault("losses", self._losses())
+        return s
+
+    def _summary(self) -> dict:
         if self.task == "detection":
             return self._det_summary()
         if self.task == "forecast":
@@ -135,7 +145,7 @@ class Dataset:
                 "preview": [{"label": label(i), "values": [round(float(v), 5) for v in raw[i]]} for i in picks]}
 
     def _base_summary(self) -> dict:
-        return {"n_train": int(len(self.X_train)), "n_test": int(len(self.X_test)), "length": int(self.length),
+        return {"n_train": int(len(self.X_train)), "n_test": int(len(self.X_test)), "length": int(self.length), "losses": self._losses(),
                 "task": self.task, "classes": list(self.classes), "image": list(self.image) if self.image else None,
                 "features": [] if self.image else (list(self.features) or [f"열 {i}" for i in range(1, self.length + 1)]),
                 "example": (self.source or {}).get("example"), "predict_kinds": self._predict_kinds()}

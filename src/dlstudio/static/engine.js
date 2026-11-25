@@ -838,6 +838,59 @@ function aeMetric(out, X, y) {
   const s = aeScores(out, X, y.length);
   return aeHasBoth(y) ? aeAuc(s, y) : s.reduce((a, b) => a + b, 0) / s.length;
 }
+// 손실 조립 (losses.py와 같은 식): 전체 = Σ w × 항. ctx: {task, K, seg, det, cw (클래스 가중치), reg}
+function buildLoss(spec, ctx) {
+  const cwT = ctx.cw ? tf.tensor1d(Float32Array.from(ctx.cw)) : null;
+  const flat = (out, yb) => (ctx.seg                         // 구간 분할: (B, K·L)·(B, L, K) → 시점마다 한 줄 (B·L, K)
+    ? [out.reshape([-1, ctx.seg.n_cls, ctx.seg.length]).transpose([0, 2, 1]).reshape([-1, ctx.seg.n_cls]), yb.reshape([-1, ctx.seg.n_cls])]
+    : [out, yb]);
+  const wmean = (per, oh, t) => {
+    if (!t.balance || !cwT) return per.mean();
+    const w = tf.matMul(oh, cwT.reshape([-1, 1])).reshape([-1]);
+    return per.mul(w).sum().div(tf.maximum(w.sum(), 1e-12));
+  };
+  const term = (t, out, yb, net) => {
+    switch (t.term) {
+      case "ce": case "focal": {
+        // log-softmax = o − logΣexp(o): tf.logSoftmax의 기울기는 WebGL에서 묶음 크기가 홀수 등일 때 NaN이 됨
+        const [o, oh] = flat(out, yb), K = o.shape[1], logp = o.sub(tf.logSumExp(o, 1, true));
+        if (t.term === "ce") {
+          const sm = t.smooth || 0, q = oh.mul(1 - sm).add(sm / K);
+          return wmean(q.mul(logp).sum(1).neg(), oh, t);
+        }
+        const lp = oh.mul(logp).sum(1);
+        return wmean(tf.pow(tf.relu(tf.scalar(1).sub(tf.exp(lp))), t.gamma).mul(lp).neg(), oh, t);
+      }
+      case "dice": {
+        const K = ctx.seg.n_cls, p = tf.softmax(out.reshape([-1, K, ctx.seg.length]).transpose([0, 2, 1]));   // (B, L, K)
+        const inter = p.mul(yb).sum([0, 1]), tot = p.sum([0, 1]).add(yb.sum([0, 1]));
+        return tf.scalar(1).sub(inter.mul(2).add(1).div(tot.add(1))).mean();
+      }
+      case "mse": return out.sub(yb).square().mean();
+      case "mae": return out.sub(yb).abs().mean();
+      case "huber": {
+        const e = out.sub(yb).abs(), d = t.delta;
+        return tf.where(e.less(d), e.square().mul(0.5), e.sub(0.5 * d).mul(d)).mean();
+      }
+      case "det": return detLoss(out, yb, ctx.det.grid, ctx.det.per_cell);
+      case "l2": return tf.addN(net.trainable.map((v) => v.square().sum()));
+      case "l1": return tf.addN(net.trainable.map((v) => v.abs().sum()));
+      default: throw new Error("모르는 손실: " + t.term);
+    }
+  };
+  const fn = (out, yb, net) => {
+    let total = null;
+    const parts = spec.map((t) => {
+      const v = term(t, out, yb, net);
+      total = total ? total.add(v.mul(t.w)) : v.mul(t.w);
+      return [t.label, v];
+    });
+    return { total, parts };
+  };
+  fn.dispose = () => { if (cwT) cwT.dispose(); };
+  return fn;
+}
+
 // 구간 분할 (segment.py와 같음): 시점 정확도. out은 창마다 (상태 K, 길이 L)을 펼친 것
 function segMetric(out, y, K, L) {
   const n = y.length / L;
@@ -901,7 +954,9 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     : tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), d.n_out).toFloat();
   const opt = tf.train.adam(s.lr || 1e-3, 0.9, 0.999, 1e-8);
   const rand = rng((s.seed || 0) * 104729 + 3);
-  const lossOf = (out, yb) => (det ? detLoss(out, yb, det.grid, det.per_cell)
+  const custom = s.loss ? buildLoss(s.loss, { seg, det, cw: s.class_weights, reg }) : null;   // 조립한 손실 (없으면 과제의 기본)
+  const lossOf = (out, yb) => (custom ? custom(out, yb, net).total
+    : det ? detLoss(out, yb, det.grid, det.per_cell)
     : seg ? tf.losses.softmaxCrossEntropy(yb, out.reshape([-1, seg.n_cls, seg.length]).transpose([0, 2, 1]))   // 시점마다
     : reg ? tf.losses.meanSquaredError(yb, out) : tf.losses.softmaxCrossEntropy(yb, out));
   // 가장 좋은 epoch·조기 종료 (jobs.fit과 같음): 학습 몫의 10%를 검증 몫으로 떼어 검증 손실(탐지는 검증 mAP)로 고름
@@ -916,7 +971,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     vi.dispose(); ti.dispose();
   }
   const bs = Math.max(1, s.batch_size || 32), n = Xfit.shape[0];
-  let done = 0, bestKey = Infinity, bestEpoch = null, since = 0, early = false, bestState = null;
+  let done = 0, bestKey = Infinity, bestEpoch = null, since = 0, early = false, bestState = null, kept = [];
   const dropBest = () => { if (bestState) Object.values(bestState).forEach((t) => t.dispose()); bestState = null; };
   net.start = head;
   try {
@@ -924,6 +979,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       const perm = Array.from({ length: n }, (_, i) => i);
       for (let i = n - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
       let lossSum = 0, nb = 0;
+      const termSum = {};
       for (let i = 0; i < n; i += bs) {
         const idx = perm.slice(i, i + bs);
         if (idx.length === 1 && n > 1) continue;            // BatchNorm은 학습 때 샘플 하나짜리 묶음을 못 받음
@@ -931,13 +987,21 @@ async function train(plan, d, s, onEpoch, isCancelled) {
         const loss = tf.tidy(() => {
           const ii = tf.tensor1d(idx, "int32");
           const xb = tf.gather(Xfit, ii), yb = tf.gather(yfit, ii);
-          return opt.minimize(() => lossOf(net.forward(xb, true, pending), yb), true, net.trainable);
+          return opt.minimize(() => {
+            const out = net.forward(xb, true, pending);
+            if (!custom) return lossOf(out, yb);
+            const { total, parts } = custom(out, yb, net);
+            kept = parts.map(([k, v]) => [k, tf.keep(v)]);          // 항마다의 값 (학습 곡선)
+            return total;
+          }, true, net.trainable);
         });
         for (const [buf, val] of pending) {
           if (val) { buf.assign(val); val.dispose(); } else tf.tidy(() => buf.assign(buf.add(tf.scalar(1, "int32"))));   // 정수(int32) 그대로 +1 (숫자 1을 더하면 실수가 됨)
         }
         lossSum += (await loss.data())[0];
         loss.dispose();
+        for (const [k, v] of kept) { termSum[k] = (termSum[k] || 0) + (await v.data())[0]; v.dispose(); }
+        kept = [];
         nb++;
         if (nb % 8 === 0) await yieldNow();                   // 화면이 멈추지 않게
       }
@@ -956,6 +1020,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       }
       const p = { epoch, loss: lossSum / Math.max(1, nb), test_metric: score(out, "test") };
       if (valLoss !== null) Object.assign(p, { val_loss: valLoss, best_epoch: bestEpoch });
+      if (custom) p.terms = Object.fromEntries(Object.entries(termSum).map(([k, v]) => [k, v / Math.max(1, nb)]));
       const stop = onEpoch && onEpoch(p);
       if (stop || (isCancelled && isCancelled())) break;
       if (s.early_stop && Xv && since >= s.early_stop) { early = true; break; }
@@ -993,6 +1058,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
   } finally {
     net.start = null;
     dropBest();
+    if (custom) custom.dispose();
     if (Xv) [Xv, yv, Xfit, yfit].forEach((t) => t.dispose());
     [Xtr, Xte, ytr].forEach((t) => t.dispose());
     if (head) [Ftr, Fte].forEach((t) => t.dispose());
@@ -1149,7 +1215,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, fitDistance, segMetric, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
+const API = { Net, train, fitDistance, segMetric, buildLoss, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;

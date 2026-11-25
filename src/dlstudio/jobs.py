@@ -110,6 +110,7 @@ class TrainSettings:
     seed: int = 0
     keep_best: bool = False       # 검증 손실이 가장 낮았던 epoch의 모델을 남김
     early_stop: int = 0           # 검증 손실이 이 epoch 수 동안 나아지지 않으면 멈춤 (0이면 안 멈춤)
+    loss: Optional[list] = None   # 손실 조립 [{"term", "w", ...}] (없으면 과제의 기본, losses.py)
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "TrainSettings":
@@ -183,12 +184,14 @@ def target_scale(Y: np.ndarray) -> tuple:
 
 
 def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None,
-        det=None, keep_best: bool = False, early_stop: int = 0, val_score=None):
+        det=None, keep_best: bool = False, early_stop: int = 0, val_score=None, loss_spec=None, n_cls: int = 0,
+        class_w=None):
     """평범한 torch 학습: Adam, 분류는 교차 엔트로피, 회귀는 MSE, 탐지는 YOLO식 손실 (det: DetOut). 반복마다
     callback({"epoch", "loss", "val_loss", "best_epoch", "model"}), True를 돌려주면 멈춤. 돌려주는 모델은 CPU.
     keep_best·early_stop: 학습 몫의 VAL_FRAC를 검증 몫으로 떼어 epoch마다 검증 손실을 재고, 가장 낮았던 epoch의 모델을
     남기거나(keep_best) early_stop epoch 동안 나아지지 않으면 멈춤. 결과는 net.fit_info {best_epoch, early_stopped, n_val}.
-    val_score(검증 출력, 검증 샘플 번호) → 클수록 좋은 성적: 주면 손실 대신 이것으로 고름 (탐지: 손실이 성적을 잘 대변하지 못함)."""
+    val_score(검증 출력, 검증 샘플 번호) → 클수록 좋은 성적: 주면 손실 대신 이것으로 고름 (탐지: 손실이 성적을 잘 대변하지 못함).
+    loss_spec: 조립한 손실 (losses.normalize 결과, 기본이면 None) → 반복마다 항마다의 값도 info["terms"]."""
     import torch
     from torch import nn
     torch.manual_seed(seed)
@@ -207,6 +210,12 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev), nn.CrossEntropyLoss()
     else:
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(len(Xt), -1), nn.MSELoss()
+    parts_fn = None
+    if loss_spec is not None:                                # 조립한 손실: 전체 = Σ 가중치 × 항
+        from dlstudio import losses
+        parts_fn = losses.build(loss_spec, task, n_cls=n_cls, det=det, seg_K=getattr(det, "n_cls", 0),
+                                cw=None if class_w is None else torch.as_tensor(class_w, device=dev))
+        loss_fn = lambda out, t: parts_fn(out, t, net)[0]
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     Xv = yv = None
     if (keep_best or early_stop) and len(Xt) >= MIN_VAL_SPLIT:
@@ -218,12 +227,17 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
     best, best_ep, since, best_state, early = float("inf"), None, 0, None, False
     for epoch in range(1, epochs + 1):
         net.train()
-        losses = []
+        losses, terms = [], {}
         for idx in torch.randperm(n, device=dev).split(max(1, batch_size)):
             if len(idx) == 1 and n > 1:                    # BatchNorm은 학습 때 샘플 하나짜리 묶음을 못 받음
                 continue
             opt.zero_grad()
-            loss = loss_fn(net(Xt[idx]), yt[idx])
+            if parts_fn is not None:
+                loss, parts = parts_fn(net(Xt[idx]), yt[idx], net)
+                for k, v in parts.items():
+                    terms[k] = terms.get(k, 0.0) + float(v.detach())
+            else:
+                loss = loss_fn(net(Xt[idx]), yt[idx])
             loss.backward()
             opt.step()
             losses.append(float(loss.detach()))
@@ -243,8 +257,10 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
                     best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
             else:
                 since += 1
-        if callback is not None and callback({"epoch": epoch, "loss": float(np.mean(losses)), "val_loss": val_loss,
-                                              "best_epoch": best_ep, "model": net}):
+        info = {"epoch": epoch, "loss": float(np.mean(losses)), "val_loss": val_loss, "best_epoch": best_ep, "model": net}
+        if terms:
+            info["terms"] = {k: v / max(1, len(losses)) for k, v in terms.items()}
+        if callback is not None and callback(info):
             break
         if early_stop and Xv is not None and since >= early_stop:
             early = True
@@ -260,7 +276,20 @@ def _progress(info: dict, test_metric) -> dict:
     p = {"epoch": info["epoch"], "loss": float(info["loss"]), "test_metric": test_metric}
     if info.get("val_loss") is not None:
         p["val_loss"], p["best_epoch"] = float(info["val_loss"]), info.get("best_epoch")
+    if info.get("terms"):
+        p["terms"] = {k: float(v) for k, v in info["terms"].items()}
     return p
+
+
+def loss_args(data, settings) -> dict:
+    """학습 설정의 손실 → fit에 넘길 것 (기본이면 비워 둠: 지금까지와 똑같은 손실)."""
+    from dlstudio import losses
+    spec = losses.normalize(settings.loss, data.task)
+    if losses.is_default(spec, data.task):
+        return {}
+    K = len(data.classes) if data.task in ("classification", "segmentation") else 0
+    cw = losses.class_weights(data.y_train, K) if K and any(t.get("balance") for t in spec) else None
+    return {"loss_spec": spec, "n_cls": K, "class_w": cw}
 
 
 def _fit_result(net) -> dict:
@@ -309,7 +338,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         try:
             net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
                       device=dev, callback=cb, det=data.n_out if data.task == "segmentation" else None,
-                      keep_best=settings.keep_best, early_stop=settings.early_stop)
+                      keep_best=settings.keep_best, early_stop=settings.early_stop, **loss_args(data, settings))
         finally:
             model.start = None
     if reg:
@@ -422,7 +451,7 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
         try:
             net = fit(model, Xfit, data.y_train, "detection", settings.epochs, settings.lr, settings.batch_size,
                       seed=settings.seed, device=dev, callback=cb, det=det, keep_best=settings.keep_best,
-                      early_stop=settings.early_stop,
+                      early_stop=settings.early_stop, **loss_args(data, settings),
                       val_score=lambda o, idx: detect.metric(o, [data.det["train"][i] for i in idx], G, K))
         finally:
             model.start = None

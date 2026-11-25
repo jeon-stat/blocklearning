@@ -559,7 +559,10 @@ function clearTrainView() {
   drawCurve([], "accuracy");
 }
 function onData(s) {
+  const prevLoss = st.summary && st.summary.losses && st.summary.losses.allowed.join();
   st.summary = s;
+  if (!s.losses || s.losses.allowed.join() !== prevLoss) st.loss = null;      // 정답 종류가 바뀌면 손실은 기본으로
+  renderLoss();
   st.dataSrc = s.example || null;
   st.trained = false;
   clearTrainView();                                          // 지난 데이터·프로젝트의 학습 결과는 치움
@@ -862,7 +865,8 @@ $("btn-redo").onclick = () => st.ed && st.ed.redo();
 // ------------------------------------------------------------ ③ 학습
 function trainSettings() {
   return { epochs: Number($("epochs").value) || 30, lr: Number($("lr").value) || 0.001, batch_size: Number($("batch").value) || 32,
-    device: $("device").value, keep_best: $("keep-best").checked, early_stop: Number($("early-stop").value) || 0 };
+    device: $("device").value, keep_best: $("keep-best").checked, early_stop: Number($("early-stop").value) || 0,
+    ...(st.loss ? { loss: st.loss } : {}) };
 }
 async function pollJob(id, onTick) {
   for (;;) {
@@ -930,6 +934,7 @@ $("btn-train").onclick = async () => {
     const t0 = performance.now();
     const j = await pollJob(id, (j) => {
       drawCurve(j.progress, metric);
+      renderLossParts(j.progress);
       const last = j.progress[j.progress.length - 1];
       const left = last && last.epoch < epochs ? ` · 약 ${fmtLeft(((performance.now() - t0) / 1000 / last.epoch) * (epochs - last.epoch))} 남음` : "";
       if (last) $("train-status").textContent = `epoch ${last.epoch} · loss ${last.loss.toFixed(4)} · 시험 ${metricText(metric, last.test_metric)}${left}`;
@@ -1351,6 +1356,57 @@ function applySettings(s) {                              // 학습 설정 칸에
   if (s.batch_size) $("batch").value = s.batch_size;
   if (s.keep_best !== undefined) $("keep-best").checked = !!s.keep_best;
   if (s.early_stop !== undefined) $("early-stop").value = String(s.early_stop || 0);
+  st.loss = s.loss || null;
+  renderLoss();
+}
+// ------------------------------------------------------------ 손실 조립 (losses.py): 손실 = Σ 가중치 × 항, 정답 종류에 맞는 항만
+const LOSS_OPT_LABEL = { smooth: "라벨 스무딩", gamma: "γ", delta: "δ", balance: "드문 클래스 무겁게" };
+function lossInfo() { return st.summary && st.summary.losses; }
+function lossTerms() { const L = lossInfo(); return st.loss || (L ? L.default.map((t) => Object.assign({}, t)) : []); }
+function renderLoss() {
+  const L = lossInfo();
+  if (!$("loss-terms")) return;
+  if (!L) { $("loss-terms").innerHTML = ""; return; }
+  const terms = lossTerms();
+  $("loss-terms").innerHTML = terms.map((t, i) => {
+    const opts = L.options[t.term] || {};
+    const fields = Object.entries(opts).map(([k, [d, lo, hi]]) => typeof d === "boolean"
+      ? `<label class="lopt"><input type="checkbox" data-i="${i}" data-k="${k}"${t[k] ?? d ? " checked" : ""}> ${LOSS_OPT_LABEL[k] || k}</label>`
+      : `<label class="lopt">${LOSS_OPT_LABEL[k] || k} <input type="number" data-i="${i}" data-k="${k}" min="${lo}" max="${hi}" step="0.1" value="${t[k] ?? d}"></label>`).join("");
+    return `${i ? `<span class="lplus">+</span>` : ""}<span class="loss-term"><input type="number" class="lw" data-i="${i}" data-k="w" min="0" step="0.1" value="${t.w ?? 1}"> ×` +
+      `<select data-i="${i}" data-k="term">${L.allowed.map((a) => `<option value="${a}"${a === t.term ? " selected" : ""}>${esc(L.names[a])}</option>`).join("")}</select>` +
+      fields + (terms.length > 1 ? `<button type="button" class="ldel" data-del="${i}" aria-label="빼기">×</button>` : "") + `</span>`;
+  }).join("");
+  $("loss-reset").hidden = !st.loss;
+}
+function setLoss(terms) {
+  const L = lossInfo();
+  st.loss = JSON.stringify(terms) === JSON.stringify(L.default) ? null : terms;
+  renderLoss();
+}
+$("loss-terms").addEventListener("change", (e) => {
+  const el = e.target, i = Number(el.dataset.i), k = el.dataset.k;
+  if (k === undefined) return;
+  const terms = lossTerms().map((t) => Object.assign({}, t));
+  if (k === "term") terms[i] = { term: el.value, w: terms[i].w ?? 1 };          // 항을 바꾸면 설정은 그 항의 기본
+  else terms[i][k] = el.type === "checkbox" ? el.checked : Number(el.value);
+  setLoss(terms);
+});
+$("loss-terms").addEventListener("click", (e) => {
+  const d = e.target.dataset.del;
+  if (d === undefined) return;
+  setLoss(lossTerms().filter((_, i) => i !== Number(d)));
+});
+$("loss-add").onclick = () => {
+  const L = lossInfo();
+  if (!L) return;
+  const used = new Set(lossTerms().map((t) => t.term)), next = L.allowed.find((a) => !used.has(a)) || L.allowed[0];
+  setLoss(lossTerms().concat([{ term: next, w: next === "l2" || next === "l1" ? 0.0001 : 1 }]));
+};
+$("loss-reset").onclick = () => setLoss(lossInfo().default.map((t) => Object.assign({}, t)));
+function renderLossParts(progress) {                       // 항이 둘 이상이면 마지막 epoch의 항마다 값
+  const last = progress[progress.length - 1], terms = last && last.terms;
+  $("loss-parts").innerHTML = terms ? kv(Object.entries(terms).map(([k, v]) => [k, Number(v.toPrecision(4))])) : "";
 }
 function epochsText(r) {                                  // "30" · "21 (조기 종료) · 가장 좋았던 11"
   return `${r.epochs_done}${r.early_stopped ? " (조기 종료)" : ""}` + (r.best_epoch ? ` · 가장 좋았던 ${r.best_epoch}` : "");

@@ -389,3 +389,19 @@ def fit_distance(studio: Studio, feats, n: int, c: int, k: int) -> dict:
     raw = feats.to_bytes() if hasattr(feats, "to_bytes") else bytes(feats)
     F = np.frombuffer(raw, dtype=np.float32).reshape(int(n), int(c))
     return {name: np.ascontiguousarray(v, dtype=np.float32).tobytes() for name, v in fit(F, int(k)).items()}
+
+
+@_wrap
+def loss_setup(studio: Studio, settings_json: str) -> dict:
+    """학습 설정의 손실 → 엔진이 쓸 {spec (기본이면 None), class_weights}. 잘못이면 오류."""
+    from dlstudio import losses
+    d = studio.need_data()
+    try:
+        spec = losses.normalize(json.loads(settings_json or "{}").get("loss"), d.task)
+    except ValueError as e:
+        raise UserError(str(e), "④ 학습 → 더 보기의 손실을 고치세요") from None
+    if losses.is_default(spec, d.task):
+        return {"spec": None, "class_weights": None}
+    K = len(d.classes) if d.task in ("classification", "segmentation") else 0
+    cw = losses.class_weights(d.y_train, K).tolist() if K and any(t.get("balance") for t in spec) else None
+    return {"spec": [dict(t, label=losses.label(t)) for t in spec], "class_weights": cw}

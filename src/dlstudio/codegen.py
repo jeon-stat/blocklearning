@@ -374,6 +374,10 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     if head:
         return "\n".join(lines + _torch_det(head, tr, weights_file, plan))
     seq = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "seq"), None)
+    custom = tr.get("loss")                                    # 조립한 손실 (DL studio ④ 학습 → 더 보기)
+    if custom:
+        lines += _torch_loss_code(custom, task, plan.n_out if task == "classification" else (seq or {}).get("n_cls", 0),
+                                  tr.get("class_weights"))
     if seq:                                                    # 구간 분할: 시점마다 교차 엔트로피
         loss, ytype = f"lambda out, t: F.cross_entropy(out.reshape(len(t), {seq['n_cls']}, -1), t)", "torch.long"
     elif task in ("regression", "forecast", "anomaly"):       # 이상 탐지는 y = X (입력을 되살림)
@@ -385,7 +389,7 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
         f'    """X: 위 입력 모양의 배열, y: {"정답 클래스 번호" if task not in ("regression", "forecast", "anomaly") else "다음 값들 (샘플, 예측 길이)" if task == "forecast" else "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요" if task == "anomaly" else "정답 값"}. Adam으로 학습."""',
         "    X = torch.as_tensor(X, dtype=torch.float32)",
         f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(len(X), -1)" if task in ("regression", "forecast", "anomaly") else ""),
-        f"    opt, loss_fn = torch.optim.Adam(model.parameters(), lr=lr), {loss}",
+        f"    opt, loss_fn = torch.optim.Adam(model.parameters(), lr=lr), {'lambda out, t: studio_loss(out, t, model)' if custom else loss}",
         "    for epoch in range(epochs):",
         "        model.train()",
         "        for idx in torch.randperm(len(X)).split(batch_size):",
@@ -437,6 +441,47 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
               f"    x = torch.randn({ex_shape})", "    with torch.no_grad():",
               f"        print(model(x).shape)       # torch.Size([4, {plan.n_out}])", ""]
     return "\n".join(lines)
+
+
+def _torch_loss_code(spec: list, task: str, K: int, cw) -> list:
+    """조립한 손실 → studio_loss(out, y, model) 코드 (losses.build와 같은 식)."""
+    from dlstudio import losses
+    seg = task == "segmentation"
+    out = ([f"CLASS_WEIGHTS = torch.tensor({[round(float(v), 6) for v in cw]})   # 드문 클래스를 무겁게", ""] if cw else []) + [
+        "def studio_loss(out, y, model):",
+        f'    """손실 = {" + ".join(losses.label(t) for t in spec)} (DL studio에서 조립한 것)."""',
+        "    total = 0"]
+    for t in spec:
+        n, w = t["term"], t["w"]
+        if n in ("ce", "focal"):
+            out.append(f"    logp = F.log_softmax(out.reshape(len(y), {K}, -1), 1).transpose(1, 2).reshape(-1, {K}); yy = y.reshape(-1)"
+                       if seg else "    logp, yy = F.log_softmax(out, 1), y")
+            if n == "ce":
+                sm = t.get("smooth", 0.0)
+                out += [f"    q = F.one_hot(yy, {K}).float() * {1 - sm} + {sm / K}", "    per = -(q * logp).sum(1)"]
+            else:
+                out += ["    lp = logp.gather(1, yy[:, None])[:, 0]", f"    per = -((1 - lp.exp()).clamp_min(0) ** {t['gamma']}) * lp"]
+            if t.get("balance") and cw:
+                out += ["    cw = CLASS_WEIGHTS.to(out.device)[yy]", "    v = (per * cw).sum() / cw.sum().clamp_min(1e-12)"]
+            else:
+                out.append("    v = per.mean()")
+        elif n == "dice":
+            out += [f"    p = F.softmax(out.reshape(len(y), {K}, -1), 1)", f"    oh = F.one_hot(y, {K}).permute(0, 2, 1).float()",
+                    "    v = (1 - (2 * (p * oh).sum((0, 2)) + 1) / (p.sum((0, 2)) + oh.sum((0, 2)) + 1)).mean()"]
+        elif n == "mse":
+            out.append("    v = ((out - y) ** 2).mean()")
+        elif n == "mae":
+            out.append("    v = (out - y).abs().mean()")
+        elif n == "huber":
+            d = t["delta"]
+            out += ["    e = (out - y).abs()", f"    v = torch.where(e < {d}, 0.5 * e * e, {d} * (e - {0.5 * d})).mean()"]
+        elif n in ("l2", "l1"):
+            f = "(p * p).sum()" if n == "l2" else "p.abs().sum()"
+            out.append(f"    v = sum({f} for p in model.parameters() if p.requires_grad)")
+        else:
+            continue
+        out.append(f"    total = total + {w} * v                   # {losses.label(t)}")
+    return out + ["    return total", "", ""]
 
 
 def _torch_det(head: dict, tr: dict, weights_file: Optional[str], plan: Plan) -> list:

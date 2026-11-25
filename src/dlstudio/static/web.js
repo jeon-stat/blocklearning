@@ -6,7 +6,7 @@
 "use strict";
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
-const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "nn_extra.py",
+const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "losses.py", "nn_extra.py",
   "labeling.py", "labeling_sources.py", "predict.py", "pretrained.py", "project.py", "segment.py", "tasks.py", "web.py", "weblabel.py"];
 const PRETRAINED = BASE + "pretrained/";                 // 사전학습 가중치 (그 블록을 쓸 때만 받음)
 const gotData = new Set();                               // 받아 둔 예시 데이터 파일 (예시를 누를 때만 받음)
@@ -103,7 +103,8 @@ function startTrain(body) {
   const plan = wrapped(W.mod.plan(W.studio, JSON.stringify(body.graph)));
   const data = getData();
   if (W.running) W.running.cancelled = true;
-  const s = Object.assign({ epochs: 30, lr: 1e-3, batch_size: 32, seed: 0 }, body.settings || {});
+  const ls = wrapped(W.mod.loss_setup(W.studio, JSON.stringify(body.settings || {})));    // 조립한 손실 검사 (기본이면 spec 없음)
+  const s = Object.assign({ epochs: 30, lr: 1e-3, batch_size: 32, seed: 0 }, body.settings || {}, { loss: ls.spec, class_weights: ls.class_weights });
   const job = { id: "w" + (++W.n), kind: "train", state: "running", progress: [], result: null, error: null, cancelled: false };
   W.jobs[job.id] = job;
   W.running = job;

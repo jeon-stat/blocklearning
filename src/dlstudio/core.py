@@ -336,6 +336,11 @@ class Studio:
             i = c.issues[0]
             raise UserError(i.message, i.hint, [x.to_dict() for x in c.issues])
         settings = TrainSettings.from_dict(b.get("settings"))
+        from dlstudio import losses
+        try:
+            losses.normalize(settings.loss, d.task)
+        except ValueError as e:
+            raise UserError(str(e), "④ 학습 → 더 보기의 손실을 고치세요") from None
 
         def run(job):
             r = train_job(job, graph, d, settings)
@@ -602,6 +607,16 @@ class Studio:
         info = {"task": d.task, "classes": list(d.classes) if d.task in ("classification", "detection") else []}
         settings = b.get("settings") or self.train_settings or {}
         train = {k: settings[k] for k in ("epochs", "lr", "batch_size") if k in settings}
+        from dlstudio import losses
+        try:
+            spec = losses.normalize(settings.get("loss"), d.task)
+        except ValueError:
+            spec = losses.default(d.task)
+        if not losses.is_default(spec, d.task) and d.task != "detection":     # 조립한 손실도 코드로 (탐지는 기본 손실)
+            train["loss"] = spec
+            K = len(d.classes) if d.task in ("classification", "segmentation") else 0
+            if K and any(t.get("balance") for t in spec):
+                train["class_weights"] = losses.class_weights(d.y_train, K).tolist()
         try:
             code = codegen.generate(fw, graph, d.length, d.n_out, d.image, info, train,
                                     weights_file=weights_file if trained and fw == "pytorch" else None)

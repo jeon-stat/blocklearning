@@ -791,3 +791,10 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .seg-strip { display: block; border-radius: 2px; margin-top: 2px; }
 .seg-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 10px; }
 td.seg-cell { text-align: left; }
+.loss-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.loss-k { font-weight: 600; color: var(--text-2); }
+.loss-term { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--accent-bg); }
+.loss-term input.lw { width: 64px; } .loss-term .lopt input[type=number] { width: 56px; } .loss-term .lopt { font-size: 12.5px; color: var(--muted); }
+.loss-term .ldel { border: 0; background: none; padding: 0 4px; color: var(--muted); }
+.lplus { color: var(--muted); }
+.loss-parts { margin-top: 6px; font-size: 12.5px; }
