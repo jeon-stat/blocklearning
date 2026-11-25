@@ -121,20 +121,30 @@ def _opened(studio: Studio, pr: dict) -> dict:
     d = studio.data
     studio.graph = pr["graph"]
     studio.train_settings, studio.results, studio.selection = pr["train_settings"], pr["results"], pr["selection"]
-    state, plan_ = None, None
+    state, plan_, notice = None, None, ""
     if pr["state_dict"] is not None:
-        plan_ = codegen.plan_dict(pr["graph"], d.length, d.n_out, d.image)
-        want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"]}
-        if {k: list(v.shape) for k, v in pr["state_dict"].items()} != want:
+        try:
+            plan_ = codegen.plan_dict(pr["graph"], d.length, d.n_out, d.image)
+            want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"]}
+            fits = {k: list(v.shape) for k, v in pr["state_dict"].items()} == want
+        except Exception:                                   # 그래프가 지금 데이터 모양에서 검사를 통과하지 못함
+            fits = False
+        if fits:
+            state = _state_lists(pr["state_dict"])
+            studio.model_graph = pr["graph"]
+        elif dict(pr.get("data_source") or {}).get("example"):
+            # 예시 데이터가 바뀜 (예전 합성 예시 → 실제 데이터): 모델 구조는 두고 학습 결과만 비움
+            plan_, studio.model_graph, studio.results = None, None, {}
+            pr = dict(pr, results={})
+            notice = "예시 데이터가 공개된 실제 데이터로 바뀌어 예전 학습 결과는 비웠습니다. ④에서 다시 학습하세요."
+        else:
             raise UserError("프로젝트의 모델이 지금 데이터와 맞지 않음", "프로젝트를 저장할 때와 같은 데이터를 불러오세요")
-        state = _state_lists(pr["state_dict"])
-        studio.model_graph = pr["graph"]
     else:
         studio.model_graph = None
     studio.set_runs(pr)
     res = {"graph": pr["graph"], "summary": d.summary(), "train_settings": pr["train_settings"], "results": pr["results"],
            "trained": state is not None, "selection": studio.selection, "runs": studio.runs_view(),
-           "predict_kinds": studio.predict_kinds()}
+           "predict_kinds": studio.predict_kinds(), "notice": notice}
     return {"response": _clean(res), "state": state, "plan": plan_}
 
 

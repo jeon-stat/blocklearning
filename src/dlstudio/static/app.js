@@ -207,6 +207,7 @@ function go(step, fromHistory = false) {
   window.scrollTo(0, 0);
   const mainEl = document.querySelector("main");          // 사이드바 틀에서는 main이 스크롤됨
   if (mainEl) mainEl.scrollTop = 0;
+  if (window.DLProjects && window.DLProjects.showSteps) window.DLProjects.showSteps();   // 웹: 만들기 흐름 보이기·숨기기
 }
 window.addEventListener("popstate", (e) => {
   const step = e.state && e.state.dls;

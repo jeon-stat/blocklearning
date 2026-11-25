@@ -775,3 +775,6 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .tcard .fi.ti { font-size: 0; margin-bottom: 8px; }
 .tcard.soon .fi.ti { background: #f1f5f9; color: #94a3b8; }
 .tcard.sel .fi.ti { background: var(--accent); color: #fff; }
+
+/* 내 프로젝트 카드: 고른 카드 */
+.proj-card.sel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .18); }

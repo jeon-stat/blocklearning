@@ -133,7 +133,7 @@ async function openProject(kind, p) {
     applyOpened(r);                                           // app.js
     dirty = false; dataDirty = false;
     status("열었음");
-    showMessage(`'${p.name}'을(를) 열었음`, "", "", true);
+    showMessage(`'${p.name}'을(를) 열었음`, r.notice || "", "", true);
   } catch (e) { status("열지 못함", true); showError(e.message !== undefined ? e : { message: String(e) }); }
 }
 async function startFresh(then) {                        // 새 프로젝트: 지금 작업이 있으면 저장하고 깨끗한 화면으로 (새로 고침)
@@ -261,6 +261,7 @@ function ensureHome() {
     const b = e.target.closest("button[data-a]");
     const kind = tab, item = { id: card.dataset.id, name: card.dataset.name };
     try {
+      if (!b && selId !== item.id) return selectCard(item.id);   // 처음 누르면 고르기만, 한 번 더 누르면 열기
       if (!b || b.dataset.a === "open") return openProject(kind, item);
       if (b.dataset.a === "rename") {
         const name = prompt("새 이름", item.name);
@@ -313,9 +314,9 @@ async function render() {
     const items = await store(tab).list();
     list.innerHTML = items.length ? items.map((p) => {
       const now = cur && cur.id === p.id, recent = !now && last && last.id === p.id;
-      return `<div class="proj-card${now ? " cur" : ""}" data-id="${esc(p.id)}" data-name="${esc(p.name)}" title="눌러서 열기">
+      return `<div class="proj-card${selId === p.id ? " sel" : ""}" data-id="${esc(p.id)}" data-name="${esc(p.name)}">
         <div class="pc-top"><span class="pc-icon">${esc((p.name || "?").trim().charAt(0))}</span>
-          ${now ? '<span class="badge rec">지금 연 프로젝트</span>' : recent ? '<span class="badge">최근</span>' : ""}</div>
+          ${recent ? '<span class="badge">최근</span>' : ""}</div>
         <div class="pn">${esc(p.name)}</div>
         <div class="pm">${esc(p.meta || "아직 학습 안 함")}</div>
         <div class="pc-foot"><span class="pt">${esc(when(p.updated))} 저장</span>
@@ -324,9 +325,36 @@ async function render() {
       <span>[새 프로젝트]나 [예시로 바로 해 보기]로 시작하세요. 데이터를 넣으면 자동으로 저장됩니다.</span></div>`;
   } catch (e) { list.innerHTML = `<p class="bad">${esc(e.message || e)}</p>`; }
 }
+// 프로젝트 카드 고르기: 처음 누르면 고르기만 (테두리), 같은 카드를 한 번 더 누르면 열기, 빈 곳을 누르면 고르기 풀기
+let selId = null;
+function selectCard(id) {
+  selId = id;
+  document.querySelectorAll("#home-list .proj-card").forEach((c) => c.classList.toggle("sel", c.dataset.id === id));
+  showSteps();
+}
+// 왼쪽 '만들기' 흐름(과제~예측): 내 프로젝트 화면에서는 프로젝트를 골랐을 때만, 다른 단계에서는 늘
+function showSteps() {
+  const show = st.step !== "home" || !!selId;
+  document.querySelectorAll("#steps .nav-label, #steps .step:not(.home-step)").forEach((el) => (el.style.display = show ? "" : "none"));
+}
+// 고른 프로젝트가 지금 연 것과 다르면, 만들기 단계를 누를 때 그 프로젝트를 먼저 열고 그 단계로
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("#steps .step:not(.home-step)");
+  if (!b || st.step !== "home" || !selId || (cur && cur.id === selId)) return;
+  const card = document.querySelector(`#home-list .proj-card[data-id="${CSS.escape(selId)}"]`);
+  if (!card) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  await openProject(tab, { id: card.dataset.id, name: card.dataset.name });
+  if (cur && cur.id === card.dataset.id) go(b.dataset.step);
+}, true);
+document.addEventListener("click", (e) => {
+  if (selId && !e.target.closest("#home-list .proj-card")) selectCard(null);
+});
 function home(fromHistory = false) {
   ensureHome();
   if (cur) tab = cur.kind;
+  selId = cur ? cur.id : null;                              // 지금 연 프로젝트가 골라진 채로
   go("home", fromHistory === true);                       // 단추로 부르면 이벤트가 들어오므로 true일 때만
   render();
 }
@@ -368,5 +396,5 @@ async function init() {
   home();
 }
 
-window.DLProjects = { init, saveNow, current: () => cur, home, startNew: startFresh };
+window.DLProjects = { init, saveNow, current: () => cur, home, startNew: startFresh, showSteps };
 })();
