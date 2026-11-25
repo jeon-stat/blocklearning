@@ -571,7 +571,13 @@ async function loadData(body) {                       // 성공하면 true
   }
 }
 // ④ 학습 화면 비우기: 새 데이터(다른 프로젝트 열기 포함)에는 지난 학습 결과·곡선·샘플을 남기지 않음
+function clearPredictView() {                            // 예측 결과는 그 모델·데이터의 것: 바뀌면 지움
+  $("predict-result").hidden = true;
+  for (const id of ["predict-cards", "predict-table", "predict-gallery", "predict-note", "predict-issues"]) if ($(id)) $(id).innerHTML = "";
+  st.predictCsv = null;
+}
 function clearTrainView() {
+  clearPredictView();
   $("train-result").innerHTML = `<p class="muted">학습이 끝나면 나옵니다</p>`;
   for (const id of ["train-warnings", "train-confusion", "train-scatter", "sample-flow", "sample-info", "train-status"]) $(id).innerHTML = "";
   $("cm-pick").hidden = true;
@@ -605,6 +611,7 @@ function onData(s) {
   renderFcBox(s);
   renderRoleBox(s);
   if (det) cards.push(["상자", `${s.detection.n_boxes}개`], ["격자", `${s.detection.grid}×${s.detection.grid}칸`]);
+  if (s.dropped_rows) cards.push(["빈 칸이 있어 뺀 행", s.dropped_rows]);
   if (s.channels > 1) cards.push(["채널", (s.channel_names || []).length ? s.channel_names.map(esc).join(" · ") : `${s.channels}개`]);
   if (multi) for (const t of s.targets) cards.push([`정답 '${esc(t.name)}'`, t.kind === "class" ? `${t.classes.length}클래스`
     : `${Number(t.range[0].toPrecision(3))} ~ ${Number(t.range[1].toPrecision(3))}`]);
@@ -1806,7 +1813,7 @@ function renderPredict(r) {
   const s = r.summary, cls = s.task === "classification", num = (v) => Number(Number(v).toPrecision(4));
   const cards = [["샘플", s.n]];
   if (cls) {
-    for (const [c, n] of Object.entries(s.counts)) cards.push([`예측: ${c}`, n]);
+    for (const [c, n] of Object.entries(s.counts)) if (n) cards.push([`예측: ${c}`, n]);   // 0개인 클래스는 뺌
     if (s.accuracy !== undefined) cards.push(["정확도 (정답과 비교)", pct(s.accuracy)]);
     if (s.low_conf) cards.push(["확신 60% 미만", s.low_conf]);
   } else {

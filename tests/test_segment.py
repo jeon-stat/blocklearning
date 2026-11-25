@@ -89,3 +89,14 @@ def test_web_engine_training_matches_torch(tmp_path):
         out = net(torch.as_tensor(d.X_test[:, None, :], dtype=torch.float32)).numpy()
     assert np.allclose(out.ravel(), np.asarray(w["out"]), atol=1e-3)
     assert segment.metric(out, d.y_test, 5) == pytest.approx(w["result"]["test_metric"], abs=1e-6)
+
+
+def test_keras_code_uses_per_step_loss():
+    """TensorFlow 코드: 출력 (상태 × 길이)를 시점마다 교차 엔트로피로 (펼친 출력에 바로 걸면 모양이 맞지 않음)."""
+    from dlstudio.core import Studio
+    s = Studio()
+    s.api_data_load({"example": "pneumatic_seg"})
+    code = s.api_code({"framework": "tensorflow", "graph": from_blocks(T["seg_bigru"]["blocks"]), "settings": {"epochs": 1}})["code"]
+    assert "def seg_loss(target, out):" in code and "loss=seg_loss" in code and "N_STATES = 5" in code
+    tcode = s.api_code({"framework": "pytorch", "graph": from_blocks(T["seg_tcn"]["blocks"]), "settings": {"epochs": 1}})["code"]
+    assert "시점마다 상태 번호 (샘플, 길이)" in tcode

@@ -58,12 +58,23 @@ def test_non_numeric_cell_reports_location(tmp_path):
     assert any(i.row == 3 and i.col == 5 for i in e.value.issues)
 
 
-def test_empty_cell_reports_location(tmp_path):
+def test_empty_cell_rows_are_dropped_and_counted(tmp_path):
+    """빈 칸이 있는 행은 빼고 읽고, 몇 행인지 요약에 (화면 카드). 모든 행에 빈 칸이면 오류."""
     rows = _rows()
+    n = len(rows)                                     # 머리글 없음
     rows[4][1] = ""
-    with pytest.raises(DataError) as e:
-        load_csv(_write(tmp_path / "a.csv", rows))
-    assert any(i.row == 5 and i.col == 2 for i in e.value.issues)
+    d = load_csv(_write(tmp_path / "a.csv", rows))
+    assert len(d.y_train) + len(d.y_test) == n - 1 and d.summary()["dropped_rows"] == 1
+    rows = _rows()
+    for i, r in enumerate(rows):                      # 행마다 다른 열이 빔 (열 하나가 통째로 비면 그 열은 '안 씀'으로 빠짐)
+        r[i % 8] = ""
+    with pytest.raises(DataError):
+        load_csv(_write(tmp_path / "b.csv", rows))
+
+
+def test_thousands_separator_numbers():
+    from dlstudio.data import _num
+    assert _num("1,234") == 1234 and _num("-1,234,567.5") == -1234567.5 and _num("12,34") is None and _num("0,5") is None
 
 
 def test_single_class_rejected(tmp_path):

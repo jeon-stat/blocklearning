@@ -1142,7 +1142,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     if (!te.ok || !tr.ok)
       // 탭이 뒤에 있을 때 GPU가 결과 일부를 가끔 틀리게 읽어 옴 (학습 자체는 같았음 — 시드가 같으면 가중치가 똑같음)
       r.warnings.push({ message: "이 브라우저의 GPU가 결과 일부를 틀리게 내서, 아래 성적은 CPU로 다시 계산했습니다 (성적은 맞음)",
-        hint: "학습하는 동안 다른 탭을 보고 있으면 생길 수 있습니다. 자주 나오면 이 탭을 띄워 둔 채 학습하세요" });
+        hint: "브라우저 창이 가려져 있거나 다른 탭을 보는 동안 학습하면 생길 수 있습니다. 자주 나오면 이 탭을 띄워 둔 채 학습하세요" });
     if (det) Object.assign(r, detResult(out, det.test, det));
     else if (ae || fc || seg || multi) return { net, result: r, out, outTr };   // 결과 화면 값은 Python (jobs.task_result)이 출력으로 만듦
     else if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);

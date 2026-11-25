@@ -457,7 +457,8 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
 
 def _y_doc(task: str) -> str:
     return {"regression": "정답 값", "forecast": "다음 값들 (샘플, 예측 길이)", "anomaly": "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요",
-            "multi": "정답 표 (샘플, 정답 수): 분류 정답은 클래스 번호, 값 정답은 숫자"}.get(task, "정답 클래스 번호")
+            "multi": "정답 표 (샘플, 정답 수): 분류 정답은 클래스 번호, 값 정답은 숫자",
+            "segmentation": "시점마다 상태 번호 (샘플, 길이)"}.get(task, "정답 클래스 번호")
 
 
 def _heads_code(heads: list) -> list:
@@ -971,6 +972,14 @@ def to_keras(graph: dict, length: int, n_out: int, image: tuple = None, data_inf
         loss, metric = "multi_loss", "[]"
     elif task in ("regression", "forecast", "anomaly"):
         loss, metric = '"mse"', '["mae"]'
+    elif any(s.type == "output" and s.cfg.get("head") == "seq" for s in plan.steps):   # 구간 분할: 시점마다 교차 엔트로피
+        K = next(s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "seq")["n_cls"]
+        helpers += ["", "", f"N_STATES = {K}", "", "",
+                    "def seg_loss(target, out):",
+                    '    """시점마다 교차 엔트로피 (DL studio와 같음). out: (상태 수 × 길이)를 상태가 먼저 펼친 것, target: (샘플, 길이) 상태 번호."""',
+                    "    o = tf.transpose(tf.reshape(out, (-1, N_STATES, tf.shape(target)[1])), (0, 2, 1))",
+                    "    return tf.reduce_mean(keras.losses.sparse_categorical_crossentropy(tf.cast(target, tf.int32), o, from_logits=True))"]
+        loss, metric = "seg_loss", "[]"
     else:
         loss, metric = "keras.losses.SparseCategoricalCrossentropy(from_logits=True)", '["accuracy"]'
     lines = ['"""DL studio에서 만든 모델 (TensorFlow Keras).', ""] + doc + ['"""', "import tensorflow as tf",

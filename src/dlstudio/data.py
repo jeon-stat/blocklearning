@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -147,6 +148,8 @@ class Dataset:
             tg, sk = set(src.get("targets") or [src.get("label_col")]), set(src.get("skip") or [])
             s["columns"] = [{"name": n, "role": "target" if j in tg else "skip" if j in sk else "input"} for j, n in enumerate(src["columns"])]
             s["csv_channels"] = int(src.get("channels") or 1)
+        if src.get("dropped_rows"):
+            s["dropped_rows"] = int(src["dropped_rows"])
         return s
 
     def _summary(self) -> dict:
@@ -262,11 +265,20 @@ class Dataset:
 
 
 def _num(s: str) -> Optional[float]:
+    """숫자 칸: 1234 · 1.5 · -2e3, 천 단위 쉼표 1,234 · 1,234.5 (엑셀에서 흔함)."""
     try:
         v = float(s)
     except ValueError:
+        t = str(s).strip()
+        if not _THOUSANDS.fullmatch(t):
+            return None
+        v = float(t.replace(",", ""))
+    except TypeError:
         return None
     return v if np.isfinite(v) else None
+
+
+_THOUSANDS = re.compile(r"[-+]?\d{1,3}(,\d{3})+(\.\d+)?")
 
 
 def _is_header(first: list, feats: list, lc: int, rest: list) -> bool:
@@ -404,35 +416,35 @@ def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", nor
             feats = [j for j in feats if j not in skips]
             names = [all_names[j] for j in feats] if names else []
 
-    issues, X, labels = [], [], []
+    issues, X, labels, dropped = [], [], [], 0
     for rn, r in numbered:
         if len(r) != ncol:
             issues.append(Issue(rn, None, f"{rn}행: 칸 수가 {len(r)}개 (다른 행은 {ncol}개)",
                                 "빠지거나 남는 쉼표가 있는지 확인하세요"))
             continue
+        if any(r[j].strip() == "" for j in feats + lcs):     # 쓰는 열에 빈 칸이 있는 행은 빼고 읽음 (몇 행인지 화면에 알림)
+            dropped += 1
+            continue
         vals = []
         for j in feats:
-            if r[j] == "":
-                issues.append(Issue(rn, j + 1, f"{rn}행 {j + 1}열이 비어 있음", "빈 칸을 채우거나 그 행을 지우세요"))
-                vals.append(np.nan)
-                continue
             v = _num(r[j])
             if v is None:
                 issues.append(Issue(rn, j + 1, f"{rn}행 {j + 1}열 '{r[j][:20]}'은(는) 숫자가 아님",
                                     "값 열에는 숫자만 있어야 합니다"))
                 v = np.nan
             vals.append(v)
-        for t in lcs:
-            if r[t] == "":
-                issues.append(Issue(rn, t + 1, f"{rn}행의 정답 칸({all_names[t]})이 비어 있음", "정답을 채우거나 그 행을 지우세요"))
         X.append(vals)
         labels.append([r[t] for t in lcs])
         if len(issues) >= MAX_ISSUES:
             break
     if issues:
         raise DataError(issues[:MAX_ISSUES])
+    if not X:
+        raise DataError([Issue(None, None, f"모든 행({dropped}개)에 빈 칸이 있음", "쓰는 열의 빈 칸을 채우거나, 열 고르기에서 빈 칸이 많은 열을 '안 씀'으로 바꾸세요")])
     src = {"path": str(path), "label_col": lc, "normalize": normalize, "test_ratio": test_ratio, "seed": seed, "task": task,
            "columns": all_names}
+    if dropped:
+        src["dropped_rows"] = dropped
     if targets:
         src["targets"] = lcs
     if skips:
@@ -465,7 +477,7 @@ def _csv_image_shape(n: int, width: int) -> tuple:
     if width == 0:
         side = int(round(n ** 0.5))
         if side * side != n:
-            raise DataError([Issue(None, None, f"픽셀 {n}개는 정사각형이 아님", "이미지 너비(가로 픽셀 수)를 넣으세요")])
+            raise DataError([Issue(None, None, f"픽셀 {n}개는 정사각형이 아님", "이미지 너비(가로 픽셀 수)를 넣으세요. 그림 픽셀 CSV가 아니면 ① 과제에서 표·시계열 과제를 고르세요")])
         return side, side
     if width < 1 or n % width:
         raise DataError([Issue(None, None, f"픽셀 {n}개를 너비 {width}로 나눌 수 없음",

@@ -218,11 +218,11 @@ def test_image_flow(server, tmp_path):
     assert code == 200 and d["summary"]["image"] == [32, 32]
     blocks = find("classification", "cls_img", "cnn2d")[2]["blocks"]
     code, c = _call(server, "/api/model/check", {"blocks": blocks})
-    assert code == 200 and c["ok"] and c["shapes"]["b0"] == [8, 32, 32], c
+    assert code == 200 and c["ok"] and c["shapes"]["b0"] == [16, 32, 32], c
     _, j = _call(server, "/api/train", {"blocks": blocks, "settings": {"epochs": 1}})
     assert _wait(server, j["id"])["state"] == "done"
     code, a = _call(server, "/api/activations", {"sample_index": 0})
-    assert code == 200 and len(a["values"]["b0"]) == 8 and len(a["values"]["b0"][0]) == 32     # (C, H, W)
+    assert code == 200 and len(a["values"]["b0"]) == 16 and len(a["values"]["b0"][0]) == 32     # (C, H, W)
     _call(server, "/api/project/save", {"path": str(tmp_path / "i.dlstudio")})
     code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "i.dlstudio")})
     assert code == 200 and o["summary"]["image"] == [32, 32] and o["trained"]

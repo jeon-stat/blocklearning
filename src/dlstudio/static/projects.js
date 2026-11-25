@@ -35,6 +35,7 @@ function autoName() {                                    // 데이터와 과제�
     return base ? `${base} (${new Date().toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })})` : defaultName();
   } catch (e) { return defaultName(); }
 }
+const AUTO_SUFFIX = / \(\d{1,2}\. \d{1,2}\.\)( \d+)?$/;   // autoName·uniqueName이 붙이는 꼬리 "(11. 26.)", "(11. 26.) 2"
 async function uniqueName(kind, name) {               // 같은 이름이 있으면 뒤에 번호
   try {
     const names = new Set((await store(kind).list()).map((p) => p.name));
@@ -115,6 +116,15 @@ async function saveNow() {
       wantData = dataDirty || !cur;
       dirty = false;
       const kind = cur ? cur.kind : S().drive.available() && S().drive.signedIn() ? "drive" : "local";
+      if (cur && wantData && AUTO_SUFFIX.test(cur.name)) {     // 지어 준 이름 그대로면 (사용자가 안 바꿨으면) 데이터가 바뀔 때 이름도 따라
+        const next = autoName();
+        if (next.replace(AUTO_SUFFIX, "") !== cur.name.replace(AUTO_SUFFIX, "")) {
+          const nn = await uniqueName(cur.kind, next);
+          await store(cur.kind).rename(cur.id, nn);
+          cur.name = nn;
+          remember(); showCurrent();
+        }
+      }
       const name = cur ? cur.name : await uniqueName(kind, autoName());
       const rec = WEBB().recordBytes(name, { dataCopy: wantData });
       if (!rec) { status(""); return; }                // 아직 모델이 없음: 데이터 사본은 다음 저장 때 (표시를 지우지 않음)

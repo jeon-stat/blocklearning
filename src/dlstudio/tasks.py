@@ -80,7 +80,7 @@ GAP2 = {"type": "global_avg2d"}
 T_CNN2D = {"id": "cnn2d", "name": "작은 CNN",
            "desc": "3×3 필터로 획·모서리를 찾고, 그림을 줄여 가며 모양을 모으는 기본 이미지 모델",
            "when": "처음 시작할 때. 작은 흑백 그림에서 무난하고 빠름",
-           "blocks": [_c2(8), P2, P2D, _c2(16), P2, GAP2, OUT]}
+           "blocks": [_c2(16), P2, P2D, _c2(32), P2, P2D, _c2(64), P2, P2D, GAP2, OUT]}
 
 T_LENET = {"id": "lenet", "name": "LeNet식",
            "desc": "필터로 찾고 그림을 줄이기를 두 번 한 뒤 Dense로 판단하는 고전 손글씨 모델 (LeNet-5를 작게)",
@@ -90,7 +90,7 @@ T_LENET = {"id": "lenet", "name": "LeNet식",
 T_RESNET2D = {"id": "resnet2d", "name": "작은 ResNet",
               "desc": "지름길(Residual)을 둔 깊은 이미지 모델. 깊어도 잘 배움",
               "when": "작은 CNN으로 부족할 때. 학습이 더 오래 걸림",
-              "blocks": [_c2(16), BN, P2, {"type": "repeat", "times": 2, "body": [_res(_c2(16), BN, P2)]}, GAP2, OUT]}
+              "blocks": [_c2(16), BN, P2, P2D, _res(_c2(16), BN, P2), P2D, _res(_c2(16), BN, P2), GAP2, OUT]}
 
 T_TRANSFER = {"id": "mnv3_transfer", "name": "전이 학습 (MobileNetV3)",
               "desc": "Google이 ImageNet 사진으로 미리 학습한 MobileNetV3-Small로 특징 1024개를 뽑고, 끝 층만 학습",
