@@ -95,10 +95,21 @@ class Studio:
             r = b["roles_reload"]
             src.update(targets=[int(j) for j in r.get("targets") or []], skip=[int(j) for j in r.get("skip") or []],
                        channels=max(1, int(r.get("channels") or 1)))
+            if r.get("length"):
+                src["length"] = int(r["length"])
             if not src["targets"]:
                 raise UserError("정답 열이 없음", "역할 표에서 정답 열을 하나 이상 고르세요")
             src["label_col"] = src["targets"][0]
             return {"summary": self.load_source(src), "source": self.data.source}
+        if b.get("task") == "segmentation" and b.get("path") and not b.get("example"):   # 구간 분할: 한 행 = 한 시점 + 상태 열
+            from dlstudio.segment import load_segment_csv
+            path = _path(b.get("path"))
+            if not os.path.isfile(path):
+                raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
+            tg = b.get("targets") or ([b["label_col"]] if b.get("label_col") is not None else None)
+            d = load_segment_csv(path, state_col=tg[0] if tg else None, skip=b.get("skip"), length=b.get("length") or None, **opts)
+            self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
+            return {"summary": d.summary(), "source": d.source}
         if b.get("task") == "forecast" and not b.get("example"):   # 긴 시계열 CSV 하나 (한 행 = 한 시점)
             from dlstudio.forecast import load_forecast_csv
             path = _path(b.get("path"))
@@ -135,7 +146,7 @@ class Studio:
             if not os.path.isfile(path):
                 raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
             iw = b.get("image_width")
-            d = load_csv(path, label_col=b.get("label_col"), task=b.get("task", "auto"),
+            d = load_csv(path, label_col=b.get("label_col"), task="auto" if b.get("task") == "multi" else b.get("task", "auto"),
                          image_width=None if iw is None or iw == "" else int(iw), targets=b.get("targets") or None,
                          skip=b.get("skip") or None, channels=int(b.get("channels") or 1), **opts)
         if b.get("task") == "anomaly" and d.task != "anomaly":       # 분류처럼 읽은 것 → 정상만 학습하는 이상 탐지로
@@ -402,8 +413,13 @@ class Studio:
         else:
             pred = d.classes[int(out.argmax())] if d.task == "classification" else float(out[0])
         order = check_graph(self.model_graph, d.length, d.n_out, image=d.image).order
+        from dlstudio.analysis import saliency
+        try:
+            sal = saliency(m, x, d)
+        except Exception:                                     # 기울기를 못 내는 블록이 있으면 보이지 않음
+            sal = None
         return {"index": i, "label": label, "prediction": pred, "input": np.round(d.raw(d.X_test[i]), 5).tolist(),
-                "values": activations(m, x), "attention": attention(m, x), "order": order}
+                "values": activations(m, x), "attention": attention(m, x), "order": order, "saliency": sal}
 
     # ------------------------------------------------------------ 학습 기록
     def data_key(self) -> str:
@@ -609,7 +625,8 @@ class Studio:
                                                                       "resample", "label_file", "only_labeled")}))["summary"]
         return self.api_data_load(dict(load, path=src.get("path"), label_col=src.get("label_col"),
                                        image_width=src.get("image_width"), task=src.get("task", "auto"),
-                                       targets=src.get("targets"), skip=src.get("skip"), channels=src.get("channels")))["summary"]
+                                       targets=src.get("targets"), skip=src.get("skip"), channels=src.get("channels"),
+                                       length=src.get("length")))["summary"]
 
     def api_project_export(self, b: dict) -> dict:
         from dlstudio.project import export_torch

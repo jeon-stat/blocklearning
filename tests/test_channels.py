@@ -125,3 +125,28 @@ def test_csv_roles(tmp_path):
     assert r["summary"]["task"] == "multi" and [t["name"] for t in r["summary"]["targets"]] == ["등급", "수율"]
     st.load_source(st.data.source)                                    # 프로젝트 다시 열기: 역할 그대로
     assert st.data.task == "multi" and st.data.X_train.shape[1] == 3
+
+
+def test_segment_csv_long_series(tmp_path):
+    """구간 분할 CSV: 한 행 = 한 시점 (시각 글자 열 + 값 열 둘 + 상태) → 창으로 잘라 두 채널, 역할 표로 창 길이 바꾸기."""
+    rng = np.random.default_rng(0)
+    T = 3000
+    state = np.where((np.arange(T) // 75) % 3 == 0, "대기", np.where((np.arange(T) // 75) % 3 == 1, "동작", "정지"))
+    cur = np.select([state == "대기", state == "동작"], [0.1, 2.0], 0.5) + rng.normal(0, 0.05, T)
+    pres = np.select([state == "동작"], [6.0], 6.6) + rng.normal(0, 0.02, T)
+    rows = ["시각,전류,압력,상태"] + [f"t{i},{cur[i]:.3f},{pres[i]:.3f},{state[i]}" for i in range(T)]
+    f = tmp_path / "long.csv"
+    f.write_text("\n".join(rows), encoding="utf-8")
+    from dlstudio.core import Studio
+    s = Studio()
+    r = s.api_data_load({"path": str(f), "task": "segmentation"})["summary"]
+    d = s.data
+    assert d.task == "segmentation" and channels_of(d.length) == 2 and set(d.classes) == {"대기", "동작", "정지"}
+    assert [c["role"] for c in r["columns"]] == ["skip", "input", "input", "target"] and r["channel_names"] == ["전류", "압력"]
+    r = s.api_data_load({"roles_reload": {"targets": [3], "skip": [0, 2], "length": 64}})["summary"]
+    assert int(s.data.length) == 64 and channels_of(s.data.length) == 1 and r["length"] == 64
+    g = from_blocks(SMALL)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tr = train_job(Job("t"), g, s.data, TrainSettings(epochs=15, lr=1e-2))
+    assert tr["test_metric"] > 0.5

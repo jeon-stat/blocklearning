@@ -796,6 +796,35 @@ function toInput(X, n, kind, length, image, channels = 1) {   // X: Float32Array
   return t;
 }
 
+// ------------------------------------------------------------ 어디를 봤나 (analysis.saliency와 같음): |∂ 예측 / ∂ 입력|, 가장 큰 것이 1
+// X: 샘플 하나의 정규화한 값 (데이터 순서), d: 데이터 정보 (task, length, channels, image, seg, multi, det)
+function saliency(net, X, d) {
+  const C = d.channels || 1, L = d.length;
+  const shape = (xf) => (net.kind === "image" ? xf.reshape([1, 1, d.image[0], d.image[1]])
+    : net.kind === "rnn" ? xf.reshape([1, C, L]).transpose([0, 2, 1]) : xf.reshape([1, C, L]));
+  const score = (o, xf) => {
+    if (d.task === "classification") return o.max();
+    if (d.task === "segmentation") return o.reshape([d.seg.n_cls, -1]).max(0).sum();
+    if (d.task === "multi") return tf.addN(d.multi.heads.map((h) => (h.kind === "class" ? o.slice([h.start], [h.size]).max() : o.slice([h.start], [1]).sum())));
+    if (d.task === "detection") return o.reshape([d.det.per_cell, -1]).slice([0, 0], [1, -1]).sum();
+    if (d.task === "anomaly" && o.size === xf.size) return o.sub(xf).square().sum();
+    return o.sum();
+  };
+  const g = tf.tidy(() => {
+    const xv = tf.tensor1d(X);
+    return tf.grad((xf) => score(net.forward(shape(xf), false).reshape([-1]), xf))(xv).abs();
+  });
+  let v = g.dataSync().slice();
+  g.dispose();
+  if (!d.image && C > 1) {                                   // 여러 채널: 시점마다 더함
+    const s = new Float32Array(L);
+    for (let c = 0; c < C; c++) for (let t = 0; t < L; t++) s[t] += v[c * L + t];
+    v = s;
+  }
+  const hi = v.reduce((a, b) => Math.max(a, b), 0) || 1;
+  return Array.from(v, (x) => Math.round((x / hi) * 1e4) / 1e4);
+}
+
 // ------------------------------------------------------------ 지표 (jobs.py와 같음)
 function metric(out, y, task, nOut) {
   const n = y.length;
@@ -1278,7 +1307,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, fitDistance, segMetric, buildLoss, multiMetric, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
+const API = { Net, train, fitDistance, segMetric, buildLoss, multiMetric, saliency, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;

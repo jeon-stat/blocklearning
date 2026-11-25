@@ -416,6 +416,7 @@ const GUIDE = {
 GUIDE.timeseries.forecast = "한 행 = 한 시점 (시간 순서대로), 열 = 측정 항목 (예: 시각, 온도, 전력). 맞힐 값 열의 지난 값들로 다음 값들을 예측합니다. 불러온 뒤 맞힐 열·입력 길이·예측 길이를 바꿀 수 있습니다.";
 GUIDE.timeseries.anomaly = "한 행 = 신호 한 구간 (시점마다 값이 한 열씩), 마지막 열 = 상태 (예: 정상, 결함). 정상만 학습하고 나머지는 이상으로 봅니다. 정상만 있어도 됩니다.";
 GUIDE.tabular.multi = "한 행 = 샘플 하나, 열 = 측정 항목과 정답들. 불러온 뒤 역할 표에서 정답 열 이름을 눌러 '정답'으로 바꾸면 (둘 이상) 정답마다 분류·숫자를 스스로 정합니다.";
+GUIDE.timeseries.segmentation = "한 행 = 한 시점 (시간 순서대로), 열 = 측정값들과 그 시점의 상태 (마지막 열). 같은 길이의 창으로 잘라 시점마다 상태를 맞힙니다. 불러온 뒤 역할 표에서 상태 열·창 길이를 바꿀 수 있습니다.";
 GUIDE.tabular.anomaly = "한 행 = 샘플 하나, 열 = 측정 항목, 마지막 열 = 상태 (예: 정상, 불량). 정상만 학습하고 나머지는 이상으로 봅니다. 정상만 있어도 됩니다.";
 function renderDataGuide() {
   const sub = st.sub;
@@ -424,14 +425,13 @@ function renderDataGuide() {
   $("data-guide").textContent = !sub || st.autoTask
     ? "과제를 고르지 않아도 됩니다. CSV·그림 폴더·예시 데이터를 넣으면 분류인지 회귀인지, 시계열·표·이미지 중 무엇인지 보고 과제와 추천 모델을 정해 드립니다. CSV는 한 행 = 샘플 하나, 마지막 열 = 정답."
     : img ? `이미지 폴더: ${GUIDE.image.classification} 픽셀 CSV(한 행 = 픽셀 값들 + 마지막 열 정답)도 됩니다. 처음이면 예시 데이터로 시작해 보세요.`
-    : sub.task === "segmentation" ? "지금은 예시 데이터로만 할 수 있습니다."
+    : sub.task === "segmentation" ? `CSV 파일: ${GUIDE.timeseries.segmentation} 처음이면 예시 데이터로 시작해 보세요.`
     : `CSV 파일: ${GUIDE[sub.input][sub.task]} 첫 줄이 열 이름이면 그대로 씁니다. 처음이면 예시 데이터로 시작해 보세요.`;
-  const onlyEx = !!sub && !st.autoTask && sub.task === "segmentation";   // 구간 분할: 내 데이터로 만드는 것은 아직 없음
-  $("mine-title").hidden = $("mine-grid").hidden = onlyEx;
+  $("mine-title").hidden = $("mine-grid").hidden = false;
   const any = !sub || st.autoTask;                           // 과제 없이: 넣는 방법을 다 보임
   $("image-row").hidden = !img && !any;
   $("image-width-box").hidden = !img;
-  const ts = ((sub && sub.input === "timeseries") || any) && !(sub && sub.task === "forecast");   // 샘플마다 CSV 하나인 폴더: 시계열 과제에서만 (예측은 긴 CSV 하나)
+  const ts = ((sub && sub.input === "timeseries") || any) && !(sub && (sub.task === "forecast" || sub.task === "segmentation"));   // 샘플마다 CSV 하나인 폴더: 시계열 과제에서만 (예측은 긴 CSV 하나)
   $("series-row").hidden = !ts;
   if (!ts) $("series-box").hidden = true;
   $("csv-path").placeholder = WEB ? "단추로 CSV 파일 고르기" : img ? "C:\\data\\pixels.csv (픽셀 CSV)" : "C:\\data\\ecg.csv";
@@ -519,6 +519,12 @@ function csvFormat(sub) {                                // CSV 모양 예시 (�
     return `<p>한 행 = 한 시점 (시간 순서대로), 열 = 측정 항목. <b>맞힐 값 열</b>은 불러온 뒤 고릅니다 (처음엔 마지막 숫자 열).</p>` +
       `<table class="tab"><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>` +
       `<p class="muted">시각 같은 글자 열은 있어도 됩니다 (쓰지 않음). 빈 칸은 앞뒤 값으로 메웁니다. 시험은 뒤쪽 ${Math.round((Number($("test-ratio").value) || 0.2) * 100)}% 구간.</p>`;
+  }
+  if (sub && sub.task === "segmentation") {
+    const rows = [["시각", "전류", "압력", "상태"], ["0.00", "0.46", "6.69", "대기"], ["0.01", "0.56", "6.68", "대기"], ["0.02", "1.83", "6.52", "동작"], ["…", "…", "…", "…"]];
+    return `<p>한 행 = 한 시점 (시간 순서대로), <b>마지막 열 = 그 시점의 상태</b>. 값 열이 여럿이면 채널이 됩니다.</p>` +
+      `<table class="tab"><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>` +
+      `<p class="muted">시각 같은 글자 열은 있어도 됩니다 (쓰지 않음). 빈 칸은 앞뒤 값으로 메웁니다.</p>`;
   }
   const kind = sub ? sub.input : "timeseries", reg = sub && sub.task === "regression";
   const ex = {
@@ -637,6 +643,10 @@ function renderRoleBox(s) {                               // ② 역할 표: CSV
   if (!cols) return;
   st.roles = cols.map((c) => c.role);
   $("role-channels").value = s.csv_channels || 1;
+  const seg = s.task === "segmentation";                    // 구간 분할: 값 열이 곧 채널, 대신 창 길이
+  $("role-ch-box").hidden = seg;
+  $("role-len-box").hidden = !seg;
+  if (seg) $("role-length").value = s.length;
   drawRoles();
 }
 function drawRoles() {
@@ -656,7 +666,9 @@ $("role-cols").onclick = (e) => {
 $("btn-role-reload").onclick = () => {
   const pick = (r) => st.roles.map((x, j) => (x === r ? j : -1)).filter((j) => j >= 0);
   if (!pick("target").length) return showMessage("정답 열을 하나 이상 고르세요", "열 이름을 눌러 '정답'으로 바꾸세요");
-  loadData({ roles_reload: { targets: pick("target"), skip: pick("skip"), channels: Number($("role-channels").value) || 1 } });
+  if (st.summary.task === "segmentation" && pick("target").length !== 1) return showMessage("상태 열은 하나만 고르세요", "열 이름을 눌러 '정답'을 하나만 남기세요");
+  loadData({ roles_reload: { targets: pick("target"), skip: pick("skip"), channels: Number($("role-channels").value) || 1,
+    length: st.summary.task === "segmentation" ? Number($("role-length").value) || 0 : 0 } });
 };
 function renderFcBox(s) {                               // 예측 데이터: 맞힐 열·입력·예측 길이·간격을 바꿔 다시 만들기
   const fc = s.forecast;
@@ -952,9 +964,12 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
       if (bi >= 0) s += `<line x1="${xs(bi)}" y1="${T}" x2="${xs(bi)}" y2="${T + ph}" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="3 3"/>`;
     }
     s += `<polyline fill="none" stroke="#f97316" stroke-width="2" points="${lp.join(" ")}"/>` +
-      `<polyline fill="none" stroke="#4f46e5" stroke-width="2" points="${mp.join(" ")}"/>` +
-      `<text x="${L}" y="${H - 8}" font-size="11" fill="#6b7280">epoch 1</text>` +
-      `<text x="${L + pw}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
+      `<polyline fill="none" stroke="#4f46e5" stroke-width="2" points="${mp.join(" ")}"/>`;
+    if (n < 3) s += lp.map((p) => `<circle cx="${p.split(",")[0]}" cy="${p.split(",")[1]}" r="3.5" fill="#f97316"/>`).join("") +   // 점이 적으면 선이 안 보임
+      mp.map((p) => `<circle cx="${p.split(",")[0]}" cy="${p.split(",")[1]}" r="3.5" fill="#4f46e5"/>`).join("");
+    s += n === 1 ? `<text x="${L + pw / 2}" y="${H - 8}" font-size="11" text-anchor="middle" fill="#6b7280">epoch 1</text>`
+      : `<text x="${L}" y="${H - 8}" font-size="11" fill="#6b7280">epoch 1</text>` +
+        `<text x="${L + pw}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
   }
   s += `<line x1="${L}" y1="12" x2="${L + 18}" y2="12" stroke="#4f46e5" stroke-width="2"/>` +
     `<text x="${L + 24}" y="16" font-size="12" fill="#4f46e5">시험 ${map ? "mAP@0.5 (왼쪽 축, 높을수록 좋음)" : auc ? "AUC (왼쪽 축, 1에 가까울수록 좋음)" : recon ? "복원 오차 (왼쪽 축, 낮을수록 좋음)" : acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : metricName === "mean" ? "평균 (왼쪽 축, 1에 가까울수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
@@ -1399,16 +1414,53 @@ function renderRuns() {
     return isNaN(d) ? "" : d.toLocaleString("ko-KR", today ? { hour: "2-digit", minute: "2-digit" } : { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
   const f = (r, v) => metricText(r.results.metric_name, v);
-  $("runs").innerHTML = `<table class="tab runs"><tr><th>#</th><th>언제</th><th>모델</th><th>Epochs</th><th>Learning rate</th><th>시험</th><th>학습</th><th></th></tr>` +
+  st.cmp = (st.cmp || []).filter((n) => runs.some((r) => r.n === n));
+  $("runs").innerHTML = `<table class="tab runs"><tr><th title="둘을 고르면 비교">비교</th><th>#</th><th>언제</th><th>모델</th><th>Epochs</th><th>Learning rate</th><th>시험</th><th>학습</th><th></th></tr>` +
     runs.slice().reverse().map((r) => `<tr class="${r.current ? "cur" : ""}${r.data_ok ? "" : " other"}">` +
-      `<td>${r.n}</td><td>${esc(when(r.time))}</td><td>${esc(modelName(r.graph))}</td>` +
+      `<td><input type="checkbox" data-cmp="${r.n}"${st.cmp.includes(r.n) ? " checked" : ""} aria-label="${r.n}번 비교"></td><td>${r.n}</td><td>${esc(when(r.time))}</td><td>${esc(modelName(r.graph))}</td>` +
       `<td>${r.results.epochs_done ?? "-"}</td><td>${r.settings.lr ?? "-"}</td>` +
       `<td><b>${f(r, r.results.test_metric)}</b>${best && best.n === r.n && ok.length > 1 ? ' <span class="best" title="시험 성적이 가장 좋음">★ 최고</span>' : ""}</td>` +
       `<td>${f(r, r.results.train_metric)}</td><td class="acts-cell">` +
       (r.current ? `<span class="badge rec">지금 모델</span>` : !r.data_ok ? `<span class="muted">다른 데이터</span>`
         : r.weights ? `<button data-run="${r.n}">이 모델로</button>` : "") +
       ` <button class="x-small" data-run-del="${r.n}" title="이 기록 지우기">×</button></td></tr>`).join("") + `</table>`;
+  renderCompare();
 }
+function lossText(s) {                                      // 학습 설정의 손실 → '교차 엔트로피 ×1 + 가중치 L2 ×0.0001' (없으면 기본)
+  const L = lossInfo();
+  if (!s || !s.loss || !L) return "기본";
+  return s.loss.map((t) => `${t.head ? t.head + " · " : ""}${L.names[t.term] || t.term}${t.node ? ` (${t.node})` : ""} ×${t.w ?? 1}`).join(" + ");
+}
+function blockList(g) {                                     // 모델의 블록 이름들 (그래프 순서, 입력 빼고)
+  return ((g && g.nodes) || []).filter((n) => n.type !== "input").map((n) => blockName(n));
+}
+function renderCompare() {                                  // 학습 기록 둘을 고르면: 다른 칸만 진하게
+  const pick = (st.cmp || []).map((n) => st.runs.find((r) => r.n === n)).filter(Boolean);
+  $("runs-compare").hidden = pick.length !== 2;
+  if (pick.length !== 2) return;
+  const [a, b] = pick.sort((x, y) => x.n - y.n), f = (r, v) => metricText(r.results.metric_name, v);
+  const ba = blockList(a.graph), bb = blockList(b.graph);
+  const only = (x, y) => x.filter((n) => !y.includes(n));
+  const rows = [
+    ["모델", modelName(a.graph), modelName(b.graph)],
+    ["블록", only(ba, bb).map(esc).join(", ") || "같음", only(bb, ba).map(esc).join(", ") || "같음", true],
+    ["Epochs", a.results.epochs_done ?? "-", b.results.epochs_done ?? "-"],
+    ["Learning rate", a.settings.lr ?? "-", b.settings.lr ?? "-"],
+    ["Batch size", a.settings.batch_size ?? "-", b.settings.batch_size ?? "-"],
+    ["가장 좋은 epoch 남기기", a.settings.keep_best ? "예" : "아니오", b.settings.keep_best ? "예" : "아니오"],
+    ["손실", esc(lossText(a.settings)), esc(lossText(b.settings))],
+    ["시험", f(a, a.results.test_metric), f(b, b.results.test_metric)],
+    ["학습", f(a, a.results.train_metric), f(b, b.results.train_metric)],
+  ];
+  $("runs-compare").innerHTML = `<table class="tab cmp"><tr><th></th><th>${a.n}번</th><th>${b.n}번</th></tr>` +
+    rows.map(([k, x, y, raw]) => `<tr class="${String(x) !== String(y) ? "diff" : ""}"><th>${k}</th><td>${raw ? x : esc(x)}</td><td>${raw ? y : esc(y)}</td></tr>`).join("") + `</table>`;
+}
+$("runs").addEventListener("change", (e) => {
+  const n = Number(e.target.dataset.cmp);
+  if (!n) return;
+  st.cmp = (st.cmp || []).filter((x) => x !== n).concat(e.target.checked ? [n] : []).slice(-2);   // 둘까지 (셋째를 고르면 처음 것이 빠짐)
+  renderRuns();
+});
 $("runs").onclick = async (e) => {
   const b = e.target.closest("[data-run], [data-run-del]");
   if (!b) return;
@@ -1732,6 +1784,10 @@ async function showSample() {
       ? `<table class="tab"><tr>${st.summary.features.map((f) => `<th>${esc(f)}</th>`).join("")}</tr>` +
         `<tr>${a.input.map((v) => `<td>${num(v)}</td>`).join("")}</tr></table>` : svgChannels(a.input, st.summary.channels, 600, 60);
     let html = `<div class="fs"><div class="name">입력</div>${inPic}</div>`;
+    if (a.saliency && a.saliency.length) {                  // 어디를 봤나: 입력의 어느 값이 예측을 크게 바꾸는가 (빨갈수록)
+      const L = st.summary.length, C = st.summary.channels || 1;
+      html += `<div class="fs sal"><div class="name">어디를 봤나</div>${attnOverlay(a.saliency, im || C < 2 ? a.input : a.input.slice(0, L))}</div>`;
+    }
     for (const [id, b, depth] of orderItems(a.order, graph)) {
       const v = a.values[id];
       if (!v || b.type === "input") continue;

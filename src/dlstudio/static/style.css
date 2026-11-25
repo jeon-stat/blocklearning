@@ -818,3 +818,6 @@ td.seg-cell { text-align: left; }
 .role-box .role.r-target { background: var(--accent-bg); border-color: var(--accent); }
 .role-box .role.r-skip { opacity: .5; text-decoration: line-through; }
 .role-box .row { margin-top: 8px; }
+.runs-compare { margin-top: 10px; }
+.tab.cmp th { text-align: left; color: var(--muted); font-weight: 500; }
+.tab.cmp tr.diff td { font-weight: 700; background: var(--accent-bg); }

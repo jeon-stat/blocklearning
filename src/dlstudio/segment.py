@@ -9,6 +9,8 @@ from __future__ import annotations
 import io
 import csv
 
+from pathlib import Path
+
 import numpy as np
 
 MIN_TRAIN = 10          # 학습 창이 이보다 적으면 안 됨
@@ -125,3 +127,47 @@ def table(d, names: list, out: np.ndarray, truth=None) -> dict:
     acc = None if t is None else float((p == t).mean())
     summary = {"n": len(names), "task": "segmentation", "accuracy": acc, "classes": list(d.classes)}
     return {"summary": summary, "rows": rows, "shown": len(rows), "csv": "﻿" + buf.getvalue(), "has_label": t is not None}
+
+
+def load_segment_csv(path: str, state_col=None, skip=None, length=None, normalize: bool = True, test_ratio: float = 0.2,
+                     seed: int = 0):
+    """긴 시계열 CSV (한 행 = 한 시점, 시간 순서) → 구간 분할 Dataset. state_col: 상태 열 번호 (없으면 마지막 열),
+    값 열 = 나머지 숫자 열 (글자뿐인 열·skip은 안 씀, 여러 개면 채널). length: 창 길이 (없으면 시점 수에 맞춰), 겹치지 않게 자름."""
+    from dlstudio.data import DataError, Issue, _column_values, _numeric_columns, _num, _read_table
+    name = Path(path).name
+    names, rows = _read_table(path)
+    if not rows or len(names) < 2:
+        raise DataError([Issue(None, None, "열이 2개 이상 있어야 함 (값 열 + 상태 열)", "한 행 = 한 시점, 마지막 열 = 그 시점의 상태")])
+    sc = len(names) - 1 if state_col is None else int(state_col)
+    if not 0 <= sc < len(names):
+        raise DataError([Issue(None, None, f"상태 열 번호 {sc + 1}이(가) 없음", "역할 표에서 상태 열을 다시 고르세요")])
+    skips = {int(j) for j in skip or []}
+    numeric = set(_numeric_columns(names, rows))
+    cols = [j for j in range(len(names)) if j != sc and j not in skips and names[j] in numeric]
+    if not cols:
+        raise DataError([Issue(None, None, "값(숫자) 열이 없음", "측정값이 숫자로 든 열이 있어야 합니다")])
+    V = np.stack([_column_values(name, names, rows, names[j]) for j in cols])
+    states = [(r[sc] if sc < len(r) else "").strip() for _, r in rows]
+    bad = next((i for i, v in enumerate(states) if not v), None)
+    if bad is not None:
+        raise DataError([Issue(rows[bad][0], sc + 1, f"{rows[bad][0]}행의 상태 칸이 비어 있음", "상태를 채우거나 그 행을 지우세요")])
+    uniq = sorted(set(states), key=lambda v: (_num(v) is None, _num(v) if _num(v) is not None else 0, v))
+    if len(uniq) < 2:
+        raise DataError([Issue(None, None, "상태가 한 가지뿐임", "구간 분할에는 상태가 두 가지 이상 있어야 합니다")])
+    if len(uniq) > 50:
+        raise DataError([Issue(None, None, f"상태가 {len(uniq)}가지 (50가지 넘음)", "상태 열이 맞는지 확인하세요 (숫자 측정값 열이 아니어야 함)")])
+    idx = {v: k for k, v in enumerate(uniq)}
+    y = np.asarray([idx[v] for v in states], dtype=np.int64)
+    T = len(y)
+    L = int(length) if length else int(min(512, max(32, (T // 20) // 8 * 8)))
+    n = T // L
+    if L < 8 or n < MIN_TRAIN + 2:
+        raise DataError([Issue(None, None, f"시점 {T:,}개를 길이 {L} 창으로 자르면 {n}개 (최소 {MIN_TRAIN + 2}개)",
+                               "창 길이를 줄이거나 더 긴 기록을 넣으세요")])
+    X = np.stack([np.concatenate([V[c, i * L:(i + 1) * L] for c in range(len(cols))]) for i in range(n)])
+    Y = np.stack([y[i * L:(i + 1) * L] for i in range(n)])
+    used = set(cols) | {sc}
+    src = {"path": str(path), "task": "segmentation", "label_col": sc, "targets": [sc],
+           "skip": [j for j in range(len(names)) if j not in used], "length": L, "columns": list(names),
+           "channel_names": [names[j] for j in cols], "seed": seed}
+    return make_segment_dataset(X, Y, uniq, test_ratio=test_ratio, seed=seed, normalize=normalize, source=src, channels=len(cols))

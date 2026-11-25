@@ -102,7 +102,7 @@
       <summary>더 보기</summary>
       <div class="grid4">
         <label>정답 열 번호 <input id="label-col" type="number" min="1" placeholder="마지막 열"></label>
-        <label>과제 <select id="task"><option value="auto">자동</option><option value="classification">분류</option><option value="regression">회귀</option><option value="forecast" hidden>시계열 예측</option><option value="anomaly" hidden>이상 탐지</option></select></label>
+        <label>과제 <select id="task"><option value="auto">자동</option><option value="classification">분류</option><option value="regression">회귀</option><option value="forecast" hidden>시계열 예측</option><option value="anomaly" hidden>이상 탐지</option><option value="segmentation" hidden>구간 분할</option><option value="multi" hidden>여러 정답</option></select></label>
         <label id="image-width-box" hidden>이미지 너비 (픽셀 CSV, 비우면 정사각형) <input id="image-width" type="number" min="1"></label>
         <label>시험 비율 <input id="test-ratio" type="number" min="0.05" max="0.5" step="0.05" value="0.2"></label>
         <label class="check"><input id="normalize" type="checkbox" checked> <span id="normalize-text">정규화 (시점별 평균 0, 표준편차 1)</span></label>
@@ -116,7 +116,8 @@
       <p class="muted split-note">학습 샘플로 모델을 가르치고, 학습에 쓰지 않고 남겨 둔 <b>시험 샘플</b>로 처음 보는 데이터도 맞히는지 잽니다. 나누는 비율은 위 [더 보기]의 시험 비율.</p>
       <div class="box role-box" id="role-box" hidden>
         <div class="role-cols" id="role-cols"></div>
-        <div class="row"><label>채널 수 <input id="role-channels" type="number" min="1" max="64" value="1"></label>
+        <div class="row"><label id="role-ch-box">채널 수 <input id="role-channels" type="number" min="1" max="64" value="1"></label>
+          <label id="role-len-box" hidden>창 길이 <input id="role-length" type="number" min="8" max="4096"></label>
           <button id="btn-role-reload">이 역할로 다시 읽기</button><span class="muted" id="role-note"></span></div>
       </div>
       <div class="box fc-box" id="fc-box" hidden>
@@ -236,6 +237,7 @@
     <div class="box" id="runs-box" hidden>
       <h3>학습 기록 <span class="muted">— 학습할 때마다 자동으로 남습니다 (최근 20번). [이 모델로]를 누르면 그때 모델로 돌아갑니다</span></h3>
       <div id="runs" class="table-wrap"></div>
+      <div id="runs-compare" class="table-wrap runs-compare" hidden></div>
     </div>
     <div class="box" id="sample-box" hidden>
       <h3>샘플 하나 따라가 보기</h3>

@@ -186,7 +186,9 @@ function activations(body) {
     return `${h.name} ${h.classes[b]}`;
   }).join(" · ");
   else pred = out[0];
-  return { index: i, label: s.label, prediction: pred, input: s.input, values, attention, order: s.order };
+  let sal = null;
+  try { sal = E().saliency(net, Float32Array.from(s.x), d); } catch (e) { sal = null; }   // 기울기를 못 내는 블록이면 보이지 않음
+  return { index: i, label: s.label, prediction: pred, input: s.input, values, attention, order: s.order, saliency: sal };
 }
 
 // ------------------------------------------------------------ 코드·가중치·프로젝트 (내려받기)

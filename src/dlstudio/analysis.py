@@ -93,3 +93,41 @@ def attention(model, x) -> dict:
         for h in hooks:
             h.remove()
     return {k: attn_view(v) for k, v in got.items()}
+
+
+def _score(out, x, d):
+    """예측을 나타내는 수 하나 (그 기울기가 '어디를 봤나'): 분류는 고른 클래스 점수, 구간 분할은 시점마다 고른 상태 점수의 합,
+    정답 여러 개는 머리마다 (고른 클래스 점수·값)의 합, 탐지는 칸마다 '있음' 점수의 합, 오토인코더는 복원 오차, 나머지는 출력의 합.
+    웹 엔진(engine.js saliency)과 같은 식."""
+    if d.task == "classification":
+        return out.max()
+    if d.task == "segmentation":
+        return out.reshape(d.n_out.n_cls, -1).max(0).values.sum()
+    if d.task == "multi":
+        return sum(out[h["start"]:h["start"] + h["size"]].max() if h["kind"] == "class" else out[h["start"]] for h in d.n_out.heads)
+    if d.task == "detection":
+        return out.reshape(d.n_out.per_cell, -1)[0].sum()
+    if d.task == "anomaly" and out.numel() == x.numel():
+        return ((out - x.reshape(-1)) ** 2).sum()
+    return out.sum()
+
+
+def saliency(model, x, d) -> list:
+    """샘플 하나(모델 입력 모양)에서 입력 값마다 |∂ 예측 / ∂ 입력|, 가장 큰 것이 1. 데이터 순서로 펼치고,
+    여러 채널 시계열은 시점마다 채널을 더함 (길이 L)."""
+    import torch
+    model.eval()
+    dtype = next(model.parameters()).dtype
+    xt = torch.as_tensor(np.asarray(x)[None], dtype=dtype).requires_grad_(True)
+    out = model(xt)[0].reshape(-1)
+    xd = xt[0].transpose(0, 1) if getattr(model, "kind", "") == "rnn" else xt[0]      # 순환 모델 입력 (L, C) → 데이터 순서 (C, L)
+    _score(out, xd, d).backward()
+    g = xt.grad[0]
+    if getattr(model, "kind", "") == "rnn":
+        g = g.transpose(0, 1)
+    g = g.abs().double().cpu().numpy()
+    if not d.image and g.ndim == 2 and g.shape[0] > 1:          # 여러 채널: 시점마다 더함
+        g = g.sum(0)
+    g = g.reshape(-1)
+    hi = float(g.max()) or 1.0
+    return np.round(g / hi, 4).tolist()
