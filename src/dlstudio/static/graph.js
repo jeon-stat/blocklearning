@@ -588,6 +588,7 @@ function label(b, summary) {
     case "repeat": return `Repeat × ${b.times}`;
     case "prelu": return "PReLU";
     case "output":
+      if (b.head === "distance") return "Output · 정상과의 거리";
       if (!summary) return "Output";
       if (summary.task !== "classification") return "Output · regression";
       {

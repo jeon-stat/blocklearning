@@ -46,7 +46,7 @@ def _fixture(case, seed=1):
     exp = {"y": y, "trace": tr, "params": sum(p.numel() for p in net.parameters() if p.requires_grad), "attn": attention(net, x[0].numpy())}
     from dlstudio.nn_extra import RANDOM_MODULES
     has_dropout = any(isinstance(m, (torch.nn.modules.dropout._DropoutNd,) + RANDOM_MODULES) for m in net.modules())
-    if not has_dropout:                                     # 학습 모드: 묶음 통계 BatchNorm, 교차 엔트로피 기울기
+    if not has_dropout and any(p.requires_grad for p in net.parameters()):   # 학습 모드: 묶음 통계 BatchNorm, 교차 엔트로피 기울기
         labels = [i % n_out for i in range(len(x))]
         net.train()
         net.zero_grad()
@@ -98,13 +98,13 @@ def test_engine_matches_torch(results, name):
             assert np.allclose(g["running"][k], v, atol=1e-5, rtol=1e-4), (name, k)
 
 
-def _train_js(tmp_path, graph, d, settings):
+def _train_js(tmp_path, graph, d, settings, distance=None):
     plan = codegen.plan_dict(graph, d.length, d.n_out, d.image)
     data = {"X_train": d.X_train.ravel().tolist(), "X_test": d.X_test.ravel().tolist(), "y_train": np.ravel(d.y_train).tolist(),
             "y_test": np.ravel(d.y_test).tolist(), "n_train": len(d.y_train), "n_test": len(d.y_test), "task": d.task, "n_out": d.n_out,
             "length": d.length, "image": list(d.image) if d.image else None}
     f = tmp_path / "train.json"
-    f.write_text(json.dumps({"plan": plan, "data": data, "settings": settings}), encoding="utf-8")
+    f.write_text(json.dumps({"plan": plan, "data": data, "settings": settings, "distance": distance}), encoding="utf-8")
     r = subprocess.run(["node", str(JS / "run_train.js"), str(f)], capture_output=True, text=True, encoding="utf-8", timeout=600)
     assert r.returncode == 0, r.stderr[-3000:]
     return json.loads(r.stdout)

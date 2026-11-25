@@ -15,7 +15,11 @@ for (const f of fs.readdirSync(PRE).filter((n) => n.endsWith(".bin"))) {
     y_train: Float32Array.from(f.data.y_train), y_test: Float32Array.from(f.data.y_test),
   });
   const progress = [];
-  const { net, result, out, outTr } = await E.train(f.plan, d, f.settings, (p) => { progress.push(p); return false; });
+  let got = null;
+  const onEpoch = (p) => { progress.push(p); return false; };
+  const { net, result, out, outTr } = f.distance                    // 이상 탐지 '정상과의 거리': 넣을 값은 시험이 줌 (웹은 Python이 계산)
+    ? await E.fitDistance(f.plan, d, async (F, n, c) => { got = { n, c, sum: F.reduce((a, b) => a + b, 0) }; return f.distance; }, onEpoch)
+    : await E.train(f.plan, d, f.settings, onEpoch);
   const state = net.state();
-  process.stdout.write(JSON.stringify({ result, progress, out: out && Array.from(out), outTr: outTr && Array.from(outTr), state: Object.fromEntries(Object.entries(state).map(([k, v]) => [k, { shape: v.shape, data: Array.from(v.data) }])) }));
+  process.stdout.write(JSON.stringify({ result, progress, got, out: out && Array.from(out), outTr: outTr && Array.from(outTr), state: Object.fromEntries(Object.entries(state).map(([k, v]) => [k, { shape: v.shape, data: Array.from(v.data) }])) }));
 })().catch((e) => { console.error(e); process.exit(1); });

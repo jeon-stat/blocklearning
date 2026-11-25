@@ -612,4 +612,22 @@ class MobileNetV3Small(nn.Module):
         return self.features(self.prep(x))
 
 
+class NormalDistance(nn.Module):
+    """이상 탐지 출력 '정상과의 거리': 정상 샘플의 특징 분포(평균·주성분 k개)에서 떨어진 정도를 점수 하나로 냄
+    (Mahalanobis 거리를 주성분 k개로 줄인 것). 값은 학습 때 정상 샘플에서 한 번 계산해 넣음 (경사 학습 없음)."""
+
+    def __init__(self, c, k=128):
+        super().__init__()
+        self.register_buffer("mean", torch.zeros(c))
+        self.register_buffer("basis", torch.zeros(k, c))
+        self.register_buffer("inv_var", torch.zeros(k))
+        self.register_buffer("inv_rest", torch.zeros(1))
+
+    def forward(self, f):
+        d = f - self.mean
+        p = d @ self.basis.T
+        s = (p * p * self.inv_var).sum(1) + ((d * d).sum(1) - (p * p).sum(1)) * self.inv_rest
+        return (s / d.shape[1]).unsqueeze(1)
+
+
 RANDOM_MODULES = (DropPath, GaussianNoise, RandomFlip, RandomRotation, RandomShift, RandomZoom, RandomScale, RandomStretch)

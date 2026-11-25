@@ -26,6 +26,7 @@ function initParam(step, name, shape, kind, rand, init) {
     return src && src.length === n ? tf.tensor(src, shape) : tf.zeros(shape);
   }
   if (kind === "count") return tf.scalar(0, "int32");
+  if (kind === "buffer" && step.type === "output") return tf.zeros(shape);   // 정상과의 거리: 학습 때 정상 샘플에서 채움
   if (init === "ones") return tf.ones(shape);
   if (init === "zeros") return tf.zeros(shape);
   if (init === "const0.25") return tf.fill(shape, 0.25);
@@ -234,6 +235,7 @@ function layer(st, ins, P, training, pending) {
     case "dropout": return training && (c.rate || 0.5) > 0 ? tf.dropout(x, c.rate ?? 0.5) : x;
     case "flatten": return x.reshape([x.shape[0], -1]);
     case "output":
+      if (c.head === "distance") return normalDistance(x, P, k);
       if (c.head === "grid") {                                // 탐지: 격자 칸마다 1×1 필터 → (값, G, G)를 펼침 (PyTorch와 같은 순서)
         const y = conv2d(x, P[k + ".0.weight"], P[k + ".0.bias"], { kernel: 1 });
         return y.reshape([y.shape[0], -1]);
@@ -256,6 +258,13 @@ function layer(st, ins, P, training, pending) {
       return f(x, st, P, k, training, ins);
     }
   }
+}
+
+// 이상 탐지 출력 '정상과의 거리' (nn_extra.NormalDistance와 같은 식): 주성분 방향 거리²/분산 + 나머지 거리²/나머지 분산, ÷ 특징 수
+function normalDistance(f, P, k) {
+  const d = f.sub(P[k + ".mean"]), p2 = tf.matMul(d, P[k + ".basis"], false, true).square();
+  const s = p2.mul(P[k + ".inv_var"]).sum(1).add(d.square().sum(1).sub(p2.sum(1)).mul(P[k + ".inv_rest"]));
+  return s.div(d.shape[1]).expandDims(1);
 }
 
 // ------------------------------------------------------------ 추가 블록 (nn_extra.py와 같은 식). x는 채널이 먼저: (N, C, L) · (N, C, H, W)
@@ -674,6 +683,16 @@ class Net {
     return flat;
   }
 
+  forwardTo(x, name) {                                // 이름이 name인 층까지만 계산 (그 층의 출력)
+    const vals = { x: this.kind === "rnn" ? tf.transpose(x, [0, 2, 1]) : x };
+    for (const st of this.plan.steps) {
+      if (st.name in vals) continue;
+      vals[st.name] = layer(st, st.inputs.map((n) => vals[n]), this.P, false, []);
+      if (st.name === name) return vals[name];
+    }
+    return vals[name];
+  }
+
   trace(x1, attn = null) {                            // 샘플 하나 → 노드 id마다 값 (배치 차원 뺀 중첩 배열). attn이 있으면 어텐션 지도도
     return tf.tidy(() => {
       const rec = {};
@@ -727,6 +746,41 @@ async function headFeatures(net, X, batch = MNV3S_B) {        // 고정 층의 �
   return out;
 }
 
+// 이상 탐지 출력 '정상과의 거리': 경사 학습 없이 학습 몫(정상)의 특징 분포를 한 번 계산해 넣음 (jobs._fit_distance와 같음).
+// fit(특징 Float32Array, n, 특징 수) → {mean, basis, inv_var, inv_rest} (Python anomaly.fit_distance가 계산)
+async function featuresAt(net, X, name, batch = 64) {
+  const N = X.shape[0], parts = [];
+  for (let i = 0; i < N; i += batch) {
+    const y = tf.tidy(() => net.forwardTo(X.slice(i, Math.min(batch, N - i)), name));
+    await y.data();
+    parts.push(y);
+    await yieldNow();
+  }
+  const out = tf.concat(parts);
+  parts.forEach((t) => t.dispose());
+  return out;
+}
+async function fitDistance(plan, d, fit, onEpoch) {
+  const net = new Net(plan, 0);
+  const head = plan.steps.find((st) => st.name === plan.out), src = head.inputs[0];
+  const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image), Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image);
+  let Ftr = null, Fte = null;
+  try {
+    Ftr = await featuresAt(net, Xtr, src);
+    Fte = await featuresAt(net, Xte, src);
+    const p = await fit(await Ftr.data(), d.n_train, Ftr.shape[1]);
+    for (const [k, v] of Object.entries(p)) { const t = net.P[`${head.key}.${k}`]; t.assign(tf.tensor(v, t.shape)); }
+    net.start = src;
+    const out = net.predict(Fte), outTr = net.predict(Ftr);
+    net.start = null;
+    const y = Array.from(d.y_test), m = aeMetric(out, d.X_test, y);
+    if (onEpoch) onEpoch({ epoch: 1, loss: 0, test_metric: m });
+    return { net, out, outTr, result: { epochs_done: 1, test_metric: m, metric_name: aeHasBoth(y) ? "auc" : "recon", warnings: [],
+      confusion: null, recall: null } };
+  } catch (e) { net.dispose(); throw e; }
+  finally { net.start = null; [Xtr, Xte, Ftr, Fte].forEach((t) => t && t.dispose()); }
+}
+
 // ------------------------------------------------------------ 데이터 모양: (n, 특징) → 모델 입력
 function toInput(X, n, kind, length, image) {         // X: Float32Array (n × 특징)
   if (kind === "image") return tf.tensor4d(X, [n, 1, image[0], image[1]]);
@@ -756,6 +810,7 @@ function fcMetric(out, y) {
 }
 // 이상 탐지 (anomaly.py와 같음): 점수 = (입력 − 복원)²의 평균, AUC (같은 점수는 평균 순위), 정상만 있으면 평균 점수
 function aeScores(out, X, n) {
+  if (out.length === n && X.length > n) return Float64Array.from(out);   // 출력 '정상과의 거리': 모델이 점수를 바로 냄
   const m = X.length / n, s = new Float64Array(n);
   for (let i = 0; i < n; i++) { let t = 0; for (let j = 0; j < m; j++) t += (out[i * m + j] - X[i * m + j]) ** 2; s[i] = t / m; }
   return s;
@@ -1046,7 +1101,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
+const API = { Net, train, fitDistance, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;

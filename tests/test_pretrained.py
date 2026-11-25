@@ -119,3 +119,34 @@ def test_web_engine_trains_transfer_model(tmp_path):
     with torch.no_grad():
         out = net(torch.as_tensor(d.X_test.reshape(-1, 1, *d.image), dtype=torch.float32)).numpy()
     assert float(np.mean(out.argmax(1) == d.y_test)) == pytest.approx(r["result"]["test_metric"], abs=1e-9)
+
+
+def test_image_anomaly_distance_head_torch_and_web_engine(tmp_path):
+    """이미지 이상 탐지 '정상과의 거리': 경사 학습 없이 정상 특징 분포를 넣음 → AUC, 웹 엔진도 같은 점수."""
+    from tests.test_engine import _train_js, pytestmark as engine_mark
+    from dlstudio.graph import check_graph
+    d = load_example("steelblast_ae")
+    d.X_train, d.y_train = d.X_train[:96], d.y_train[:96]
+    pick = np.r_[np.flatnonzero(d.y_test == 0)[:32], np.flatnonzero(d.y_test == 1)[:32]]   # 정상 32 · 이상 32
+    d.X_test, d.y_test = d.X_test[pick], d.y_test[pick]
+    g = from_blocks(T["ae_img_dist"]["blocks"])
+    assert check_graph(g, d.length, d.n_out, image=d.image).ok
+    bad = from_blocks([{"type": "mnv3s"}, {"type": "dense", "units": 8}, {"type": "output", "head": "distance"}])
+    assert not check_graph(bad, d.length, d.n_out, image=d.image).ok          # 학습하는 층 뒤에는 못 둠
+    job = Job("t")
+    r = train_job(job, g, d, TrainSettings(epochs=30))
+    assert r["epochs_done"] == 1 and len(job.progress) == 1 and r["mode"] == "distance" and r["auc"] > 0.8
+    assert all(p["recon"] is None for p in r["ae_samples"])
+    m = r["model"]
+    head, _ = m.distance_head()
+    x = torch.as_tensor(d.X_test.reshape(-1, 1, *d.image), dtype=torch.float32)
+    with torch.no_grad():
+        want = m(x).numpy()[:, 0]
+    assert np.allclose(want, r["scores"], atol=1e-4)
+    if engine_mark.mark.args[0]:
+        return
+    params = {k: getattr(head, k).numpy().ravel().tolist() for k in ("mean", "basis", "inv_var", "inv_rest")}
+    w = _train_js(tmp_path, g, d, {}, distance=params)
+    assert w["got"]["n"] == len(d.X_train) and w["got"]["c"] == 1024
+    assert np.allclose(np.asarray(w["out"]), want, rtol=2e-3, atol=2e-3)
+    assert w["result"]["test_metric"] == pytest.approx(r["auc"], abs=0.02)

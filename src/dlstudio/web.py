@@ -380,3 +380,11 @@ def record_open(studio: Studio, project_path: str, data_path: str = "") -> dict:
     elif studio.data is None:
         raise UserError("이 프로젝트의 데이터를 먼저 불러오세요", "② 데이터에서 같은 데이터를 고른 뒤 다시 여세요")
     return dict(_opened(studio, pr), name=pr.get("name", ""))
+
+
+def fit_distance(studio: Studio, feats, n: int, c: int, k: int) -> dict:
+    """이상 탐지 '정상과의 거리': 엔진이 뽑은 정상 특징(float32 바이트, n × c) → 넣을 값 {이름: float32 바이트}."""
+    from dlstudio.anomaly import fit_distance as fit
+    raw = feats.to_bytes() if hasattr(feats, "to_bytes") else bytes(feats)
+    F = np.frombuffer(raw, dtype=np.float32).reshape(int(n), int(c))
+    return {name: np.ascontiguousarray(v, dtype=np.float32).tobytes() for name, v in fit(F, int(k)).items()}

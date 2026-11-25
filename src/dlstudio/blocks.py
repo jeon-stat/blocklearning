@@ -150,6 +150,8 @@ class _Walker:
                 self.issue(path, "출력 블록은 맨 아래에 하나만", "출력 블록을 맨 아래로 옮기세요")
             if getattr(self.n_out, "grid", None):
                 return self.det_head(shape, path)
+            if b.get("head") == "distance":
+                return self.dist_head(shape, path)
             return self.dense_like(shape, self.n_out, path)
         if shape is None:
             return None
@@ -311,6 +313,16 @@ class _Walker:
                        "GlobalAvgPool2D·Flatten·Dense는 위치를 잃어 탐지에 쓸 수 없습니다")
             return None
         return (int(self.n_out),)
+
+    def dist_head(self, shape, path):
+        """이상 탐지 출력 '정상과의 거리': 바로 앞이 숫자 묶음(특징)이어야 함 → 점수 하나."""
+        if shape is None:
+            return None
+        if len(shape) != 1:
+            self.issue(path, f"'정상과의 거리' 출력 바로 앞은 숫자 묶음(특징)이어야 함 (지금 {tuple(shape)})",
+                       "사전학습 블록(MobileNetV3-Small) 바로 뒤에 두세요")
+            return None
+        return (1,)
 
     def dense_like(self, shape, units, path):
         if shape is None:
@@ -496,6 +508,9 @@ def make_layer(b: dict, shape, n_out: int):
         return nn.BatchNorm2d(shape[0]) if len(shape) == 3 else nn.BatchNorm1d(shape[0])
     if t == "act":
         return act_module(b["kind"])
+    if t == "output" and b.get("head") == "distance":             # 이상 탐지: 정상과의 거리 (점수 하나)
+        from dlstudio.nn_extra import NormalDistance
+        return NormalDistance(_prod(shape), X.dist_k(_prod(shape)))
     if t == "output" and getattr(n_out, "grid", None):           # 탐지: 격자 칸마다 1×1 필터 → (값 수, G, G)를 펼침
         return nn.Sequential(nn.Conv2d(shape[0], n_out.per_cell, 1), Flatten())
     if t in ("dense", "output"):

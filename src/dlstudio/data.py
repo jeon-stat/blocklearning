@@ -824,7 +824,8 @@ EXAMPLES = {
     "digits": ("digits32", lambda z: (_float(z["X"]), z["y"].astype(np.int64)), [str(i) for i in range(10)], None, (32, 32)),
 }
 FC_EXAMPLES = {"steel_power": ("steel_power", "전력 사용량 (kWh)", 96, 24, 1)}   # 종류 → (파일, 열 이름, 입력·예측 길이, 간격)
-AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic"}         # 이상 탐지: 분류 예시를 정상만 학습으로
+AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic", "steelblast_ae": "steelblast",
+               "pneumonia_ae": "pneumonia"}         # 이상 탐지: 분류 예시를 정상만 학습으로
 DET_EXAMPLES = {"pcb_det": ("pcb_det", 64)}                                    # 탐지: 종류 → (파일, 그림 크기)
 ALIASES = {"vibration": "bearing", "process_cls": "steel_plates", "process_reg": "concrete", "wear_rul": "hydraulic_valve",
            "surface": "steelblast", "parts_det": "pcb_det", "factory_power": "steel_power", "vibration_ae": "bearing_ae",

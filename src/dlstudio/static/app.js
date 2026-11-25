@@ -999,6 +999,11 @@ function aeCounts(r, th) {
   return { tp, fp, fn, tn };
 }
 function aeVerdict(r) {
+  const dist = r.mode === "distance";
+  if (r.metric_name === "recon" && dist) return ["warn", "시험 데이터에 이상 샘플이 없어 얼마나 잘 찾는지는 잴 수 없습니다.",
+    "이상 샘플(결함 등)이 조금이라도 있으면 함께 넣어 보세요. 정답 열에 정상이 아닌 이름이 있으면 이상으로 봅니다."];
+  if (dist && r.auc < 0.9) return [r.auc < 0.6 ? "bad" : "warn", `AUC ${r.auc.toFixed(2)} — 이상과 정상의 점수가 ${r.auc < 0.6 ? "거의 " : ""}섞여 있습니다.`,
+    "사전학습 블록의 입력 크기를 바꿔 보거나(예: 224), 정상 그림을 더 모아 보세요. 아래 분포에서 기준값도 조정해 보세요."];
   if (r.metric_name === "recon") return ["warn", "시험 데이터에 이상 샘플이 없어 얼마나 잘 찾는지는 잴 수 없습니다. 정상을 얼마나 잘 되살리는지만 봅니다.",
     "이상 샘플(결함 등)이 조금이라도 있으면 함께 넣어 보세요. 정답 열에 정상이 아닌 이름이 있으면 이상으로 봅니다."];
   const a = r.auc;
@@ -1042,22 +1047,25 @@ function renderAeResult(r) {
   st.aeTh = r.threshold;
   const smax = Math.max(...r.scores, ...r.train_scores, r.threshold * 2);
   const tab = inputKind() === "tabular" && !st.summary.image, feats = st.summary.features || [];
-  const emax = Math.max(1e-12, ...r.ae_samples.flatMap((p) => p.err));          // 차이 막대·배경은 모든 샘플에 같은 눈금
+  const emax = Math.max(1e-12, ...r.ae_samples.flatMap((p) => p.err || []));    // 차이 막대·배경은 모든 샘플에 같은 눈금
+  const dist = r.mode === "distance", im = st.summary.image;                       // 정상과의 거리: 되살린 값이 없음
   $("det-box").hidden = false;
   $("det-box").innerHTML = `<div class="row det-head"><h3>이상 점수 분포 (시험)</h3>` +
     `<label class="muted det-th">기준값 <input id="ae-th" type="range" min="0" max="1000" step="1" value="${Math.round(Math.sqrt(r.threshold / smax) * 1000)}"> <b id="ae-th-v"></b></label>` +
     `<button id="btn-ae-th">이 기준값을 예측에 쓰기</button></div>` +
     `<div id="ae-hist"></div><div id="ae-at" class="kv ae-at"></div>` +
-    `<p class="muted"><span style="color:#16a34a">■</span> 정상 · <span style="color:#e11d48">■</span> 이상 — 점수 = 되살린 값과 입력의 차이 (제곱 평균). 기준값보다 크면 이상으로 판정</p>` +
-    `<h3>점수가 높은 시험 샘플 (마지막 둘은 가장 잘 되살린 것)</h3><div class="ae-gallery">${r.ae_samples.map((p) => {
+    `<p class="muted"><span style="color:#16a34a">■</span> 정상 · <span style="color:#e11d48">■</span> 이상 — 점수 = ${dist ? "정상 그림들의 특징 분포에서 떨어진 정도" : "되살린 값과 입력의 차이 (제곱 평균)"}. 기준값보다 크면 이상으로 판정</p>` +
+    `<h3>점수가 높은 시험 샘플 (마지막 둘은 ${dist ? "가장 정상에 가까운 것" : "가장 잘 되살린 것"})</h3><div class="ae-gallery">${r.ae_samples.map((p) => {
       const tag = `${p.label === 1 ? "정답 이상" : "정답 정상"} · 점수 ${m(p.score)}`;
-      const pic = tab
+      const pic = im
+        ? [p.x].concat(p.recon ? [p.recon] : []).map((v) => `<img src="${grayURL(v, im[0], im[1])}" width="96" height="${Math.round((96 * im[0]) / im[1])}" class="ae-img" alt="">`).join("")
+        : tab
         ? `<table class="attn-cols">${p.err.map((e, j) => `<tr><td>${esc(feats[j] || "열 " + (j + 1))}</td><td>${m(p.x[j])} → ${m(p.recon[j])}</td>` +
           `<td><span style="width:${Math.max(1, Math.round(Math.min(1, e / emax) * 120))}px;background:#ef4444"></span></td></tr>`).join("")}</table>`
         : svgSeries([{ v: p.x, color: "#0f172a" }, { v: p.recon, color: "#4f46e5", dash: "4 2" }], 300, 90, null, p.err, emax);
       return `<div class="fc-card ${p.label === 1 ? "ab" : ""}">${pic}<div class="muted">${esc(tag)}</div></div>`;
     }).join("")}</div>` +
-    `<p class="muted fc-legend">${tab ? "열마다: 입력 → 되살린 값, 빨간 막대 = 그 열의 차이 (이상한 열)" : `<span style="color:#0f172a">━</span> 입력 · <span style="color:#4f46e5">┅</span> 되살린 값 · 빨간 배경 = 차이가 큰 곳`}</p>`;
+    (dist ? "" : `<p class="muted fc-legend">${im ? "왼쪽: 입력 · 오른쪽: 되살린 그림" : tab ? "열마다: 입력 → 되살린 값, 빨간 막대 = 그 열의 차이 (이상한 열)" : `<span style="color:#0f172a">━</span> 입력 · <span style="color:#4f46e5">┅</span> 되살린 값 · 빨간 배경 = 차이가 큰 곳`}</p>`);
   const draw = () => {
     const th = st.aeTh, c = aeCounts(r, th);
     $("ae-th-v").textContent = m(th);

@@ -4,6 +4,9 @@
 학습에는 학습 몫의 정상만 쓰고, 학습 몫에 있던 이상 샘플은 시험으로 옮긴다 (평가에 쓸 이상이 늘어남).
 정상만 있는 데이터도 된다 (그때는 AUC 대신 정상의 복원 오차만 보여 줌).
 이상 점수 = 정규화한 값에서 (입력 − 복원)²의 평균. 기준값(이 값보다 크면 이상)은 학습 정상 점수의 95% 지점.
+
+출력 블록을 '정상과의 거리'로 하면 (nn_extra.NormalDistance) 되살리지 않고, 정상 샘플의 특징 분포(평균·주성분)에서
+떨어진 정도를 점수로 바로 냄 (모델 출력이 점수 하나). 사전학습 블록 바로 뒤에 둠: 그림 이상 탐지에서 훨씬 잘 됨.
 """
 from __future__ import annotations
 
@@ -56,10 +59,35 @@ def to_anomaly(d, normal=None):
                    [names[k], "이상"], d.length, mean, std, src, list(d.features), d.image, None, extra)
 
 
+def distance_mode(out: np.ndarray, X: np.ndarray) -> bool:
+    """모델이 점수 하나를 바로 냄 (출력 '정상과의 거리')."""
+    return np.asarray(out).reshape(len(X), -1).shape[1] == 1 and np.asarray(X).reshape(len(X), -1).shape[1] > 1
+
+
 def scores(out: np.ndarray, X: np.ndarray) -> np.ndarray:
-    """샘플마다 이상 점수 = 정규화한 값에서 (입력 − 복원)²의 평균."""
+    """샘플마다 이상 점수 = 정규화한 값에서 (입력 − 복원)²의 평균. 출력이 '정상과의 거리'면 그 값."""
     o = np.asarray(out, dtype=float).reshape(len(X), -1)
-    return ((o - np.asarray(X, dtype=float)) ** 2).mean(1)
+    if distance_mode(o, X):
+        return o[:, 0]
+    return ((o - np.asarray(X, dtype=float).reshape(len(X), -1)) ** 2).mean(1)
+
+
+def fit_distance(F: np.ndarray, k: int) -> dict:
+    """정상 샘플의 특징 F (n, C) → '정상과의 거리' 값: 평균, 분산이 큰 방향(주성분) k개, 그 분산의 역수, 나머지 방향 평균 분산의 역수.
+    점수 = (주성분 방향마다 거리²/분산의 합 + 나머지 거리²/나머지 분산) / C — Mahalanobis 거리를 주성분 k개로 줄인 것."""
+    F = np.asarray(F, dtype=np.float64)
+    n, C = F.shape
+    mu = F.mean(0)
+    D = F - mu
+    lam, U = np.linalg.eigh(D.T @ D / max(n, 1))
+    lam, U = np.clip(lam[::-1], 0, None), U[:, ::-1]
+    eps = 1e-3 * max(float(lam[0]), 1e-12)
+    m = min(k, C, max(n - 1, 1))
+    basis, inv_var = np.zeros((k, C)), np.zeros(k)
+    basis[:m], inv_var[:m] = U[:, :m].T, 1.0 / (lam[:m] + eps)
+    rest = float(lam[m:].mean()) if C > m else 0.0
+    return {"mean": mu.astype(np.float32), "basis": basis.astype(np.float32), "inv_var": inv_var.astype(np.float32),
+            "inv_rest": np.array([1.0 / (rest + eps)], np.float32)}
 
 
 def auc(s: np.ndarray, y: np.ndarray) -> float:
@@ -107,12 +135,14 @@ def result(out: np.ndarray, out_train: np.ndarray, d) -> dict:
     s_tr = scores(out_train, d.X_train)
     th = float(np.quantile(s_tr, QUANTILE))
     o = np.asarray(out, dtype=float).reshape(len(d.X_test), -1)
+    dist = distance_mode(o, d.X_test)
     show = [int(i) for i in np.argsort(-s)[:N_SHOW]]
     normal_low = [int(i) for i in np.argsort(s)[:2] if int(i) not in show]       # 비교용: 가장 잘 되살린 정상
     r5 = lambda a: [round(float(x), 5) for x in a]
     raw = d.raw(d.X_test)
-    rec = o * d.std + d.mean
+    rec = None if dist else o * d.std + d.mean
     return {"scores": r5(s), "train_scores": r5(s_tr), "threshold": th, "labels": [int(v) for v in d.y_test],
-            "auc": auc(s, d.y_test), "at": at_threshold(s, d.y_test, th),
+            "auc": auc(s, d.y_test), "at": at_threshold(s, d.y_test, th), "mode": "distance" if dist else "recon",
             "ae_samples": [{"index": i, "score": round(float(s[i]), 5), "label": int(d.y_test[i]), "x": r5(raw[i]),
-                            "recon": r5(rec[i]), "err": r5((o[i] - d.X_test[i]) ** 2)} for i in show + normal_low]}
+                            "recon": None if dist else r5(rec[i]), "err": None if dist else r5((o[i] - d.X_test[i]) ** 2)}
+                           for i in show + normal_low]}

@@ -45,6 +45,11 @@ MNV3S_CFG = ((16, 3, 16, 16, 8, 0, 2), (16, 3, 72, 24, 0, 0, 2), (24, 3, 88, 24,
              (40, 5, 240, 40, 64, 1, 1), (40, 5, 240, 40, 64, 1, 1), (40, 5, 120, 48, 32, 1, 1), (48, 5, 144, 48, 40, 1, 1),
              (48, 5, 288, 96, 72, 1, 2), (96, 5, 576, 96, 144, 1, 1), (96, 5, 576, 96, 144, 1, 1))
 MNV3S_OUT = 1024
+DIST_K = 128                                                # 이상 탐지 출력 '정상과의 거리': 주성분 수 (특징이 적으면 그 수)
+
+
+def dist_k(c: int) -> int:
+    return min(DIST_K, int(c))
 NEW_MERGES = ("multiply", "average", "maximum")             # 모양이 같은 값들을 원소마다 곱·평균·최댓값
 TWO_INPUT = ("cross_attn",)                                 # 입력이 정확히 둘 (질문, 참고)
 RANDOM_TYPES = ("spatial_dropout", "drop_path", "gaussian_noise", "rand_flip", "rand_rotate", "rand_shift", "rand_zoom",

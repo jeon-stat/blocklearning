@@ -59,7 +59,8 @@ def test_every_template_checks_and_converts_on_its_example(fam, sub, t):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         he = _Run(m)
-    assert he.simulate(Xi[:4]).shape == (4, d.n_out)
+    dist = any(n.get("head") == "distance" for n in g["nodes"])     # 이상 탐지 '정상과의 거리': 점수 하나
+    assert he.simulate(Xi[:4]).shape == (4, 1 if dist else d.n_out)
 
 
 def test_image_task_listed():

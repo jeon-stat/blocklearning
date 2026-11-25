@@ -107,9 +107,10 @@ function startTrain(body) {
   const job = { id: "w" + (++W.n), kind: "train", state: "running", progress: [], result: null, error: null, cancelled: false };
   W.jobs[job.id] = job;
   W.running = job;
-  E().ensurePretrained(plan, PRETRAINED).then(() => E().train(plan, data, s,
-    (p) => { job.progress.push(p); job.progress.splice(0, Math.max(0, job.progress.length - 100)); return job.cancelled; },
-    () => job.cancelled)).then(({ net, result, out, outTr }) => {
+  const onEpoch = (p) => { job.progress.push(p); job.progress.splice(0, Math.max(0, job.progress.length - 100)); return job.cancelled; };
+  const dist = plan.steps.find((st) => st.type === "output" && st.cfg.head === "distance");     // 이상 탐지 '정상과의 거리'
+  E().ensurePretrained(plan, PRETRAINED).then(() => (dist ? E().fitDistance(plan, data, fitDistance(dist), onEpoch)
+    : E().train(plan, data, s, onEpoch, () => job.cancelled))).then(({ net, result, out, outTr }) => {
     if ((job.cancelled && !job.stopped) || W.data !== data) { net.dispose(); job.state = "cancelled"; return; }   // 다시 시작·데이터 바뀜은 버림
     result.stopped = !!job.stopped;
     if (out) Object.assign(result, wrapped(W.mod.task_result(W.studio, new Uint8Array(out.buffer), new Uint8Array(outTr.buffer))));   // 예측·이상 탐지
@@ -126,6 +127,19 @@ function startTrain(body) {
     job.error = `${e.name || "Error"}: ${e.message || e}`;
   }).finally(() => { if (W.running === job) W.running = null; });
   return { id: job.id };
+}
+function fitDistance(head) {                           // 정상 특징 → 정상과의 거리 값 (Python anomaly.fit_distance)
+  const k = head.params.find((p) => p[0].endsWith(".basis"))[1][0];
+  return async (F, n, c) => {
+    const p = W.mod.fit_distance(W.studio, new Uint8Array(F.buffer, F.byteOffset, F.byteLength), n, c, k), out = {};
+    try {
+      for (const name of ["mean", "basis", "inv_var", "inv_rest"]) {
+        const u8 = bytesOf(p.get(name));
+        out[name] = new Float32Array(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
+      }
+    } finally { p.destroy(); }
+    return out;
+  };
 }
 function jobView(path) {
   const id = path.split("/")[3], job = W.jobs[id];
@@ -151,7 +165,7 @@ function activations(body) {
   else if (d.task === "anomaly") {
     let t = 0;
     for (let j = 0; j < out.length; j++) t += (out[j] - s.x[j]) ** 2;
-    const sc = t / out.length, th = W.trained.results && W.trained.results.threshold;
+    const sc = out.length === 1 && s.x.length > 1 ? out[0] : t / out.length, th = W.trained.results && W.trained.results.threshold;   // '정상과의 거리'면 출력이 점수
     pred = `이상 점수 ${Number(sc.toPrecision(3))}` + (th === undefined || th === null ? "" : sc > th ? " → 이상" : " → 정상");
   }
   else if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; }

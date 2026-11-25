@@ -81,7 +81,7 @@ def _pretty(t: str, cfg: dict, counts: dict) -> str:
 def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan:
     """그래프 → 펼친 층 목록. 검사를 통과하지 못하면 ValueError(첫 문제)."""
     from dlstudio.graph import check_graph
-    checked = check_graph(graph, length, n_out, image=image)
+    checked = check_graph(graph, length, n_out, image=image, rules=False)
     if not checked.ok:
         raise ValueError(checked.issues[0].message)
     c = _Checker(length, n_out, image)
@@ -257,6 +257,9 @@ def _torch_layer(s: Step, n_out: int):
         return None, f"torch.flatten({a}, 1)", []
     if t == "output" and b.get("head") == "grid":
         return f"nn.Conv2d({s.in_shape[0]}, {b['per_cell']}, 1)", f"torch.flatten({me}({a}), 1)", [(s.key + ".0", s.name)]
+    if t == "output" and b.get("head") == "distance":
+        C = _prod(s.in_shape)
+        return f"NormalDistance({C}, {X.dist_k(C)})", f"{me}({a})", [(s.key, s.name)]
     if t in ("dense", "output"):
         units = n_out if t == "output" else b["units"]
         flat = len(s.in_shape) >= 2
@@ -296,6 +299,8 @@ def _extra_classes(plan: Plan) -> list:
             name = "CausalConv1d"
         elif s.type in X.EXTRA_TYPES:
             name = X.torch_args(s.type, s.cfg, s.in_shape, s.in_shapes[1] if len(s.in_shapes) > 1 else None)[0]
+        elif s.type == "output" and s.cfg.get("head") == "distance":
+            name = "NormalDistance"
         else:
             continue
         if not name.startswith("nn.") and name not in out:
@@ -558,6 +563,11 @@ def param_specs(step: Step) -> list:
                 (f"{k}.num_batches_tracked", [], "count")]
     if t == "output" and b.get("head") == "grid":
         return [(f"{k}.0.weight", [b["per_cell"], ins[0], 1, 1], "weight"), (f"{k}.0.bias", [b["per_cell"]], "weight")]
+    if t == "output" and b.get("head") == "distance":         # 정상과의 거리: 정상 샘플에서 계산해 넣는 값
+        C = _prod(ins)
+        K = X.dist_k(C)
+        return [(f"{k}.mean", [C], "buffer"), (f"{k}.basis", [K, C], "buffer"), (f"{k}.inv_var", [K], "buffer"),
+                (f"{k}.inv_rest", [1], "buffer")]
     if t in ("dense", "output"):
         units = step.out_shape[0]
         kk = k + (".1" if len(ins) >= 2 else "")
@@ -699,9 +709,10 @@ def keras_unsupported(graph: dict, length: int, n_out: int, image: tuple = None)
     for s in plan.steps:
         rank = len(s.in_shape)
         if s.type in KERAS_UNSUPPORTED or (s.type == "mha" and s.cfg.get("pos") == "rope") \
+                or (s.type == "output" and s.cfg.get("head") == "distance") \
                 or (s.type == "upsample" and rank == 2 and s.cfg.get("mode") == "linear") \
                 or (s.type in ("pixel_shuffle", "rand_flip", "rand_shift") and rank == 2):
-            bad.append(X.name_of(s.type))
+            bad.append("출력 '정상과의 거리'" if s.type == "output" else X.name_of(s.type))
     return sorted(set(bad))
 
 

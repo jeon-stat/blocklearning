@@ -228,6 +228,8 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     done = []
     if data.task == "detection":
         return _train_det(job, model, Xtr, Xte, Xte_t, data, settings, dev)
+    if model.distance_head() is not None:
+        return _fit_distance(job, model, Xtr, Xte, data, dev)
     Xfit, head = Xtr, model.frozen_head()
     if head is not None:                                 # 고정한 사전학습 블록: 특징을 한 번만 뽑고 뒷부분만 학습
         Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
@@ -273,6 +275,38 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     else:
         result["mae"], result["scatter"] = regression_view(out, data.y_test)
     return result
+
+
+def _fit_distance(job: Job, model, Xtr, Xte, data, dev) -> dict:
+    """이상 탐지 출력 '정상과의 거리': 경사 학습 없이, 학습 몫(정상)의 특징 분포를 한 번 계산해 넣음."""
+    import torch
+    from dlstudio.anomaly import fit_distance
+    head, src = model.distance_head()
+    model = model.to(dev or "cpu").eval()
+    got = []
+    hook = head.register_forward_pre_hook(lambda m, a: got.append(a[0].detach()))
+
+    def feats(X):
+        got.clear()
+        with torch.no_grad():
+            for i in range(0, len(X), 256):
+                model(torch.as_tensor(X[i:i + 256], dtype=torch.float32, device=dev or "cpu"))
+        return torch.cat(got)
+    try:
+        Ftr, Fte = feats(Xtr), feats(Xte)
+    finally:
+        hook.remove()
+    p = fit_distance(Ftr.cpu().numpy(), head.basis.shape[0])
+    with torch.no_grad():
+        for k, v in p.items():
+            getattr(head, k).copy_(torch.as_tensor(v))
+        out, out_tr = (head(F).double().cpu().numpy() for F in (Fte, Ftr))
+    model = model.cpu().eval()
+    m = metric(out, data.y_test, data.task, data.X_test)
+    job.report({"epoch": 1, "loss": 0.0, "test_metric": m})
+    result = {"model": model, "epochs_done": 1, "test_metric": m, "metric_name": metric_name(data), "warnings": [],
+              "confusion": None, "recall": None}
+    return dict(result, **task_result(data, out, out_tr))
 
 
 def frozen_features(module, X, dev, batch: int = 256) -> np.ndarray:

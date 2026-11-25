@@ -298,7 +298,7 @@ def _order_out(sc: _Scope) -> list:
     return [[k, _order_out(sc.bodies[k])] if k in sc.bodies else k for k in sc.order]
 
 
-def check_graph(graph, length: int, n_out: int, image: tuple = None) -> GraphChecked:
+def check_graph(graph, length: int, n_out: int, image: tuple = None, rules: bool = True) -> GraphChecked:
     """그래프 검사와 노드마다 출력 모양. length: 데이터 길이(이미지면 H·W), n_out: 클래스 수(회귀면 1), image: (H, W)."""
     c = _Checker(length, n_out, image)
     kind = "image" if image else "cnn"
@@ -311,7 +311,21 @@ def check_graph(graph, length: int, n_out: int, image: tuple = None) -> GraphChe
     start = (1,) + tuple(image) if image else (1, length)
     c.shapes[INPUT] = start
     c.shape_pass(sc, start)
+    if rules and not c.issues:                             # 모양이 다 맞을 때만 (계획을 만들어 봄)
+        _distance_rule(c, sc, graph, length, n_out, image)
     return GraphChecked(c.issues, c.shapes, [INPUT] + _order_out(sc), kind)
+
+
+def _distance_rule(c, sc, graph, length, n_out, image) -> None:
+    """출력 '정상과의 거리'는 정상 특징의 분포를 그대로 씀 → 그 앞에 학습하는 층이 있으면 안 됨 (학습할 손실이 없음)."""
+    out = next((k for k, n in sc.nodes.items() if n["type"] == "output" and n.get("head") == "distance"), None)
+    if out is None:
+        return
+    from dlstudio.codegen import make_plan, param_specs
+    plan = make_plan(graph, length, n_out, image)
+    if any(p[2] != "frozen" for s in plan.steps if s.type != "output" for p in param_specs(s)):
+        c.issue(out, "'정상과의 거리' 출력 앞에는 학습하는 층을 둘 수 없음",
+                "사전학습 블록(MobileNetV3-Small) 바로 뒤에 두세요 (학습하는 층을 쓰려면 출력을 보통 출력으로)")
 
 
 # ---------------------------------------------------------------- torch 모델 만들기
@@ -340,6 +354,14 @@ def _graph_net_class():
             self.output_id = output_id
             self.block_modules = block_modules
             self.start = None                                  # 특징을 미리 뽑아 둔 학습: 입력 대신 이 노드의 출력을 받음
+
+        def distance_head(self):
+            """출력이 '정상과의 거리'면 (그 모듈, 들어가는 노드 id), 아니면 None."""
+            m = self.mods[_key(self.output_id)] if _key(self.output_id) in self.mods else None
+            if type(m).__name__ != "NormalDistance":
+                return None
+            step = next(st for st in self.plan if st[1] == self.output_id)
+            return m, step[2][0]
 
         def frozen_head(self):
             """입력 바로 뒤의 고정(사전학습) 블록 하나만 입력을 쓰면 그 노드 id (학습 때 특징을 한 번만 뽑아 둠), 아니면 None."""

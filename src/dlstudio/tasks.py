@@ -177,6 +177,11 @@ T_AE_CONV = {"id": "ae_conv", "name": "Conv 오토인코더",
              "when": "Dense 오토인코더로 부족할 때",
              "blocks": [_conv(16, 7), P2, {"type": "max_pool", "size": 2}, _conv(8, 5), P2, {"type": "max_pool", "size": 2},
                         {"type": "flatten"}, _dense(16), P2, OUT]}
+T_AE_IMG_DIST = {"id": "ae_img_dist", "name": "사전학습 특징 + 정상과의 거리",
+                 "desc": "Google이 ImageNet으로 미리 학습한 MobileNetV3-Small로 그림마다 특징 1024개를 뽑고, 정상 그림들의 특징 분포에서 "
+                         "얼마나 떨어졌는지를 이상 점수로 씀. 경사 학습 없이 정상 그림의 분포만 한 번 계산함",
+                 "when": "그림 이상 탐지를 처음 할 때. 정상 그림이 수십 장 이상이면 됨",
+                 "blocks": [{"type": "mnv3s", "size": 128}, {"type": "output", "head": "distance"}]}
 T_AE_TAB = {"id": "ae_tab_dense", "name": "오토인코더",
             "desc": "측정 항목들을 4개 값까지 줄였다가 다시 모든 항목을 되살리는 모델. 정상의 항목끼리 관계만 배워서, "
                     "평소와 다른 조합은 잘 못 되살림",
@@ -248,6 +253,12 @@ CATALOG = [
           "examples_text": "평소와 다른 공정 조건 조합 찾기, 센서 값 이상 조합 찾기",
           "example_data": [["hydraulic_ae", "유압 시스템 — 정상만 학습해 냉각기·밸브·펌프 고장 찾기 (제조)"]],
           "templates": [T_AE_TAB]},
+         {"id": "ae_img", "name": "이미지 이상 탐지", "input": "image", "available": True, "task": "anomaly",
+          "desc": "정상 그림만으로 정상의 모습을 익히고, 평소와 다른 그림(결함·불량)을 이상으로 봄. 불량 그림이 적거나 없어도 됨",
+          "examples_text": "양품 사진만으로 표면 결함 찾기, 정상 부품 사진과 다른 부품 찾기",
+          "example_data": [["steelblast_ae", "강판 표면 — 양호만 학습해 불량 찾기 (제조, 64×64)"],
+                           ["pneumonia_ae", "흉부 X-ray — 정상만 학습해 폐렴 찾기 (의료, 28×28)"]],
+          "templates": [T_AE_IMG_DIST]},
      ]},
     {"id": "forecast", "name": "예측 (미래 값)", "icon": "🔮",
      "desc": "지금까지의 흐름으로 앞으로의 값을 예측합니다",

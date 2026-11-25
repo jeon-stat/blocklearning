@@ -366,7 +366,8 @@ class Studio:
         elif d.task == "forecast":
             pred = f"다음 {len(out)}개 (첫 값 {float(out[0]):.4g})"
         elif d.task == "anomaly":
-            s, th = float(np.mean((out - d.X_test[i]) ** 2)), (self.results or {}).get("threshold")
+            from dlstudio.anomaly import scores
+            s, th = float(scores(out[None], d.X_test[i:i + 1])[0]), (self.results or {}).get("threshold")
             pred = f"이상 점수 {s:.3g}" + ("" if th is None else (" → 이상" if s > th else " → 정상"))
         else:
             pred = d.classes[int(out.argmax())] if d.task == "classification" else float(out[0])
