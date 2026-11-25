@@ -1104,9 +1104,10 @@ function mount(els, opts) {
   // els: {canvas, palette, settings}; opts: {onChange(graph), getSummary(), getInput(), onHint(msg), onHistory(canUndo, canRedo)}
   let graph = { version: 2, nodes: [{ id: "input", type: "input" }] }, sel = new Set(), selEdge = null, shapes = {}, issues = {}, L = null;
   let dropEdge = null, clip = null, edgeStyle = "ortho", flowDir = "v", autoWrap = false;
-  // 자동 줄바꿈 길이: 보이는 판의 흐름 방향 길이
+  let zoom = 1;                                      // 판만 확대·축소 (페이지 전체가 아니라): SVG 크기만 바꾸고 좌표(viewBox)는 그대로
+  // 자동 줄바꿈 길이: 보이는 판의 흐름 방향 길이 (판 좌표로)
   const lopts = () => ({ edge: edgeStyle, dir: flowDir,
-    wrap: autoWrap ? (flowDir === "h" ? els.canvas.clientWidth : els.canvas.clientHeight) - 30 : 0 });
+    wrap: autoWrap ? (flowDir === "h" ? els.canvas.clientWidth : els.canvas.clientHeight) / zoom - 30 : 0 });
   const hist = history();
   const input = () => (opts.getInput ? opts.getInput() : "timeseries");
   const hint = (msg) => opts.onHint && opts.onHint(msg);
@@ -1142,8 +1143,8 @@ function mount(els, opts) {
     L = layoutGraph(graph, undefined, lopts());
     const top = (o) => (o.anc && o.anc.length ? ` data-anc="${esc(o.anc.join(" "))}"` : "");
     // 판: 보이는 칸을 다 채우고, 오른쪽·아래로 여유를 둬서 어디로든 끌어 둘 수 있게
-    const W = Math.max(L.width + 240, els.canvas.clientWidth - 24), H = Math.max(L.height + 240, els.canvas.clientHeight - 24);   // 판 안쪽 여백(8px×2) 빼고
-    let s = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="flow-svg">` +
+    const W = Math.max(L.width + 240, (els.canvas.clientWidth - 24) / zoom), H = Math.max(L.height + 240, (els.canvas.clientHeight - 24) / zoom);   // 판 안쪽 여백(8px×2) 빼고
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="${Math.round(W * zoom)}" height="${Math.round(H * zoom)}" class="flow-svg">` +
       `<defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
       `<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round"/></marker></defs>`;
     for (const gr of L.groups) {
@@ -1815,6 +1816,56 @@ function mount(els, opts) {
     else done = false;
     if (done) e.preventDefault();
   });
+  // ---------------- 판 확대·축소: Ctrl(⌘)+휠·트랙패드 집기·두 손가락 집기는 판에서만 (페이지는 그대로), 단추·Ctrl+0/+/−
+  const ZMIN = 0.2, ZMAX = 2;
+  function setZoom(z, at) {                          // at: 화면 좌표 [x, y] — 그 점 아래의 판 위치가 그대로 있게
+    z = Math.min(ZMAX, Math.max(ZMIN, Math.round(z * 100) / 100));
+    if (z === zoom) return;
+    const r = els.canvas.getBoundingClientRect(), cx = at ? at[0] : r.left + r.width / 2, cy = at ? at[1] : r.top + r.height / 2;
+    const p = svgPoint({ clientX: cx, clientY: cy });
+    zoom = z;
+    draw();
+    const svg = els.canvas.querySelector("svg");
+    if (p && svg) {
+      const b = svg.getBoundingClientRect();
+      els.canvas.scrollLeft += b.left + p[0] * zoom - cx;
+      els.canvas.scrollTop += b.top + p[1] * zoom - cy;
+    }
+    if (opts.onZoom) opts.onZoom(zoom);
+  }
+  function fitZoom() {                               // 모델 전체가 보이게 (100%보다 키우지는 않음)
+    if (!L) return;
+    const z = Math.min(1, (els.canvas.clientWidth - 40) / (L.width + 40), (els.canvas.clientHeight - 40) / (L.height + 40));
+    zoom = Math.min(ZMAX, Math.max(ZMIN, Math.floor(z * 100) / 100));
+    draw();
+    els.canvas.scrollLeft = 0;
+    els.canvas.scrollTop = 0;
+    if (opts.onZoom) opts.onZoom(zoom);
+  }
+  els.canvas.addEventListener("wheel", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;           // 그냥 휠은 판 스크롤
+    e.preventDefault();                              // 브라우저 확대 대신 판만
+    setZoom(zoom * Math.exp(-Math.max(-60, Math.min(60, e.deltaY)) / 300), [e.clientX, e.clientY]);
+  }, { passive: false });
+  let pinch = null;                                  // 터치: 두 손가락 집기
+  const tdist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  els.canvas.addEventListener("touchstart", (e) => { if (e.touches.length === 2) pinch = { d: tdist(e.touches), z: zoom }; }, { passive: true });
+  els.canvas.addEventListener("touchmove", (e) => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    const t = e.touches;
+    setZoom(pinch.z * tdist(t) / pinch.d, [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2]);
+  }, { passive: false });
+  els.canvas.addEventListener("touchend", (e) => { if (e.touches.length < 2) pinch = null; });
+  document.addEventListener("keydown", (e) => {
+    if (!els.canvas.offsetParent || !(e.ctrlKey || e.metaKey) || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    if (e.key === "=" || e.key === "+") setZoom(zoom * 1.2);
+    else if (e.key === "-" || e.key === "_") setZoom(zoom / 1.2);
+    else if (e.key === "0") setZoom(1);
+    else return;
+    e.preventDefault();
+  });
+
   drawPalette();
   draw();
   function autoLayout() {                            // 고른 상자가 있으면 바로 위 상자와 가운데 맞춤, 없으면 전체 자동 정렬
@@ -1833,7 +1884,8 @@ function mount(els, opts) {
     else draw();
   }
   window.addEventListener("resize", () => { if (els.canvas.offsetParent) draw(); });
-  return { set, get, decorate, select, redraw: draw, redrawPalette: drawPalette, undo, redo, autoLayout, setEdgeStyle, setFlowDir, setWrap };
+  return { set, get, decorate, select, redraw: draw, redrawPalette: drawPalette, undo, redo, autoLayout, setEdgeStyle, setFlowDir, setWrap,
+    zoomIn: () => setZoom(zoom * 1.2), zoomOut: () => setZoom(zoom / 1.2), zoomReset: () => setZoom(1), zoomFit: fitZoom, getZoom: () => zoom };
 }
 
 const API = { PALETTE, PACKS, makePack, insertPack, RANK, mount, fmtShape, forInput, labelLines, setBreak, setShift, alignToParent, edgePath, addConnected, addFeeding, setSize, stripView, setPos, clearPos, stripPos, addFree, moveNode, shortLabel, nearestEdge, TYPES, ACT_NAMES, CATS, paletteTypes, fitNote, label, layoutGraph, insertOnEdge, connect, removeNode, removeEdge,

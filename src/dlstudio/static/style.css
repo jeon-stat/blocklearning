@@ -749,3 +749,11 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .attn-cols td:first-child { text-align: right; color: #374151; }
 .attn-cols td:last-child { color: #6b7280; font-variant-numeric: tabular-nums; }
 .attn-cols span { display: inline-block; height: 10px; border-radius: 2px; vertical-align: middle; }
+
+/* 판 확대·축소 */
+.zoom { display: inline-flex; gap: 0; }
+.zoom button { border-radius: 0; margin: 0 -1px 0 0; min-width: 34px; }
+.zoom button:first-child { border-radius: 8px 0 0 8px; }
+.zoom button:last-child { border-radius: 0 8px 8px 0; }
+#zoom-reset { min-width: 54px; font-variant-numeric: tabular-nums; }
+.canvas { touch-action: pan-x pan-y; }      /* 두 손가락 집기는 판만 확대 (페이지 확대 대신) */

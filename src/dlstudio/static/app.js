@@ -580,7 +580,8 @@ function ensureEditor() {
     st.ed = F.mount({ canvas: $("canvas"), palette: $("palette"), settings: $("settings") },
       { onChange: (g) => { st.graph = g; scheduleCheck(); }, getSummary: () => st.summary,
         onHint: (msg) => showMessage(msg, "", "", true), getInput: inputKind, onPreview: (id) => { st.previewNode = id; runPreview(); },
-        onHistory: (u, r) => { $("btn-undo").disabled = !u; $("btn-redo").disabled = !r; } });
+        onHistory: (u, r) => { $("btn-undo").disabled = !u; $("btn-redo").disabled = !r; },
+        onZoom: (z) => ($("zoom-reset").textContent = Math.round(z * 100) + "%") });
     let es = "ortho";
     try { es = localStorage.getItem("dlstudio-edge-style") || "ortho"; } catch (e) { /* 없음 */ }
     $("edge-style").value = es;
@@ -734,6 +735,10 @@ $("edge-style").onchange = () => {                       // 선 모양은 이 �
   if (st.ed) st.ed.setEdgeStyle($("edge-style").value);
 };
 $("btn-undo").onclick = () => st.ed && st.ed.undo();
+$("zoom-in").onclick = () => st.ed && st.ed.zoomIn();
+$("zoom-out").onclick = () => st.ed && st.ed.zoomOut();
+$("zoom-reset").onclick = () => st.ed && st.ed.zoomReset();
+$("zoom-fit").onclick = () => st.ed && st.ed.zoomFit();
 $("btn-redo").onclick = () => st.ed && st.ed.redo();
 
 // ------------------------------------------------------------ ③ 학습
