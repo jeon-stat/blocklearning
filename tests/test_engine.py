@@ -141,3 +141,18 @@ def test_engine_trains_regression_in_original_units(tmp_path):
     out = _train_js(tmp_path, g, d, {"epochs": 15, "lr": 0.01, "batch_size": 32, "seed": 0})
     r = out["result"]
     assert r["metric_name"] == "r2" and r["test_metric"] > 0.3 and r["mae"] > 0 and len(r["scatter"]["y"]) > 0
+
+
+def test_engine_trains_batchnorm_model(tmp_path):
+    """BatchNorm이 든 모델도 웹 엔진에서 학습됨: 묶음 수(num_batches_tracked, 정수)가 묶음마다 1씩 늘고 PyTorch에 그대로 들어감."""
+    from dlstudio.data import load_example
+    from dlstudio.graph import from_blocks
+    from dlstudio.tasks import T_DEEP_MLP
+    d = load_example("concrete")
+    g = from_blocks(T_DEEP_MLP["blocks"])
+    out = _train_js(tmp_path, g, d, {"epochs": 2, "lr": 0.003, "batch_size": 64, "seed": 0})
+    n_batches = -(-len(d.X_train) // 64)
+    counts = {k: v for k, v in out["state"].items() if k.endswith("num_batches_tracked")}
+    assert counts and all(v["data"][0] == 2 * n_batches for v in counts.values()), counts
+    net = build_graph_model(g, d.length, d.n_out).eval()
+    net.load_state_dict({k: torch.tensor(v["data"]).reshape(v["shape"]).to(net.state_dict()[k].dtype) for k, v in out["state"].items()})

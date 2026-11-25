@@ -732,7 +732,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
           }, true, net.trainable);
         });
         for (const [buf, val] of pending) {
-          if (val) { buf.assign(val); val.dispose(); } else buf.assign(buf.add(1));
+          if (val) { buf.assign(val); val.dispose(); } else tf.tidy(() => buf.assign(buf.add(tf.scalar(1, "int32"))));   // 정수(int32) 그대로 +1 (숫자 1을 더하면 실수가 됨)
         }
         lossSum += (await loss.data())[0];
         loss.dispose();
