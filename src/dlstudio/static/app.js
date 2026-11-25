@@ -283,13 +283,23 @@ async function loadCatalog() {                           // 과제 목록. 고�
 document.querySelectorAll(".go").forEach((b) => (b.onclick = () => go(b.dataset.go)));
 
 // ------------------------------------------------------------ ① 과제
+// 큰 틀 아이콘: 내 프로젝트 화면과 같은 선 그림 (24×24, 선 1.8)
+const lineIcon = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const FAMILY_ICON = {
+  classification: lineIcon('<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>'),
+  regression: lineIcon('<path d="M3 3v18h18"/><path d="M7 16 19 6"/><circle cx="8" cy="11" r="1"/><circle cx="12" cy="13" r="1"/><circle cx="15" cy="8" r="1"/>'),
+  detection: lineIcon('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/>'),
+  anomaly: lineIcon('<path d="M3 12h4l2-5 4 10 2-5h6"/>'),
+  forecast: lineIcon('<path d="M3 17l5-5 4 3 6-7"/><path d="M14 8h4v4"/><path d="M3 21h18" stroke-dasharray="2 3"/>'),
+  segmentation: lineIcon('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 6v12M15 6v12"/>'),
+};
 const readyFirst = (xs, ok) => xs.filter(ok).concat(xs.filter((x) => !ok(x)));   // '준비 중'은 뒤로
 function renderTask() {
   $("btn-quick").disabled = !st.catalog.length;
   $("families").innerHTML = readyFirst(st.catalog, (f) => f.subtasks.some((s) => s.available)).map((f) => {
     const ready = f.subtasks.some((s) => s.available);
     return `<button class="tcard${st.fam === f ? " sel" : ""}${ready ? "" : " soon"}" data-f="${f.id}">` +
-      `<div class="ti">${f.icon || ""}</div><div class="tn">${esc(f.name)}${ready ? "" : ` <span class="badge">준비 중</span>`}</div>` +
+      `<span class="fi ti">${FAMILY_ICON[f.id] || lineIcon('<circle cx="12" cy="12" r="8"/>')}</span><div class="tn">${esc(f.name)}${ready ? "" : ` <span class="badge">준비 중</span>`}</div>` +
       `<div class="td">${esc(f.desc)}</div></button>`;
   }).join("");
   $("subtask-box").hidden = !st.fam;

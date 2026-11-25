@@ -770,3 +770,8 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .fc-legend { font-size: 12px; }
 .ae-at { margin: 6px 0 10px; }
 #det-box .det-head button { margin-left: 8px; }
+
+/* 과제 큰 틀 아이콘: 내 프로젝트 화면과 같은 선 그림 상자 */
+.tcard .fi.ti { font-size: 0; margin-bottom: 8px; }
+.tcard.soon .fi.ti { background: #f1f5f9; color: #94a3b8; }
+.tcard.sel .fi.ti { background: var(--accent); color: #fff; }
