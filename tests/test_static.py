@@ -277,7 +277,7 @@ def test_every_step_has_previous_button_and_history():
     for step, back in prev.items():
         sec = html[html.index(f'<section id="step-{step}"'):]
         sec = sec[:sec.index("</section>")]
-        assert f'class="go back" data-go="{back}"' in sec, step
-    assert 'class="go back"' not in html[html.index('<section id="step-task"'):html.index('<section id="step-data"')]
+        assert f'class="primary go back" data-go="{back}"' in sec, step   # 색은 [다음]과 같게
+    assert 'go back"' not in html[html.index('<section id="step-task"'):html.index('<section id="step-data"')]
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "history.pushState({ dls: step }" in js and 'addEventListener("popstate"' in js
