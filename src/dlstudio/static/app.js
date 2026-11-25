@@ -213,6 +213,7 @@ function renderScatter(el, sc, mae, caption) {
 function go(step, fromHistory = false) {
   if (!$("step-" + step)) step = "task";
   st.step = step;
+  if (step === "train") renderLoss();                       // 손실 칩의 블록 목록은 지금 모델에서
   if (!fromHistory) {
     try {
       const h = history.state && history.state.dls;
@@ -1457,23 +1458,55 @@ function renderLoss() {
     }).join("");
     $("loss-add").hidden = true;
     $("loss-reset").hidden = !st.loss;
+    renderRecipes();
     return;
   }
   $("loss-add").hidden = false;
   $("loss-terms").innerHTML = terms.map((t, i) => (i ? `<span class="lplus">+</span>` : "") + lossChip(L, t, i, L.allowed, terms.length > 1)).join("");
   $("loss-reset").hidden = !st.loss;
+  renderRecipes();
 }
 function lossChip(L, t, i, allowed, canDelete) {
   {
     const opts = L.options[t.term] || {};
-    const fields = Object.entries(opts).map(([k, [d, lo, hi]]) => typeof d === "boolean"
+    const fields = Object.entries(opts).map(([k, [d, lo, hi]]) => k === "node"
+      ? `<label class="lopt">블록 <select data-i="${i}" data-k="node">${lossNodes().map(([id, nm]) => `<option value="${esc(id)}"${id === t.node ? " selected" : ""}>${esc(nm)}</option>`).join("")}</select></label>`
+      : typeof d === "boolean"
       ? `<label class="lopt"><input type="checkbox" data-i="${i}" data-k="${k}"${t[k] ?? d ? " checked" : ""}> ${LOSS_OPT_LABEL[k] || k}</label>`
       : `<label class="lopt">${LOSS_OPT_LABEL[k] || k} <input type="number" data-i="${i}" data-k="${k}" min="${lo}" max="${hi}" step="0.1" value="${t[k] ?? d}"></label>`).join("");
-    return `<span class="loss-term"><input type="number" class="lw" data-i="${i}" data-k="w" min="0" step="0.1" value="${t.w ?? 1}"> ×` +
+    return `<span class="loss-term"><input type="number" class="lw" data-i="${i}" data-k="w" min="0" step="any" value="${t.w ?? 1}"> ×` +
       `<select data-i="${i}" data-k="term">${allowed.map((a) => `<option value="${a}"${a === t.term ? " selected" : ""}>${esc(L.names[a])}</option>`).join("")}</select>` +
       fields + (canDelete ? `<button type="button" class="ldel" data-del="${i}" aria-label="빼기">×</button>` : "") + `</span>`;
   }
 }
+function lossNodes() {                                       // 블록 출력 L1에 고를 블록: 입력·출력 빼고 (그래프 순서)
+  const g = st.graph || { nodes: [] };
+  return g.nodes.filter((n) => n.type !== "input" && n.type !== "output").map((n) => [n.id, `${blockName(n)} (${n.id})`]);
+}
+function lastHidden() { const ns = lossNodes(); return ns.length ? ns[ns.length - 1][0] : ""; }
+// 조립 예시: 정답 종류마다 자주 쓰는 손실 (고르면 칩이 그대로 바뀜, 이어서 고칠 수 있음)
+const LOSS_RECIPES = {
+  class: [["드문 클래스에 무게", [{ term: "focal", w: 1, gamma: 2, balance: true }]],
+    ["덜 확신하게 (라벨 스무딩)", [{ term: "ce", w: 1, smooth: 0.1, balance: false }]],
+    ["가중치를 작게 (L2)", [{ term: "ce", w: 1, smooth: 0, balance: false }, { term: "l2", w: 0.0001 }]]],
+  value: [["튀는 값에 덜 흔들리게 (Huber)", [{ term: "huber", w: 1, delta: 1 }]], ["평균 절대 오차 (MAE)", [{ term: "mae", w: 1 }]]],
+  seq_class: [["짧은 상태도 놓치지 않게 (Dice)", [{ term: "ce", w: 1, smooth: 0, balance: true }, { term: "dice", w: 0.5 }]]],
+};
+const ANY_RECIPE = ["블록 출력을 드물게 (희소)", "act_l1"];
+function lossKind() { const t = st.summary && st.summary.task; return t === "classification" ? "class" : t === "segmentation" ? "seq_class" : t === "detection" || t === "multi" ? null : "value"; }
+function renderRecipes() {
+  const k = lossKind(), list = (k && LOSS_RECIPES[k]) || [];
+  const opts = list.map(([n], i) => `<option value="${i}">${esc(n)}</option>`).concat(st.graph && lossNodes().length ? [`<option value="act">${esc(ANY_RECIPE[0])}</option>`] : []);
+  $("loss-recipe").innerHTML = `<option value="">조립 예시</option>` + opts.join("");
+  $("loss-recipe").hidden = !opts.length;
+}
+$("loss-recipe").onchange = () => {
+  const v = $("loss-recipe").value;
+  $("loss-recipe").value = "";
+  if (v === "") return;
+  if (v === "act") return setLoss(lossTerms().filter((t) => t.term !== "act_l1").concat([{ term: "act_l1", w: 0.001, node: lastHidden() }]));
+  setLoss(LOSS_RECIPES[lossKind()][Number(v)][1].map((t) => Object.assign({}, t)));
+};
 function setLoss(terms) {
   const L = lossInfo();
   st.loss = JSON.stringify(terms) === JSON.stringify(L.default) ? null : terms;
@@ -1483,8 +1516,9 @@ $("loss-terms").addEventListener("change", (e) => {
   const el = e.target, i = Number(el.dataset.i), k = el.dataset.k;
   if (k === undefined) return;
   const terms = lossTerms().map((t) => Object.assign({}, t));
-  if (k === "term") terms[i] = Object.assign({ term: el.value, w: terms[i].w ?? 1 }, terms[i].head ? { head: terms[i].head } : {});   // 항을 바꾸면 설정은 그 항의 기본
-  else terms[i][k] = el.type === "checkbox" ? el.checked : Number(el.value);
+  if (k === "term") terms[i] = Object.assign({ term: el.value, w: terms[i].w ?? 1 }, terms[i].head ? { head: terms[i].head } : {},
+    el.value === "act_l1" ? { node: lastHidden() } : {});   // 항을 바꾸면 설정은 그 항의 기본
+  else terms[i][k] = el.type === "checkbox" ? el.checked : k === "node" ? el.value : Number(el.value);
   setLoss(terms);
 });
 $("loss-terms").addEventListener("click", (e) => {
@@ -1493,7 +1527,8 @@ $("loss-terms").addEventListener("click", (e) => {
     const g = lossGroups(lossInfo()).find((x) => (x.head ?? "") === add);
     const used = new Set(lossTerms().filter((t) => (t.head ?? "") === add).map((t) => t.term));
     const next = g.allowed.find((a) => !used.has(a)) || g.allowed[0];
-    return setLoss(lossTerms().concat([Object.assign({ term: next, w: next === "l2" || next === "l1" ? 0.0001 : 1 }, add ? { head: add } : {})]));
+    return setLoss(lossTerms().concat([Object.assign({ term: next, w: next === "l2" || next === "l1" ? 0.0001 : next === "act_l1" ? 0.001 : 1 },
+      add ? { head: add } : {}, next === "act_l1" ? { node: lastHidden() } : {})]));
   }
   if (d === undefined) return;
   setLoss(lossTerms().filter((_, i) => i !== Number(d)));
@@ -1502,7 +1537,8 @@ $("loss-add").onclick = () => {
   const L = lossInfo();
   if (!L) return;
   const used = new Set(lossTerms().map((t) => t.term)), next = L.allowed.find((a) => !used.has(a)) || L.allowed[0];
-  setLoss(lossTerms().concat([{ term: next, w: next === "l2" || next === "l1" ? 0.0001 : 1 }]));
+  setLoss(lossTerms().concat([Object.assign({ term: next, w: next === "l2" || next === "l1" ? 0.0001 : next === "act_l1" ? 0.001 : 1 },
+    next === "act_l1" ? { node: lastHidden() } : {})]));
 };
 $("loss-reset").onclick = () => setLoss(lossInfo().default.map((t) => Object.assign({}, t)));
 function renderLossParts(progress) {                       // 항이 둘 이상이면 마지막 epoch의 항마다 값

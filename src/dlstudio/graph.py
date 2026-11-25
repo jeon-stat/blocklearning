@@ -407,11 +407,14 @@ def _graph_net_class():
             return vals
 
         def forward(self, x):
+            rec = getattr(self, "capture", None)                # 손실 '블록 출력 L1': 노드마다 출력을 담아 둠 (학습 중에만)
+            if rec is not None:
+                rec.clear()
             if self.start is not None:
-                return self._exec(self.plan, {self.start: x}, self.mods, None)[self.output_id]
+                return self._exec(self.plan, {self.start: x}, self.mods, rec)[self.output_id]
             if self.kind == "rnn":                             # 순환 모델의 입력 (N, L, 1) → 층들이 쓰는 (N, 1, L)
                 x = x.transpose(1, 2)
-            return self._exec(self.plan, {INPUT: x}, self.mods, None)[self.output_id]
+            return self._exec(self.plan, {INPUT: x}, self.mods, rec)[self.output_id]
 
         def trace(self, x) -> dict:
             """모든 노드의 출력 (Repeat 안은 마지막 반복). 샘플 따라가기용."""

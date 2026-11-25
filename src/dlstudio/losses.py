@@ -18,14 +18,14 @@ TERMS = {
     "seq_class": ["ce", "dice"],
     "boxes": ["det"],
 }
-COMMON = ["l2", "l1"]
+COMMON = ["l2", "l1", "act_l1"]                 # act_l1: 고른 블록 출력의 크기 (희소한 특징) — "node": 블록 id
 NAMES = {"ce": "교차 엔트로피", "focal": "Focal", "mse": "MSE", "mae": "MAE", "huber": "Huber", "dice": "Dice",
-         "det": "탐지 손실", "l2": "가중치 L2", "l1": "가중치 L1"}
+         "det": "탐지 손실", "l2": "가중치 L2", "l1": "가중치 L1", "act_l1": "블록 출력 L1"}
 # 설정: 이름 → (기본값, 최소, 최대)
 OPTIONS = {"ce": {"smooth": (0.0, 0.0, 0.5), "balance": (False, None, None)},
            "focal": {"gamma": (2.0, 0.0, 5.0), "balance": (False, None, None)},
            "huber": {"delta": (1.0, 0.01, 10.0)},
-           "dice": {}, "mse": {}, "mae": {}, "det": {}, "l2": {}, "l1": {}}
+           "dice": {}, "mse": {}, "mae": {}, "det": {}, "l2": {}, "l1": {}, "act_l1": {"node": ("", None, None)}}
 W_RANGE = (0.0, 100.0)
 
 
@@ -75,6 +75,10 @@ def normalize(spec, task: str, heads: list = None) -> list:
             v = t.get(k, d)
             if isinstance(d, bool):
                 v = bool(v)
+            elif isinstance(d, str):
+                v = str(v or "")
+                if not v:
+                    raise ValueError(f"{NAMES[name]}: 블록을 고르세요")
             else:
                 v = float(v)
                 if not lo <= v <= hi:
@@ -110,7 +114,8 @@ def multi_class_weights(Y, heads: list, spec: list) -> dict:
 
 def label(t: dict) -> str:
     """'교차 엔트로피 ×1' 꼴 (화면·학습 곡선). 정답이 여러 개면 '냉각기 · 교차 엔트로피 ×1'."""
-    return (f"{t['head']} · " if t.get("head") else "") + f"{NAMES[t['term']]} ×{t['w']:g}"
+    node = f" ({t['node']})" if t.get("node") else ""
+    return (f"{t['head']} · " if t.get("head") else "") + f"{NAMES[t['term']]}{node} ×{t['w']:g}"
 
 
 # ---------------------------------------------------------------- PyTorch
@@ -144,6 +149,11 @@ def build(spec: list, task: str, n_cls: int = 0, cw=None, det=None, seg_K: int =
 
     def per_term(t, out, y, net):
         n = t["term"]
+        if n == "act_l1":                                   # 고른 블록의 출력 크기 평균 (학습 때 모델이 노드마다 값을 담아 둠)
+            acts = getattr(net, "capture", None) or {}
+            if t["node"] not in acts:
+                raise ValueError(f"'{t['node']}' 블록의 값을 찾을 수 없음 (없는 블록이거나 고정한 사전학습 블록 안)")
+            return acts[t["node"]].abs().mean()
         if n in ("l2", "l1"):
             ps = [p for p in net.parameters() if p.requires_grad]
             return sum((p * p).sum() for p in ps) if n == "l2" else sum(p.abs().sum() for p in ps)

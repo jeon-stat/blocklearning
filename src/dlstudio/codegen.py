@@ -376,7 +376,10 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     lines += ["", "", "class StudioModel(nn.Module):", "    def __init__(self):", "        super().__init__()"]
     lines += init or ["        pass"]
     first = ["        x = x.transpose(1, 2)            # 순환 모델: (샘플 수, 길이, 1) → 층들이 쓰는 (샘플 수, 1, 길이)"] if plan.kind == "rnn" else []
-    lines += ["", "    def forward(self, x):"] + first + fwd_lines + [f"        return {plan.out}", "", ""]
+    act_nodes = sorted({t["node"] for t in (tr.get("loss") or []) if t["term"] == "act_l1"})
+    names = dict({s.node: s.name for s in plan.steps}, **plan.aliases)
+    keep = [f"        self.acts = {{{', '.join(f'{k!r}: {names[k]}' for k in act_nodes if k in names)}}}   # 손실 '블록 출력 L1'이 씀"] if act_nodes else []
+    lines += ["", "    def forward(self, x):"] + first + fwd_lines + keep + [f"        return {plan.out}", "", ""]
     head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
     if head:
         return "\n".join(lines + _torch_det(head, tr, weights_file, plan))
@@ -513,6 +516,8 @@ def _torch_loss_code(spec: list, task: str, K: int, cw, heads: Optional[list] = 
         elif n == "huber":
             d = t["delta"]
             out += [f"    e = ({O} - {Y}).abs()", f"    v = torch.where(e < {d}, 0.5 * e * e, {d} * (e - {0.5 * d})).mean()"]
+        elif n == "act_l1":
+            out.append(f"    v = model.acts[{t['node']!r}].abs().mean()")
         elif n in ("l2", "l1"):
             f = "(p * p).sum()" if n == "l2" else "p.abs().sum()"
             out.append(f"    v = sum({f} for p in model.parameters() if p.requires_grad)")

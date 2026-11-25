@@ -226,6 +226,8 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         parts_fn = losses.build(loss_spec, task, n_cls=n_cls, det=det, seg_K=getattr(det, "n_cls", 0), cw=cw,
                                 heads=getattr(det, "heads", None))
         loss_fn = lambda out, t: parts_fn(out, t, net)[0]
+        if any(t["term"] == "act_l1" for t in loss_spec):
+            net.capture = {}
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     Xv = yv = None
     if (keep_best or early_stop) and len(Xt) >= MIN_VAL_SPLIT:
@@ -256,9 +258,12 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         val_loss = None
         if Xv is not None:                                   # 검증 손실 (평가 모드)
             net.eval()
-            with torch.no_grad():
-                outs = [net(Xv[i:i + 256]) for i in range(0, len(Xv), 256)]
-                tot = sum(float(loss_fn(o, yv[i * 256:i * 256 + len(o)])) * len(o) for i, o in enumerate(outs))
+            with torch.no_grad():                            # 묶음마다 출력 → 바로 손실 (블록 출력 L1이 그 묶음의 값을 씀)
+                outs, tot = [], 0.0
+                for i in range(0, len(Xv), 256):
+                    o = net(Xv[i:i + 256])
+                    outs.append(o)
+                    tot += float(loss_fn(o, yv[i:i + 256])) * len(o)
             val_loss = tot / len(Xv)
             key = val_loss if val_score is None else -val_score(torch.cat(outs).double().cpu().numpy(), val_idx)
             if key < best:
@@ -275,6 +280,8 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         if early_stop and Xv is not None and since >= early_stop:
             early = True
             break
+    if getattr(net, "capture", None) is not None:
+        net.capture = None
     if best_state is not None:
         net.load_state_dict(best_state)
     net.fit_info = {"best_epoch": best_ep, "early_stopped": early, "n_val": 0 if Xv is None else len(Xv)}

@@ -352,7 +352,11 @@ class Studio:
         settings = TrainSettings.from_dict(b.get("settings"))
         from dlstudio import losses
         try:
-            losses.normalize(settings.loss, d.task, d.n_out.heads if d.task == "multi" else None)
+            spec = losses.normalize(settings.loss, d.task, d.n_out.heads if d.task == "multi" else None)
+            nodes = set(check_graph(graph, d.length, d.n_out, image=d.image).shapes)
+            bad = [t["node"] for t in spec if t["term"] == "act_l1" and t["node"] not in nodes]
+            if bad:
+                raise ValueError(f"블록 출력 L1의 블록 '{bad[0]}'이(가) 모델에 없음")
         except ValueError as e:
             raise UserError(str(e), "④ 학습 → 더 보기의 손실을 고치세요") from None
 

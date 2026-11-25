@@ -94,3 +94,37 @@ def test_training_with_assembled_loss_torch_and_engine(tmp_path):
                                    "loss": [dict(t, label=losses.label(t)) for t in norm],
                                    "class_weights": losses.class_weights(d.y_train, 2).tolist()})
     assert set(w["progress"][-1]["terms"]) == {"Focal ×1", "가중치 L2 ×0.0001"} and np.isfinite(w["result"]["test_metric"])
+
+
+def test_block_output_l1_torch_engine_and_code(tmp_path):
+    """블록 출력 L1 (act_l1): 고른 블록의 출력 크기를 손실에 더함 — PyTorch·엔진 학습, 검사, 내보내는 코드."""
+    from dlstudio.core import Studio, UserError
+    d = load_example("ecg")
+    d.X_train, d.y_train, d.X_test, d.y_test = d.X_train[:160], d.y_train[:160], d.X_test[:60], d.y_test[:60]
+    g = from_blocks([{"type": "conv", "channels": 8, "kernel": 5, "stride": 1}, {"type": "act", "kind": "relu"},
+                     {"type": "global_avg"}, {"type": "output"}])
+    node = [n["id"] for n in g["nodes"] if n["type"] == "act"][0]
+    spec = [{"term": "ce"}, {"term": "act_l1", "w": 0.01, "node": node}]
+    assert losses.normalize(spec, "classification")[1]["node"] == node
+    with pytest.raises(ValueError):
+        losses.normalize([{"term": "ce"}, {"term": "act_l1"}], "classification")        # 블록을 골라야 함
+    j = Job("t")
+    r = train_job(j, g, d, TrainSettings(epochs=2, keep_best=True, loss=spec))
+    lab = losses.label(losses.normalize(spec, "classification")[1])
+    assert lab in j.progress[-1]["terms"] and j.progress[-1]["terms"][lab] > 0 and np.isfinite(r["test_metric"])
+    assert getattr(r["model"], "capture", None) is None
+    s = Studio()
+    s.api_data_load({"example": "ecg"})
+    with pytest.raises(UserError):
+        s.api_train({"graph": g, "settings": {"epochs": 1, "loss": [{"term": "ce"}, {"term": "act_l1", "node": "없음"}]}})
+    code = s.api_code({"framework": "pytorch", "graph": g, "settings": {"epochs": 1, "loss": spec}})["code"]
+    assert "self.acts = {" in code and "model.acts[" in code
+    ns = {}
+    exec(compile(code.replace('if __name__ == "__main__":', "if False:"), "studio.py", "exec"), ns)
+    ns["train"](ns["StudioModel"](), d.X_train[:64, None, :], d.y_train[:64], epochs=1)
+    if not HAS_NODE:
+        return
+    from tests.test_engine import _train_js
+    w = _train_js(tmp_path, g, d, {"epochs": 2, "lr": 1e-3, "batch_size": 32, "seed": 0, "keep_best": True,
+                                   "loss": [dict(t, label=losses.label(t)) for t in losses.normalize(spec, "classification")]})
+    assert w["progress"][-1]["terms"][lab] > 0 and np.isfinite(w["progress"][-1]["val_loss"])

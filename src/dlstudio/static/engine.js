@@ -855,7 +855,11 @@ function buildLoss(spec, ctx) {
     const w = tf.matMul(oh, cwT.reshape([-1, 1])).reshape([-1]);
     return per.mul(w).sum().div(tf.maximum(w.sum(), 1e-12));
   };
-  const term = (t, out, yb, net) => {
+  const term = (t, out, yb, net, rec) => {
+    if (t.term === "act_l1") {                               // 고른 블록의 출력 크기 평균 (forward가 노드마다 담아 둔 값)
+      if (!rec || !rec[t.node]) throw new Error(`'${t.node}' 블록의 값을 찾을 수 없음 (없는 블록이거나 고정한 사전학습 블록 안)`);
+      return rec[t.node].abs().mean();
+    }
     if (t.term === "l2") return tf.addN(net.trainable.map((v) => v.square().sum()));
     if (t.term === "l1") return tf.addN(net.trainable.map((v) => v.abs().sum()));
     let o = out, y = yb, cwT = cwOf[""] || null, seg = ctx.seg;
@@ -894,16 +898,17 @@ function buildLoss(spec, ctx) {
       default: throw new Error("모르는 손실: " + t.term);
     }
   };
-  const fn = (out, yb, net) => {
+  const fn = (out, yb, net, rec) => {
     let total = null;
     const parts = spec.map((t) => {
-      const v = term(t, out, yb, net);
+      const v = term(t, out, yb, net, rec);
       total = total ? total.add(v.mul(t.w)) : v.mul(t.w);
       return [t.label, v];
     });
     return { total, parts };
   };
   fn.dispose = () => Object.values(cwOf).forEach((t) => t.dispose());
+  fn.needsRecord = spec.some((t) => t.term === "act_l1");
   return fn;
 }
 
@@ -1005,7 +1010,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
   const rand = rng((s.seed || 0) * 104729 + 3);
   const spec = s.loss || (multi ? multi.heads.map((h) => ({ term: h.kind === "class" ? "ce" : "mse", w: 1, head: h.name, label: h.name })) : null);
   const custom = spec ? buildLoss(spec, { seg, det, cw: s.class_weights, reg, heads: multi && multi.heads }) : null;   // 조립한 손실 (없으면 과제의 기본)
-  const lossOf = (out, yb) => (custom ? custom(out, yb, net).total
+  const lossOf = (out, yb, rec) => (custom ? custom(out, yb, net, rec).total
     : det ? detLoss(out, yb, det.grid, det.per_cell)
     : seg ? tf.losses.softmaxCrossEntropy(yb, out.reshape([-1, seg.n_cls, seg.length]).transpose([0, 2, 1]))   // 시점마다
     : reg ? tf.losses.meanSquaredError(yb, out) : tf.losses.softmaxCrossEntropy(yb, out));
@@ -1038,9 +1043,10 @@ async function train(plan, d, s, onEpoch, isCancelled) {
           const ii = tf.tensor1d(idx, "int32");
           const xb = tf.gather(Xfit, ii), yb = tf.gather(yfit, ii);
           return opt.minimize(() => {
-            const out = net.forward(xb, true, pending);
+            const rec = custom && custom.needsRecord ? {} : null;
+            const out = net.forward(xb, true, pending, rec);
             if (!custom) return lossOf(out, yb);
-            const { total, parts } = custom(out, yb, net);
+            const { total, parts } = custom(out, yb, net, rec);
             kept = parts.map(([k, v]) => [k, tf.keep(v)]);          // 항마다의 값 (학습 곡선)
             return total;
           }, true, net.trainable);
@@ -1060,7 +1066,9 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       let valLoss = null;
       if (Xv) {                                               // 검증 손실 (평가 모드)
         const vo = tf.tidy(() => net.forward(Xv, false));
-        valLoss = tf.tidy(() => lossOf(vo, yv).dataSync()[0]);
+        valLoss = custom && custom.needsRecord
+          ? tf.tidy(() => { const r = {}; return lossOf(net.forward(Xv, false, [], r), yv, r).dataSync()[0]; })
+          : tf.tidy(() => lossOf(vo, yv).dataSync()[0]);
         const key = det ? -detMetric(await vo.data(), vIdx.map((i) => det.train[i]), det) : valLoss;
         vo.dispose();
         if (key < bestKey) {
