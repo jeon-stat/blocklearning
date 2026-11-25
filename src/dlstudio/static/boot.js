@@ -1,6 +1,8 @@
 // DL studio 웹 버전 시작: 로컬 실행과 같은 화면(static/index.html)을 불러오고, 계산에 쓸 스크립트를 차례로 불러온다.
 // 외부(CDN) 스크립트는 버전을 고정하고 내용 해시(SRI)가 맞을 때만 실행한다 — CDN 파일이 바뀌면 실행하지 않음.
 (async () => {
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost"))
+    navigator.serviceWorker.register("sw.js").catch(() => {});   // 두 번째부터 빨리 (sw.js: 버전 박힌 CDN 파일은 받아 둠, 이 사이트 파일은 늘 네트워크 먼저)
   const STATIC = "src/dlstudio/static/";
   const CDN = [
     ["https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js", "sha384-90so5tCKvl0xs9agU29IMKlAVzhfzFX7QO//YxQkRhJG58bBZrFN+2ZTRB026X5X"],

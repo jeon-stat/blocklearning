@@ -214,6 +214,10 @@ function go(step, fromHistory = false) {
   if (!$("step-" + step)) step = "task";
   st.step = step;
   if (step === "train") renderLoss();                       // 손실 칩의 블록 목록은 지금 모델에서
+  setTimeout(() => {                                         // 좁은 화면: 단계 줄이 가로로 밀리면 지금 단계가 보이게
+    const s = document.querySelector("#steps .step.active"), bar = $("steps");
+    if (s && bar && bar.scrollWidth > bar.clientWidth) bar.scrollLeft = s.offsetLeft - bar.offsetLeft - 8;
+  }, 0);
   if (!fromHistory) {
     try {
       const h = history.state && history.state.dls;

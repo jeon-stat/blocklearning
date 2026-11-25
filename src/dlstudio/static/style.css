@@ -821,3 +821,17 @@ td.seg-cell { text-align: left; }
 .runs-compare { margin-top: 10px; }
 .tab.cmp th { text-align: left; color: var(--muted); font-weight: 500; }
 .tab.cmp tr.diff td { font-weight: 700; background: var(--accent-bg); }
+/* 휴대폰 폭: 위쪽 줄이 화면을 넘지 않게 (프로젝트 이름은 말줄임, 단계는 가로로 밀어 보기) */
+@media (max-width: 600px) {
+  body.app > .top { gap: 6px; padding: 8px 10px; }
+  .proj-switch { min-width: 0; max-width: 100%; flex: 1 1 100%; }
+  .proj-switch .proj-btn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-switch .proj-status { display: none; }
+  .steps { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .step { flex: none; padding: 4px 8px; }
+  body.app > main { padding: 10px; }
+  main > .panel { padding: 14px; }
+  .grid4 { grid-template-columns: 1fr 1fr; }
+  .loss-row .loss-k { min-width: 0; width: 100%; }
+  .head-tabs button { padding: 3px 8px; font-size: 13px; }
+}
