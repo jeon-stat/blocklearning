@@ -60,7 +60,7 @@ python -m dlstudio          # 또는 dlstudio
 | 분류 · 표 | 강판 결함 7종 — 결함 영역의 모양·밝기 27가지 ([UCI Steel Plates Faults](https://archive.ics.uci.edu/dataset/198), CC BY 4.0) | MLP, 깊은 MLP, FT-Transformer식 |
 | 회귀 · 시계열 | 유압 압력 신호 → 밸브 상태 % ([UCI 유압 시스템](https://archive.ics.uci.edu/dataset/447), CC BY 4.0) | ResNet1D, 1D CNN, TCN, LSTM, Transformer |
 | 회귀 · 표 | 콘크리트 배합 → 압축강도 MPa ([UCI](https://archive.ics.uci.edu/dataset/165), CC BY 4.0) | MLP, FT-Transformer식 |
-| 객체 탐지 · 이미지 | PCB 결함 위치 6종 64×64 ([PCB-Defect](https://doi.org/10.17632/vdj74sngvn.2), CC BY 4.0) | 작은 탐지 모델, 깊은 탐지 모델 |
+| 객체 탐지 · 이미지 | PCB 결함 위치 6종 64×64 ([PCB-Defect](https://doi.org/10.17632/vdj74sngvn.2), CC BY 4.0) | 작은 탐지 모델, 깊은 탐지 모델, 전이 학습 탐지 (MobileNetV3) |
 | 이상 탐지 · 시계열 | 베어링 진동 — 정상만 학습해 결함 찾기 (오타와대, CC BY 4.0) | Dense 오토인코더, Conv 오토인코더 |
 | 이상 탐지 · 표 | 유압 시스템 — 정상만 학습해 냉각기·밸브·펌프 고장 찾기 (UCI, CC BY 4.0) | 오토인코더 |
 | 이상 탐지 · 이미지 | 강판 표면 — 양호만 학습해 불량 찾기 (SteelBlastQC) / 흉부 X-ray — 정상만 학습해 폐렴 찾기 (PneumoniaMNIST) | 사전학습 특징 + 정상과의 거리 |
@@ -144,6 +144,7 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 
 - 블록 안에서: 그림마다 0~1로 → 정한 크기(64–224, 기본 128)로 늘이거나 줄임(bilinear) → 흑백이면 3채널로 복사 → −1~1. 가장자리 채움은 원래 모델(TensorFlow)과 같게.
 - 학습 때 특징을 한 번만 뽑아 두고 뒷부분만 반복 학습합니다 (블록이 입력 바로 뒤에 있고, 앞에 증강이 없을 때).
+- 탐지: 블록 설정 [출력]을 '특징 지도'로 하면 그림을 2배로 넣어 앞 블록 8개까지만 써서, 원래 그림 8픽셀마다 특징 48개(탐지 격자와 같은 칸)를 냅니다. 대표 모델 [전이 학습 탐지 (MobileNetV3)] = 특징 지도 → Conv2D 64 → ReLU → 출력. PCB 결함 예시: 시험 mAP@0.5 0.23 (PyTorch 58초), 처음부터 학습하는 깊은 탐지 모델 0.23 (약 400초)·작은 탐지 모델 0.09.
 - 미세조정: 블록 설정 [함께 학습할 끝 블록]을 1–3으로 하면 끝 블록과 마지막 1×1 합성곱 둘을 함께 학습합니다 (작은 학습률 권장, 예: 0.0003). 15 epoch에서 강판 93.3% → 96.0% (끝 2개), 흉부 X-ray 90.8% → 93.3% (끝 1개)로 올랐지만, 특징을 매번 다시 계산해 3–10배 오래 걸리고 프로젝트에 학습한 값(수 MB)이 저장됩니다. 아주 작은 그림(28×28 흉부 X-ray)에서는 처음부터 학습하는 모델보다 나아지지 않을 수 있습니다.
 - 가중치: Google의 [MobileNetV3 small-100-224 feature vector](https://www.kaggle.com/models/google/mobilenet-v3/tfJs/small-100-224-feature-vector/1) (TF Hub `mobilenet_v3_small_100_224/feature_vector/5`, **Apache License 2.0**). `tools/build_pretrained.py`가 TF.js 파일을 `src/dlstudio/pretrained/mnv3s.bin`·`.json`으로 옮기고(축 순서만 바꿈), 원래 모델과 출력이 같은지 확인합니다. 출처·바꾼 내용은 `mnv3s.SOURCE.txt`, 라이선스 원문은 `LICENSE-mnv3s.txt`.
 - 웹 버전은 이 블록을 처음 쓸 때 같은 사이트에서 가중치를 받습니다. 프로젝트·학습 기록에는 고정 가중치를 넣지 않고(열 때 다시 채움), 내보내는 PyTorch 코드·가중치에는 모두 넣습니다. Keras 코드로는 내보내지 않습니다.

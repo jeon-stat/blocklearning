@@ -549,6 +549,8 @@ class MobileNetV3Small(nn.Module):
     """Google이 ImageNet으로 미리 학습한 MobileNetV3-Small 특징 추출기 (TF Hub mobilenet_v3_small_100_224/feature_vector,
     Apache 2.0, BatchNorm은 합성곱에 접혀 있음). 학습하지 않음(고정).
     그림 (N, 1 또는 3, H, W) → 그림마다 0~1로 → size×size (bilinear) → −1~1 → 특징 1024개.
+    out="map": 그림을 2배(2H×2W)로 넣어 앞 블록 8개까지 → 특징 지도 (48, H/8, W/8) (탐지: 원래 그림 8픽셀마다 한 칸).
+    train_last > 0: 끝 블록 train_last개(특징 1024개면 마지막 1×1 합성곱 둘도)를 함께 학습 (미세조정).
     가장자리는 TensorFlow 'SAME'처럼 채움 (stride 2면 아래·오른쪽을 더).
     CFG: (들어옴, kernel, 넓힘, 나감, SE 채널 (0이면 없음), HardSwish인지, stride)."""
 
@@ -557,12 +559,13 @@ class MobileNetV3Small(nn.Module):
            (48, 5, 288, 96, 72, 1, 2), (96, 5, 576, 96, 144, 1, 1), (96, 5, 576, 96, 144, 1, 1))
     SE_SCALE = 0.16667                                   # 원래 모델의 hard sigmoid: relu6(x + 3) × 0.16667
 
-    def __init__(self, size=128, train_last=0):
+    def __init__(self, size=128, train_last=0, out="vector"):
         super().__init__()
-        self.size = size
+        self.size, self.map = size, out == "map"
+        nb = 8 if self.map else len(self.CFG)
         self.stem = nn.Conv2d(3, 16, 3, 2)
         self.blocks = nn.ModuleList()
-        for i, k, e, o, q, hs, s in self.CFG:
+        for i, k, e, o, q, hs, s in self.CFG[:nb]:
             b = nn.Module()
             if e != i:
                 b.expand = nn.Conv2d(i, e, 1)
@@ -571,11 +574,12 @@ class MobileNetV3Small(nn.Module):
                 b.se1, b.se2 = nn.Conv2d(e, q, 1), nn.Conv2d(q, e, 1)
             b.project = nn.Conv2d(e, o, 1)
             self.blocks.append(b)
-        self.last = nn.Conv2d(96, 576, 1)
-        self.head = nn.Conv2d(576, 1024, 1)
+        if not self.map:
+            self.last = nn.Conv2d(96, 576, 1)
+            self.head = nn.Conv2d(576, 1024, 1)
         self.requires_grad_(False)
-        if train_last:                                   # 미세조정: 끝 블록 train_last개와 마지막 1×1 합성곱 둘은 함께 학습
-            for m in list(self.blocks)[len(self.CFG) - train_last:] + [self.last, self.head]:
+        if train_last:                                   # 미세조정: 끝 블록 train_last개 (특징 1024개면 마지막 1×1 합성곱 둘도)
+            for m in list(self.blocks)[nb - train_last:] + ([] if self.map else [self.last, self.head]):
                 m.requires_grad_(True)
 
     @staticmethod
@@ -594,8 +598,9 @@ class MobileNetV3Small(nn.Module):
         x = (x - lo) / (hi - lo).clamp_min(1e-6)
         if x.shape[1] == 1:
             x = x.repeat(1, 3, 1, 1)
-        if tuple(x.shape[2:]) != (self.size, self.size):
-            x = F.interpolate(x, size=(self.size, self.size), mode="bilinear", align_corners=False)
+        hw = (2 * x.shape[2], 2 * x.shape[3]) if self.map else (self.size, self.size)
+        if tuple(x.shape[2:]) != hw:
+            x = F.interpolate(x, size=hw, mode="bilinear", align_corners=False)
         return x * 2 - 1
 
     def features(self, x):
@@ -608,6 +613,8 @@ class MobileNetV3Small(nn.Module):
                 y = y * (F.relu6(b.se2(F.relu(b.se1(y.mean((2, 3), keepdim=True)))) + 3) * self.SE_SCALE)
             y = b.project(y)
             x = x + y if s == 1 and i == o else y
+        if self.map:
+            return x
         x = F.hardswish(self.last(x)).mean((2, 3), keepdim=True)
         return F.hardswish(self.head(x)).flatten(1)
 

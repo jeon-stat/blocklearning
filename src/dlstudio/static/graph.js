@@ -626,7 +626,7 @@ const LABELS = {
   rand_rotate: (b) => `RandomRotation · ±${b.degrees || 15}°`, rand_shift: (b) => `RandomShift · ±${b.frac ?? 0.1}`,
   rand_zoom: (b) => `RandomZoom · ±${b.frac ?? 0.1}`, rand_scale: (b) => `RandomScale · ±${b.frac ?? 0.2}`,
   rand_stretch: (b) => `RandomStretch · ±${b.frac ?? 0.1}`,
-  mnv3s: (b) => `MobileNetV3-Small · ${b.size || 128}×${b.size || 128} · ${b.train_last ? `끝 ${b.train_last}블록 학습` : "고정"}`,
+  mnv3s: (b) => `MobileNetV3-Small · ${b.out === "map" ? "특징 지도" : `${b.size || 128}×${b.size || 128}`} · ${b.train_last ? `끝 ${b.train_last}블록 학습` : "고정"}`,
 };
 // 설정 칸: [종류, 키, 이름, …]
 const num = (k, lab, min, max) => ["num", k, lab, min, max];
@@ -666,7 +666,8 @@ const FIELDS = {
     sel("n_mels", "mel 칸 수", vals(8, 16, 32, 64)), sel("n_mfcc", "MFCC 개수", vals(8, 13, 20, 40))],
   rand_flip: [sel("dir", "방향 (그림)", [["h", "좌우"], ["v", "상하"], ["hv", "좌우·상하"]])],
   rand_rotate: [num("degrees", "최대 각도 (±도)", 1, 180)],
-  mnv3s: [sel("size", "입력 크기", [64, 96, 128, 160, 224].map((v) => [v, `${v}×${v}`])),
+  mnv3s: [sel("out", "출력", [["vector", "특징 1024개 (분류·이상 탐지)"], ["map", "특징 지도 (탐지: 8픽셀마다 한 칸)"]]),
+    sel("size", "입력 크기 (특징 1024개일 때)", [64, 96, 128, 160, 224].map((v) => [v, `${v}×${v}`])),
     sel("train_last", "함께 학습할 끝 블록 (미세조정)", [[0, "없음 (모두 고정, 빠름)"], [1, "끝 1개"], [2, "끝 2개"], [3, "끝 3개"]])],
   rand_shift: [FRAC], rand_zoom: [FRAC], rand_scale: [FRAC], rand_stretch: [FRAC],
 };

@@ -31,7 +31,8 @@ def arrays(kind: str) -> dict:
 def fill(module, kind: str) -> None:
     """PyTorch 모듈에 사전학습 가중치를 넣음."""
     import torch
-    module.load_state_dict({k: torch.tensor(np.array(v)) for k, v in arrays(kind).items()})
+    want = module.state_dict()                            # 특징 지도는 앞부분만 씀
+    module.load_state_dict({k: torch.tensor(np.array(v)) for k, v in arrays(kind).items() if k in want})
 
 
 def frozen_names(graph: dict, length: int, n_out, image: tuple = None) -> set:

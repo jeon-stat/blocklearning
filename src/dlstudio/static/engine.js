@@ -578,15 +578,15 @@ function mnv3s(x, st, P, k, training = false) {
   return parts.length === 1 ? parts[0] : tf.concat(parts);
 }
 function mnv3sCore(x, st, P, k) {
-  const size = st.cfg.size || 128, n = x.shape[0], w = (nm) => P[`${k}.${nm}`];
+  const map = st.cfg.out === "map", n = x.shape[0], w = (nm) => P[`${k}.${nm}`];   // 특징 지도: 그림을 2배로, 앞 블록 8개까지
   const flat = x.reshape([n, -1]);
   const lo = flat.min(1).reshape([n, 1, 1, 1]), hi = flat.max(1).reshape([n, 1, 1, 1]);
   let h = x.sub(lo).div(tf.maximum(hi.sub(lo), 1e-6));                      // 그림마다 0~1
   if (h.shape[1] === 1) h = h.tile([1, 3, 1, 1]);
-  const [H, Wd] = h.shape.slice(2);
-  if (H !== size || Wd !== size) {                                          // bilinear (align_corners=False), 가로 → 세로
-    const a = alongLast(h, interpMat(Wd, size));
-    h = tf.transpose(alongLast(tf.transpose(a, [0, 1, 3, 2]), interpMat(H, size)), [0, 1, 3, 2]);
+  const [H, Wd] = h.shape.slice(2), th = map ? 2 * H : st.cfg.size || 128, tw = map ? 2 * Wd : st.cfg.size || 128;
+  if (H !== th || Wd !== tw) {                                              // bilinear (align_corners=False), 가로 → 세로
+    const a = alongLast(h, interpMat(Wd, tw));
+    h = tf.transpose(alongLast(tf.transpose(a, [0, 1, 3, 2]), interpMat(H, th)), [0, 1, 3, 2]);
   }
   h = tf.transpose(h.mul(2).sub(1), [0, 2, 3, 1]);                        // −1~1
   const pad = (t, kk, s) => {                                               // TensorFlow 'SAME' (stride 2면 아래·오른쪽을 더)
@@ -608,7 +608,7 @@ function mnv3sCore(x, st, P, k) {
   };
   const fc = (z, nm) => { const W = w(nm + ".weight"); return tf.matMul(z, W.reshape([W.shape[0], W.shape[1]]), false, true).add(w(nm + ".bias")); };
   h = ACT.hardswish(conv(h, "stem", 2));
-  MNV3S.forEach(([i, kk, e, o, q, hs, s], j) => {
+  MNV3S.slice(0, map ? 8 : MNV3S.length).forEach(([i, kk, e, o, q, hs, s], j) => {
     const act = hs ? ACT.hardswish : tf.relu, b = `blocks.${j}.`;
     let y = e !== i ? act(pw(h, b + "expand")) : h;
     y = act(dw(y, b + "dw", s));
@@ -616,6 +616,7 @@ function mnv3sCore(x, st, P, k) {
     y = pw(y, b + "project");
     h = s === 1 && i === o ? h.add(y) : y;
   });
+  if (map) return tf.transpose(h, [0, 3, 1, 2]);                            // (N, 48, H/8, W/8)
   return ACT.hardswish(fc(ACT.hardswish(pw(h, "last")).mean([1, 2]), "head"));
 }
 function spatialPart(x, st, P, k) {                   // 위치마다 [채널 평균, 채널 최댓값] → k칸 Conv → sigmoid → 곱함
@@ -875,7 +876,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
   const back = (out) => (reg ? out.map((v, i) => v * sd[i % nY] + mu[i % nY]) : out);
   const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image);
   const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image);
-  const head = det ? null : frozenHead(plan);              // 고정한 사전학습 층: 특징을 한 번만 뽑고 뒷부분만 학습
+  const head = frozenHead(plan);                           // 고정한 사전학습 층: 특징을 한 번만 뽑고 뒷부분만 학습
   const Ftr = head ? await headFeatures(net, Xtr) : Xtr, Fte = head ? await headFeatures(net, Xte) : Xte;
   const ytr = det ? tf.tensor2d(d.y_train, [d.n_train, d.n_out])
     : reg ? tf.tensor2d(Float32Array.from(target, (v, i) => (v - mu[i % nY]) / sd[i % nY]), [d.n_train, nY])

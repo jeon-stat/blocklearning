@@ -104,6 +104,12 @@ T_DET_SMALL = {"id": "det_small", "name": "작은 탐지 모델",
                "when": "처음 시작할 때. 배경이 단순한 작은 그림(부품·결함 위치)에서 빠르게 학습",
                "blocks": [_c2(16), P2, P2D, _c2(32), P2, P2D, _c2(32), P2, P2D, _c2(32), P2, OUT]}
 
+T_DET_PRE = {"id": "det_mnv3", "name": "전이 학습 탐지 (MobileNetV3)",
+             "desc": "Google이 ImageNet으로 미리 학습한 MobileNetV3-Small의 앞부분으로 그림 8픽셀마다 특징 48개(특징 지도)를 뽑고, "
+                     "그 위의 작은 합성곱만 학습해 칸마다 '사물이 있나·상자·종류'를 맞힘",
+             "when": "처음부터 학습하는 탐지 모델이 느리거나 부족할 때. 특징을 한 번만 뽑아 빠름",
+             "blocks": [{"type": "mnv3s", "out": "map"}, _c2(64), P2, OUT]}
+
 T_DET_RES = {"id": "det_res", "name": "깊은 탐지 모델",
              "desc": "작은 탐지 모델에 BatchNorm과 지름길(Residual)을 더해 더 깊게 쌓아, 더 크고 복잡한 모양도 보는 모델",
              "when": "작은 탐지 모델로 부족할 때. 학습이 2–3배 오래 걸림",
@@ -238,7 +244,7 @@ CATALOG = [
           "desc": "그림 한 장에서 사물마다 위치(상자)와 종류를 찾음. 정답은 라벨링에서 상자·다각형·원으로 그림",
           "examples_text": "부품 위치 찾기·개수 세기, 표면 결함 위치 표시, 현미경 사진에서 세포 찾기",
           "example_data": [["pcb_det", "PCB 결함 위치 찾기 — 6종 (제조, 64×64)"]],
-          "templates": [T_DET_SMALL, T_DET_RES]},
+          "templates": [T_DET_SMALL, T_DET_RES, T_DET_PRE]},
      ]},
     {"id": "anomaly", "name": "이상 탐지", "icon": "🚨",
      "desc": "정상 데이터만으로 학습해, 평소와 다른 데이터를 찾아냅니다",

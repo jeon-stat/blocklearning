@@ -344,6 +344,11 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
     from dlstudio import detect
     det, done = data.n_out, []
     G, K = det.grid, det.n_cls
+    Xfit, head = Xtr, model.frozen_head()
+    if head is not None:                                 # 고정한 사전학습 블록: 특징 지도를 한 번만 뽑고 뒷부분만 학습
+        Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
+        Xte_t = torch.as_tensor(Fte, dtype=torch.float32, device=dev)
+        model.start = head
 
     def cb(info):
         net = info["model"]
@@ -357,8 +362,11 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        net = fit(model, Xtr, data.y_train, "detection", settings.epochs, settings.lr, settings.batch_size,
-                  seed=settings.seed, device=dev, callback=cb, det=det)
+        try:
+            net = fit(model, Xfit, data.y_train, "detection", settings.epochs, settings.lr, settings.batch_size,
+                      seed=settings.seed, device=dev, callback=cb, det=det)
+        finally:
+            model.start = None
     with torch.no_grad():
         out = net(torch.as_tensor(Xte, dtype=torch.float32)).double().numpy()
         Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)

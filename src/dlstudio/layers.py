@@ -45,6 +45,7 @@ MNV3S_CFG = ((16, 3, 16, 16, 8, 0, 2), (16, 3, 72, 24, 0, 0, 2), (24, 3, 88, 24,
              (40, 5, 240, 40, 64, 1, 1), (40, 5, 240, 40, 64, 1, 1), (40, 5, 120, 48, 32, 1, 1), (48, 5, 144, 48, 40, 1, 1),
              (48, 5, 288, 96, 72, 1, 2), (96, 5, 576, 96, 144, 1, 1), (96, 5, 576, 96, 144, 1, 1))
 MNV3S_OUT = 1024
+MNV3S_MAP_BLOCKS, MNV3S_MAP_C = 8, 48                       # 특징 지도: 앞 블록 8개까지 (그림을 2배로 넣어 원래 8픽셀마다 한 칸, 48채널)
 DIST_K = 128                                                # 이상 탐지 출력 '정상과의 거리': 주성분 수 (특징이 적으면 그 수)
 
 
@@ -129,6 +130,7 @@ STR_PARAMS = {
     "mha": {"causal": ((False, True), False, "causal은 참·거짓"), "pos": (("none", "rope"), "none", "pos는 none 또는 rope")},
     "pos_enc": {"mode": (("sin", "learned"), "sin", "mode는 sin 또는 learned")},
     "rand_flip": {"dir": (("h", "v", "hv"), "h", "방향은 h·v·hv")},
+    "mnv3s": {"out": (("vector", "map"), "vector", "출력은 vector(특징 1024개) 또는 map(특징 지도)")},
     "spectrogram": {"mode": (("log", "mel", "mfcc"), "log", "mode는 log·mel·mfcc")},
 }
 
@@ -240,6 +242,11 @@ def shape(w, b: dict, shape_in, path, ctx):
         if C not in (1, 3):
             w.issue(path, f"MobileNetV3-Small은 흑백(채널 1)이나 컬러(채널 3) 그림에만 (지금 채널 {C}개)", "Input 바로 뒤에 두세요")
             return None
+        if o("out") == "map":                               # 그림을 2배로 넣고 stride 2를 네 번 (TensorFlow 'SAME'처럼 올림)
+            h, w = s[1], s[2]
+            for _ in range(3):
+                h, w = -(-h // 2), -(-w // 2)
+            return (MNV3S_MAP_C, h, w)
         return (MNV3S_OUT,)
     if t == "spectrogram":
         if not _need(w, t, s, (2,), path):
@@ -422,16 +429,18 @@ def params(t: str, b: dict, ins, out, k: str, ins2=None) -> list:
     if t == "embedding":
         return [(f"{k}.weight", [o("bins"), o("dim")], "weight", "normal1")]
     if t == "mnv3s":
-        return mnv3s_params(k, o("train_last"))
+        return mnv3s_params(k, o("train_last"), o("out"))
     return []
 
 
-def mnv3s_params(k: str, train_last: int = 0) -> list:
+def mnv3s_params(k: str, train_last: int = 0, out_kind: str = "vector") -> list:
     """MobileNetV3-Small 가중치 (처음 값은 사전학습 파일). 종류 frozen = 학습하지 않음.
-    train_last > 0 (미세조정): 끝 블록 train_last개와 마지막 1×1 합성곱 둘은 weight (함께 학습)."""
-    tune = len(MNV3S_CFG) - train_last if train_last else len(MNV3S_CFG) + 1
+    train_last > 0 (미세조정): 끝 블록 train_last개(특징 1024개면 마지막 1×1 합성곱 둘도)는 weight (함께 학습).
+    out_kind "map" (특징 지도): 앞 블록 8개까지만."""
+    nb = MNV3S_MAP_BLOCKS if out_kind == "map" else len(MNV3S_CFG)
+    tune = nb - train_last if train_last else nb + 1
     out = []
-    for j, (i, kk, e, o, q, hs, s) in enumerate(MNV3S_CFG):
+    for j, (i, kk, e, o, q, hs, s) in enumerate(MNV3S_CFG[:nb]):
         kind = "weight" if j >= tune else "frozen"
         Fz = lambda name, *shape: (f"{k}.{name}", list(shape), kind, "pretrained")
         p = f"blocks.{j}."
@@ -444,6 +453,8 @@ def mnv3s_params(k: str, train_last: int = 0) -> list:
     kind = "weight" if train_last else "frozen"
     Fz = lambda name, *shape: (f"{k}.{name}", list(shape), kind, "pretrained")
     stem = [(f"{k}.stem.weight", [16, 3, 3, 3], "frozen", "pretrained"), (f"{k}.stem.bias", [16], "frozen", "pretrained")]
+    if out_kind == "map":
+        return stem + out
     return stem + out + [Fz("last.weight", 576, 96, 1, 1), Fz("last.bias", 576),
                          Fz("head.weight", MNV3S_OUT, 576, 1, 1), Fz("head.bias", MNV3S_OUT)]
 
@@ -556,7 +567,8 @@ def torch_args(t: str, b: dict, ins, ins2=None):
     if t == "rand_stretch":
         return "RandomStretch", {"frac": float(o("frac"))}
     if t == "mnv3s":
-        return "MobileNetV3Small", dict({"size": o("size")}, **({"train_last": o("train_last")} if o("train_last") else {}))
+        return "MobileNetV3Small", dict({"size": o("size")}, **({"train_last": o("train_last")} if o("train_last") else {}),
+                                        **({"out": "map"} if o("out") == "map" else {}))
     raise ValueError(f"알 수 없는 층 {t}")
 
 
