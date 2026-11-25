@@ -532,11 +532,22 @@ async function loadData(body) {                       // 성공하면 true
     return false;
   }
 }
+// ④ 학습 화면 비우기: 새 데이터(다른 프로젝트 열기 포함)에는 지난 학습 결과·곡선·샘플을 남기지 않음
+function clearTrainView() {
+  $("train-result").innerHTML = `<p class="muted">학습이 끝나면 나옵니다</p>`;
+  for (const id of ["train-warnings", "train-confusion", "train-scatter", "sample-flow", "sample-info", "train-status"]) $(id).innerHTML = "";
+  $("cm-pick").hidden = true;
+  $("sample-box").hidden = true;
+  $("det-box").hidden = true;
+  $("det-box").innerHTML = "";
+  st.detPred = null;
+  drawCurve([], "accuracy");
+}
 function onData(s) {
   st.summary = s;
   st.dataSrc = s.example || null;
   st.trained = false;
-  $("det-box").hidden = true;                                // 지난 데이터의 시험 그림은 치움
+  clearTrainView();                                          // 지난 데이터·프로젝트의 학습 결과는 치움
   $("data-summary").hidden = false;
   $("btn-next-data").hidden = false;
   const det = s.task === "detection", fc = s.forecast, ae = s.anomaly;
