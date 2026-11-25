@@ -43,7 +43,7 @@ def _fixture(case, seed=1):
     fx = {"name": name, "plan": codegen.plan_dict(g, L, n_out, image), "state": state,
           "x": {"shape": list(x.shape), "data": x.numpy().ravel().tolist()}}
     from dlstudio.analysis import attention
-    exp = {"y": y, "trace": tr, "params": sum(p.numel() for p in net.parameters()), "attn": attention(net, x[0].numpy())}
+    exp = {"y": y, "trace": tr, "params": sum(p.numel() for p in net.parameters() if p.requires_grad), "attn": attention(net, x[0].numpy())}
     from dlstudio.nn_extra import RANDOM_MODULES
     has_dropout = any(isinstance(m, (torch.nn.modules.dropout._DropoutNd,) + RANDOM_MODULES) for m in net.modules())
     if not has_dropout:                                     # 학습 모드: 묶음 통계 BatchNorm, 교차 엔트로피 기울기

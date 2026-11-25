@@ -66,7 +66,8 @@ PREFIX = {"conv": "conv", "conv2d": "conv", "pool": "pool", "pool2d": "pool", "g
           "spatial_dropout": "sdrop", "drop_path": "droppath", "gaussian_noise": "noise", "slice": "split",
           "reshape": "reshape", "permute": "transpose", "to_seq": "seq", "crop": "crop", "pad": "pad", "embedding": "emb",
           "spectrogram": "spec", "rand_flip": "flip", "rand_rotate": "rotate", "rand_shift": "shift", "rand_zoom": "zoom",
-          "rand_scale": "scale", "rand_stretch": "stretch", "multiply": "mul", "average": "avg", "maximum": "max"}
+          "rand_scale": "scale", "rand_stretch": "stretch", "multiply": "mul", "average": "avg", "maximum": "max",
+          "mnv3s": "mnv3"}
 
 
 def _pretty(t: str, cfg: dict, counts: dict) -> str:
@@ -543,7 +544,7 @@ def save_npz(state: dict, file, data=None) -> None:
 
 
 def param_specs(step: Step) -> list:
-    """층 하나의 가중치 [(studio 이름, 모양, 종류)]. 종류: weight(학습) · buffer(BatchNorm 통계) · count.
+    """층 하나의 가중치 [(studio 이름, 모양, 종류)]. 종류: weight(학습) · buffer(BatchNorm 통계) · count · frozen(사전학습, 고정).
     이름·모양은 PyTorch(GraphNet)와 같다 — 웹 엔진(TF.js)이 이대로 만들어 PyTorch로 그대로 내보낸다."""
     b, t, k, ins = step.cfg, step.type, step.key, step.in_shape
     w = lambda name, *shape: (f"{k}.{name}", list(shape), "weight")
@@ -587,8 +588,9 @@ def plan_dict(graph: dict, length: int, n_out: int, image: tuple = None) -> dict
               "in_shapes": [list(x) for x in s.in_shapes], "out_shape": list(s.out_shape), "node": s.node, "key": s.key,
               "params": [list(p) for p in param_specs(s)]} for s in plan.steps]
     n_params = sum(_prod(p[1]) for st in steps for p in st["params"] if p[2] == "weight")
+    n_frozen = sum(_prod(p[1]) for st in steps for p in st["params"] if p[2] == "frozen")
     return {"kind": plan.kind, "in_shape": list(plan.in_shape), "n_out": plan.n_out, "out": plan.out, "steps": steps,
-            "aliases": plan.aliases, "params": n_params}
+            "aliases": plan.aliases, "params": n_params, "frozen": n_frozen}
 
 
 # ---------------------------------------------------------------- TensorFlow Keras
@@ -686,7 +688,7 @@ def _keras_lines(s: Step, n_out: int) -> list:
     raise ValueError(f"코드로 바꿀 수 없는 층: {t}")
 
 
-KERAS_UNSUPPORTED = ("adaptive_pool", "attn_pool", "rmsnorm", "eca", "cbam", "spatial_attn", "linear_attn", "nonlocal",
+KERAS_UNSUPPORTED = ("mnv3s", "adaptive_pool", "attn_pool", "rmsnorm", "eca", "cbam", "spatial_attn", "linear_attn", "nonlocal",
                      "cross_attn", "pos_enc", "cls_token", "embedding", "spectrogram", "rand_scale", "rand_stretch", "drop_path")
 
 

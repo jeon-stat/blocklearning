@@ -36,7 +36,15 @@ EXTRA_TYPES = (
     "reshape", "permute", "to_seq", "crop", "pad",
     # 입력 변환·증강
     "embedding", "spectrogram", "rand_flip", "rand_rotate", "rand_shift", "rand_zoom", "rand_scale", "rand_stretch",
+    # 사전학습 (가중치 고정)
+    "mnv3s",
 )
+PRETRAINED_TYPES = ("mnv3s",)                               # 가중치를 pretrained/<종류>.bin에서 읽고 학습하지 않음
+# Google MobileNetV3-Small 특징 추출기 (nn_extra.MobileNetV3Small.CFG와 같음): (들어옴, kernel, 넓힘, 나감, SE 채널, HardSwish인지, stride)
+MNV3S_CFG = ((16, 3, 16, 16, 8, 0, 2), (16, 3, 72, 24, 0, 0, 2), (24, 3, 88, 24, 0, 0, 1), (24, 5, 96, 40, 24, 1, 2),
+             (40, 5, 240, 40, 64, 1, 1), (40, 5, 240, 40, 64, 1, 1), (40, 5, 120, 48, 32, 1, 1), (48, 5, 144, 48, 40, 1, 1),
+             (48, 5, 288, 96, 72, 1, 2), (96, 5, 576, 96, 144, 1, 1), (96, 5, 576, 96, 144, 1, 1))
+MNV3S_OUT = 1024
 NEW_MERGES = ("multiply", "average", "maximum")             # 모양이 같은 값들을 원소마다 곱·평균·최댓값
 TWO_INPUT = ("cross_attn",)                                 # 입력이 정확히 둘 (질문, 참고)
 RANDOM_TYPES = ("spatial_dropout", "drop_path", "gaussian_noise", "rand_flip", "rand_rotate", "rand_shift", "rand_zoom",
@@ -56,7 +64,7 @@ EXTRA_NAMES = {
     "reshape": "Reshape", "permute": "Transpose", "to_seq": "ToSequence", "crop": "Crop", "pad": "Pad",
     "embedding": "Embedding", "spectrogram": "Spectrogram", "rand_flip": "RandomFlip", "rand_rotate": "RandomRotation",
     "rand_shift": "RandomShift", "rand_zoom": "RandomZoom", "rand_scale": "RandomScale", "rand_stretch": "RandomStretch",
-    "multiply": "Multiply", "average": "Average", "maximum": "Maximum",
+    "multiply": "Multiply", "average": "Average", "maximum": "Maximum", "mnv3s": "MobileNetV3-Small (사전학습)",
 }
 
 # 정수 설정: (키, 최소, 최대, 기본값, 허용 값, 설명) — blocks.PARAMS와 같은 꼴
@@ -95,6 +103,7 @@ EXTRA_PARAMS = {
                     ("hop", 1, 128, 8, (1, 2, 4, 8, 16, 32, 64, 128), "hop은 1·2·4·…·128"),
                     ("n_mels", 4, 64, 16, (8, 16, 32, 64), "mel 칸 수는 8·16·32·64"),
                     ("n_mfcc", 4, 40, 13, (8, 13, 20, 40), "MFCC 개수는 8·13·20·40")],
+    "mnv3s": [("size", 64, 224, 128, (64, 96, 128, 160, 224), "크기는 64·96·128·160·224")],
 }
 # 실수 설정: (키, 최소(포함), 최대(미포함), 기본값, 설명)
 FLOAT_PARAMS = {
@@ -219,6 +228,13 @@ def shape(w, b: dict, shape_in, path, ctx):
             w.issue(path, f"Embedding은 채널이 1개인 값에만 (지금 {C}개)", "Input 바로 뒤에 두세요")
             return None
         return (o("dim"),) + s[1:]
+    if t == "mnv3s":
+        if not _need(w, t, s, (3,), path):
+            return None
+        if C not in (1, 3):
+            w.issue(path, f"MobileNetV3-Small은 흑백(채널 1)이나 컬러(채널 3) 그림에만 (지금 채널 {C}개)", "Input 바로 뒤에 두세요")
+            return None
+        return (MNV3S_OUT,)
     if t == "spectrogram":
         if not _need(w, t, s, (2,), path):
             return None
@@ -399,7 +415,25 @@ def params(t: str, b: dict, ins, out, k: str, ins2=None) -> list:
         return [(f"{k}.weight", [1], "weight", "const0.25")]
     if t == "embedding":
         return [(f"{k}.weight", [o("bins"), o("dim")], "weight", "normal1")]
+    if t == "mnv3s":
+        return mnv3s_params(k)
     return []
+
+
+def mnv3s_params(k: str) -> list:
+    """MobileNetV3-Small 가중치 (종류 frozen: 학습하지 않음, 처음 값은 사전학습 파일)."""
+    Fz = lambda name, *shape: (f"{k}.{name}", list(shape), "frozen", "pretrained")
+    out = [Fz("stem.weight", 16, 3, 3, 3), Fz("stem.bias", 16)]
+    for j, (i, kk, e, o, q, hs, s) in enumerate(MNV3S_CFG):
+        p = f"blocks.{j}."
+        if e != i:
+            out += [Fz(p + "expand.weight", e, i, 1, 1), Fz(p + "expand.bias", e)]
+        out += [Fz(p + "dw.weight", e, 1, kk, kk), Fz(p + "dw.bias", e)]
+        if q:
+            out += [Fz(p + "se1.weight", q, e, 1, 1), Fz(p + "se1.bias", q), Fz(p + "se2.weight", e, q, 1, 1), Fz(p + "se2.bias", e)]
+        out += [Fz(p + "project.weight", o, e, 1, 1), Fz(p + "project.bias", o)]
+    return out + [Fz("last.weight", 576, 96, 1, 1), Fz("last.bias", 576),
+                  Fz("head.weight", MNV3S_OUT, 576, 1, 1), Fz("head.bias", MNV3S_OUT)]
 
 
 # ---------------------------------------------------------------- PyTorch 모듈: (이름, 인자) — "nn.X"는 torch 내장, 나머지는 nn_extra
@@ -509,6 +543,8 @@ def torch_args(t: str, b: dict, ins, ins2=None):
         return "RandomScale", {"frac": float(o("frac"))}
     if t == "rand_stretch":
         return "RandomStretch", {"frac": float(o("frac"))}
+    if t == "mnv3s":
+        return "MobileNetV3Small", {"size": o("size")}
     raise ValueError(f"알 수 없는 층 {t}")
 
 

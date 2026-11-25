@@ -3,6 +3,11 @@ const fs = require("fs");
 const path = require("path");
 globalThis.tf = require("@tensorflow/tfjs");
 const E = require(path.join(__dirname, "../../src/dlstudio/static/engine.js"));
+const PRE = path.join(__dirname, "../../src/dlstudio/pretrained");      // 사전학습 가중치 (브라우저에서는 ensurePretrained가 받음)
+for (const f of fs.readdirSync(PRE).filter((n) => n.endsWith(".bin"))) {
+  const kind = f.slice(0, -4), b = fs.readFileSync(path.join(PRE, f));
+  E.setPretrained(kind, JSON.parse(fs.readFileSync(path.join(PRE, kind + ".json"), "utf8")), b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+}
 const tf = E.tf;
 const cases = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const out = {};

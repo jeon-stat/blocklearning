@@ -316,6 +316,9 @@ def check_graph(graph, length: int, n_out: int, image: tuple = None) -> GraphChe
 
 # ---------------------------------------------------------------- torch 모델 만들기
 
+FROZEN_MODULES = ("MobileNetV3Small",)                     # 학습하지 않는 사전학습 모듈 (nn_extra)
+
+
 def _key(nid: str) -> str:
     """ModuleDict 키 (nn.Module 속성 이름과 겹치지 않게 앞에 m_)."""
     return "m_" + nid
@@ -336,11 +339,23 @@ def _graph_net_class():
             self.kind = kind
             self.output_id = output_id
             self.block_modules = block_modules
+            self.start = None                                  # 특징을 미리 뽑아 둔 학습: 입력 대신 이 노드의 출력을 받음
+
+        def frozen_head(self):
+            """입력 바로 뒤의 고정(사전학습) 블록 하나만 입력을 쓰면 그 노드 id (학습 때 특징을 한 번만 뽑아 둠), 아니면 None."""
+            if not self.plan or self.plan[0][0] != "layer" or self.plan[0][2] != [INPUT]:
+                return None
+            nid = self.plan[0][1]
+            if type(self.mods[_key(nid)]).__name__ not in FROZEN_MODULES:
+                return None
+            return nid if not any(INPUT in st[2] for st in self.plan[1:]) else None
 
         @staticmethod
         def _exec(plan, vals: dict, mods, rec):
             for step in plan:
                 kind, nid, ins = step[0], step[1], step[2]
+                if nid in vals:                                # 미리 뽑아 둔 특징 (start)
+                    continue
                 if kind == "layer":
                     v = mods[_key(nid)](vals[ins[0]])
                 elif kind == "layer2":
@@ -365,6 +380,8 @@ def _graph_net_class():
             return vals
 
         def forward(self, x):
+            if self.start is not None:
+                return self._exec(self.plan, {self.start: x}, self.mods, None)[self.output_id]
             if self.kind == "rnn":                             # 순환 모델의 입력 (N, L, 1) → 층들이 쓰는 (N, 1, L)
                 x = x.transpose(1, 2)
             return self._exec(self.plan, {INPUT: x}, self.mods, None)[self.output_id]
@@ -549,7 +566,7 @@ def model_from_saved(project: dict, length: int, n_out: int, image: tuple = None
     state = project.get("state_dict")
     if state is None:
         return None
-    import torch
+    from dlstudio.pretrained import load_state
     net = build_graph_model(project["graph"], length, n_out, image=image)
-    net.load_state_dict({k: torch.as_tensor(v) for k, v in state.items()})
+    load_state(net, state)
     return net

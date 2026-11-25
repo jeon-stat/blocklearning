@@ -389,12 +389,27 @@ class Studio:
         self.runs.append({"n": n, "time": datetime.datetime.now().isoformat(timespec="seconds"), "graph": graph,
                           "settings": dict(settings or {}), "results": dict(results or {}), "data_key": self.data_key()})
         if weights is not None:
-            self.run_weights[n] = weights
+            self.run_weights[n] = self.strip_frozen(graph, weights)
         while len(self.runs) > MAX_RUNS:                    # 오래된 기록부터 지움 (프로젝트 파일이 너무 커지지 않게)
             old = self.runs.pop(0)
             self.run_weights.pop(old["n"], None)
         self.current_run = n
         return n
+
+    def frozen_names(self, graph) -> set:
+        """그래프의 고정(사전학습) 가중치 이름: 프로젝트·학습 기록에 넣지 않음 (열 때 pretrained/에서 다시 채움)."""
+        from dlstudio.pretrained import frozen_names
+        d = self.data
+        if d is None or not graph:
+            return set()
+        try:
+            return frozen_names(graph, d.length, d.n_out, d.image)
+        except Exception:                                       # 지금 데이터 모양에서 검사를 통과하지 못하는 그래프
+            return set()
+
+    def strip_frozen(self, graph, weights: dict) -> dict:
+        frozen = self.frozen_names(graph)
+        return {k: v for k, v in weights.items() if k not in frozen} if frozen else weights
 
     def runs_view(self) -> list:
         key = self.data_key()
@@ -423,10 +438,10 @@ class Studio:
 
     def api_runs_restore(self, b: dict) -> dict:
         run = self.pick_run(b.get("n"))
-        import torch
+        from dlstudio.pretrained import load_state
         d = self.data
         m = build_graph_model(run["graph"], d.length, d.n_out, image=d.image)
-        m.load_state_dict({k: torch.as_tensor(v) for k, v in self.run_weights[run["n"]].items()})
+        load_state(m, self.run_weights[run["n"]])
         self.model = m.eval()
         return self.restored()
 
@@ -511,7 +526,8 @@ class Studio:
         graph = self.model_graph if self.model is not None else self.graph   # 학습한 모델이 있으면 가중치와 같은 그래프
         if not graph:
             raise UserError("저장할 모델이 없음", "③ 모델 단계에서 층을 놓으세요")
-        save_project(b["path"], graph, d.source, self.train_settings, self.model, self.results, self.selection,
+        save_project(b["path"], graph, d.source, self.train_settings,
+                     None if self.model is None else self.strip_frozen(graph, self.model.state_dict()), self.results, self.selection,
                      runs=self.runs, run_weights=self.run_weights, current_run=self.current_run)
         return {"ok": True}
 

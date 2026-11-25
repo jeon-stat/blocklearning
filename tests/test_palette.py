@@ -77,7 +77,7 @@ def test_every_palette_block_checks_somewhere():
         for kind in ("s", "i", "v"):
             g = _base(kind)
             n = dict(node, id="x", inputs=["c"])
-            if cat in ("aug",) or node["type"] in ("embedding", "spectrogram", "patch_embed"):
+            if cat in ("aug", "pre") or node["type"] in ("embedding", "spectrogram", "patch_embed"):
                 n["inputs"] = ["input"]
                 g["nodes"] = [g["nodes"][0], n, {"id": "f", "type": "flatten", "inputs": ["x"]}, g["nodes"][-1]]
             else:

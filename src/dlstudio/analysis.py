@@ -8,8 +8,9 @@ MAX_POINTS = 200          # 블록 사이 그림의 시점 수 상한
 
 def model_panel(model) -> dict:
     """③ 모델 옆 '모델 정보': 파라미터 수와 크기(MB, float32 기준)."""
-    params = int(sum(p.numel() for p in model.parameters()))
-    return {"ok": True, "params": params, "mb": params * 4 / 1e6, "message": "", "warnings": []}
+    params = int(sum(p.numel() for p in model.parameters() if p.requires_grad))
+    frozen = int(sum(p.numel() for p in model.parameters() if not p.requires_grad))     # 사전학습 (고정)
+    return {"ok": True, "params": params, "frozen": frozen, "mb": (params + frozen) * 4 / 1e6, "message": "", "warnings": []}
 
 
 def _thin(a: np.ndarray) -> list:

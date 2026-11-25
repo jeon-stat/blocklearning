@@ -228,6 +228,11 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     done = []
     if data.task == "detection":
         return _train_det(job, model, Xtr, Xte, Xte_t, data, settings, dev)
+    Xfit, head = Xtr, model.frozen_head()
+    if head is not None:                                 # 고정한 사전학습 블록: 특징을 한 번만 뽑고 뒷부분만 학습
+        Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
+        Xte_t = torch.as_tensor(Fte, dtype=torch.float32, device=dev)
+        model.start = head
     reg = data.task != "classification"                  # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
     Y = np.asarray(data.target_train, dtype=np.float64).reshape(len(data.X_train), -1)
     mu, sd = target_scale(Y) if reg else (0.0, 1.0)
@@ -245,8 +250,11 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        net = fit(model, Xtr, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
-                  device=dev, callback=cb)
+        try:
+            net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
+                      device=dev, callback=cb)
+        finally:
+            model.start = None
     if reg:
         _fold_target_scale(net, mu, sd)
     with torch.no_grad():
@@ -265,6 +273,17 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     else:
         result["mae"], result["scatter"] = regression_view(out, data.y_test)
     return result
+
+
+def frozen_features(module, X, dev, batch: int = 256) -> np.ndarray:
+    """고정 블록의 출력 (학습 전에 한 번). X: 모델 입력 (numpy)."""
+    import torch
+    module = module.to(dev or "cpu").eval()
+    out = []
+    with torch.no_grad():
+        for i in range(0, len(X), batch):
+            out.append(module(torch.as_tensor(X[i:i + batch], dtype=torch.float32, device=dev or "cpu")).cpu().numpy())
+    return np.concatenate(out)
 
 
 def metric_name(data) -> str:

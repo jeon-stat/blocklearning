@@ -785,6 +785,7 @@ function renderPanel(p) {
   if (!p) return ($("panel").innerHTML = `<p class="muted">블록 문제를 고치면 계산됩니다</p>`);
   if (!p.ok) return ($("panel").innerHTML = `<p class="full">${esc(p.message)}</p>`);
   $("panel").innerHTML = kv([["파라미터 (배우는 값)", p.params.toLocaleString()],
+    ...(p.frozen ? [["사전학습 (고정)", p.frozen.toLocaleString()]] : []),
     ["크기", `${p.mb < 0.1 ? p.mb.toFixed(3) : p.mb.toFixed(1)} MB`]]);
 }
 function orderItems(order, graph, depth = 0, out = []) {   // 위상 순서대로 [id, 노드, 묶음 깊이] (묶음 안은 그 안 순서)

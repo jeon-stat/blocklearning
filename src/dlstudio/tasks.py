@@ -92,6 +92,11 @@ T_RESNET2D = {"id": "resnet2d", "name": "작은 ResNet",
               "when": "작은 CNN으로 부족할 때. 학습이 더 오래 걸림",
               "blocks": [_c2(16), BN, P2, {"type": "repeat", "times": 2, "body": [_res(_c2(16), BN, P2)]}, GAP2, OUT]}
 
+T_TRANSFER = {"id": "mnv3_transfer", "name": "전이 학습 (MobileNetV3)",
+              "desc": "Google이 ImageNet 사진으로 미리 학습한 MobileNetV3-Small로 특징 1024개를 뽑고, 끝 층만 학습",
+              "when": "그림이 적거나 학습이 오래 걸릴 때. 아주 작은 그림(28×28 등)에서는 효과가 적을 수 있음",
+              "blocks": [{"type": "mnv3s", "size": 128}, {"type": "dropout", "rate": 0.2}, OUT]}
+
 
 T_DET_SMALL = {"id": "det_small", "name": "작은 탐지 모델",
                "desc": "3×3 필터로 모양을 찾으며 그림을 세 번 줄여 8칸 격자로 만든 뒤, 칸마다 '사물이 있나·상자·종류'를 맞히는 "
@@ -203,7 +208,7 @@ CATALOG = [
           "examples_text": "손글씨 숫자 읽기, 제품 사진으로 양품·불량 판정, 현미경 사진 분류",
           "example_data": [["steelblast", "강판 표면 양호·불량 (제조, 64×64)"],
                            ["pneumonia", "흉부 X-ray 정상·폐렴 (의료, 28×28)"], ["digits", "손글씨 숫자 0–9 (32×32)"]],
-          "templates": [T_CNN2D, T_LENET, T_RESNET2D, T_HYBRID, T_VIT]},
+          "templates": [T_CNN2D, T_LENET, T_RESNET2D, T_TRANSFER, T_HYBRID, T_VIT]},
      ]},
     {"id": "regression", "name": "회귀", "icon": "📈",
      "desc": "숫자 값(수율, 수명, 수치)을 예측합니다",

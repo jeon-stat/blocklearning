@@ -7,7 +7,8 @@
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
 const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "nn_extra.py",
-  "labeling.py", "labeling_sources.py", "predict.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
+  "labeling.py", "labeling_sources.py", "predict.py", "pretrained.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
+const PRETRAINED = BASE + "pretrained/";                 // 사전학습 가중치 (그 블록을 쓸 때만 받음)
 const gotData = new Set();                               // 받아 둔 예시 데이터 파일 (예시를 누를 때만 받음)
 const E = () => window.DLEngine;
 
@@ -106,8 +107,9 @@ function startTrain(body) {
   const job = { id: "w" + (++W.n), kind: "train", state: "running", progress: [], result: null, error: null, cancelled: false };
   W.jobs[job.id] = job;
   W.running = job;
-  E().train(plan, data, s, (p) => { job.progress.push(p); job.progress.splice(0, Math.max(0, job.progress.length - 100)); return job.cancelled; },
-    () => job.cancelled).then(({ net, result, out, outTr }) => {
+  E().ensurePretrained(plan, PRETRAINED).then(() => E().train(plan, data, s,
+    (p) => { job.progress.push(p); job.progress.splice(0, Math.max(0, job.progress.length - 100)); return job.cancelled; },
+    () => job.cancelled)).then(({ net, result, out, outTr }) => {
     if ((job.cancelled && !job.stopped) || W.data !== data) { net.dispose(); job.state = "cancelled"; return; }   // 다시 시작·데이터 바뀜은 버림
     result.stopped = !!job.stopped;
     if (out) Object.assign(result, wrapped(W.mod.task_result(W.studio, new Uint8Array(out.buffer), new Uint8Array(outTr.buffer))));   // 예측·이상 탐지
@@ -185,25 +187,26 @@ function projectSave(body) {
   finally { if (st) st.destroy(); }
   return { ok: true, file: name };
 }
-function loadTrained(r) {                              // {response, state, plan} → 엔진에 학습한 모델
+async function loadTrained(r) {                        // {response, state, plan} → 엔진에 학습한 모델
   if (W.trained) { W.trained.net.dispose(); W.trained = null; }
   if (!r.state) return;
+  await E().ensurePretrained(r.plan, PRETRAINED);         // 고정 가중치는 프로젝트에 없음 → 사전학습 파일에서
   const net = new (E().Net)(r.plan, 0);
   const st = {};
   for (const [k, v] of Object.entries(r.state)) st[k] = { shape: v.shape, data: v.int ? Int32Array.from(v.data) : Float32Array.from(v.data) };
   net.load(st);
   W.trained = { net, plan: r.plan, graph: r.response.graph, settings: r.response.train_settings || {}, results: r.response.results || {} };
 }
-function projectOpen(body) {
+async function projectOpen(body) {
   const r = wrapped(W.mod.record_open(W.studio, body.path, body.data_path || ""));
   W.openedName = r.name || "";
   W.data = null;
-  loadTrained(r);
+  await loadTrained(r);
   return r.response;
 }
-function runRestore(body) {                            // 학습 기록의 모델로 돌아가기
+async function runRestore(body) {                      // 학습 기록의 모델로 돌아가기
   const r = wrapped(W.mod.run_restore(W.studio, Number(body.n)));
-  loadTrained(r);
+  await loadTrained(r);
   changed("train");
   return r.response;
 }
@@ -222,8 +225,9 @@ const VIEW = ["pos", "size", "brk", "shift"];
 function bare(g) {                                     // 화면용 값을 뺀 그래프 (같은 모델인지 비교)
   return JSON.stringify(g, (k, v) => (VIEW.includes(k) ? undefined : v));
 }
-function preview(body) {                               // ③ 블록 미리보기: 학습 샘플 하나가 그 블록을 지난 값
+async function preview(body) {                         // ③ 블록 미리보기: 학습 샘플 하나가 그 블록을 지난 값
   const plan = wrapped(W.mod.plan(W.studio, JSON.stringify(body.graph)));
+  await E().ensurePretrained(plan, PRETRAINED);
   const d = getData();
   const trained = !!W.trained && bare(W.trained.graph) === bare(body.graph);
   const net = trained ? W.trained.net : new (E().Net)(plan, 0);
@@ -393,10 +397,10 @@ async function api(path, body) {
     if (path === "/api/project/export") return exportModel();
     if (path === "/api/code/save") return codeSave(body);
     if (path === "/api/project/save") return projectSave(body);
-    if (path === "/api/project/open") return projectOpen(body);
-    if (path === "/api/runs/restore") return runRestore(body);
+    if (path === "/api/project/open") return await projectOpen(body);
+    if (path === "/api/runs/restore") return await runRestore(body);
     if (path === "/api/predict") return await predictNew(body);
-    if (path === "/api/preview") return preview(body);
+    if (path === "/api/preview") return await preview(body);
     if (path === "/api/anomaly/threshold") {                // 이상 탐지 기준값: Python 결과와 엔진 쪽 결과 둘 다
       const r = pyCall(method, path, body);
       if (W.trained && W.trained.results) W.trained.results.threshold = r.threshold;

@@ -515,7 +515,11 @@ def extra_layer(b: dict, shape, shape2=None):
     from dlstudio import nn_extra
     name, kw = X.torch_args(b["type"], b, shape, shape2)
     cls = getattr(nn, name[3:]) if name.startswith("nn.") else getattr(nn_extra, name)
-    return cls(*kw.get("_", []), **{k: v for k, v in kw.items() if k != "_"})
+    m = cls(*kw.get("_", []), **{k: v for k, v in kw.items() if k != "_"})
+    if b["type"] in X.PRETRAINED_TYPES:                    # 미리 학습한 가중치 (고정)
+        from dlstudio.pretrained import fill
+        fill(m, b["type"])
+    return m
 
 
 def build_model(blocks: list, length: int, n_out: int, seed: int = 0, image: tuple = None):

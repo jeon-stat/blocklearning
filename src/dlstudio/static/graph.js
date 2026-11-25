@@ -11,9 +11,9 @@ const BOX_W = 236, BOX_H = 50, MERGE_W = 104, MERGE_H = 30, GAP_Y = 34, GAP_X = 
 const CATS = [["dense", "완전연결 (Dense)"], ["conv", "합성곱 (Conv)"], ["pool", "줄이기·모으기 (Pooling)"], ["up", "키우기 (Upsampling)"],
   ["rnn", "순환 (RNN)"], ["attn", "어텐션 (Attention)"], ["tf", "Transformer 부품"], ["norm", "정규화 (Normalization)"],
   ["act", "활성화 (Activation)"], ["reg", "과적합 막기 (Regularization)"], ["merge", "합치기·나누기"], ["shape", "모양 바꾸기"],
-  ["prep", "입력 변환"], ["aug", "증강 (학습 때만)"], ["pack", "묶음 (자주 쓰는 조합)"]];
+  ["prep", "입력 변환"], ["aug", "증강 (학습 때만)"], ["pre", "사전학습 (고정)"], ["pack", "묶음 (자주 쓰는 조합)"]];
 const COLORS = { input: "gray", dense: "gray", conv: "teal", pool: "teal", up: "teal", rnn: "coral", attn: "blue", tf: "blue", norm: "amber",
-  act: "purple", reg: "gray", merge: "add", shape: "gray", prep: "pink", aug: "pink", out: "coral", pack: "gray" };
+  act: "purple", reg: "gray", merge: "add", shape: "gray", prep: "pink", aug: "pink", pre: "blue", out: "coral", pack: "gray" };
 // 블록이 받는 모양: seq (채널, 길이) · img (채널, 높이, 너비) · sp (둘 다) · any
 const RANK = { conv: "seq", pool: "seq", global_avg: "seq", last_step: "seq", conv2d: "img", pool2d: "img", global_avg2d: "img",
   lstm: "seq", gru: "seq", simple_rnn: "seq", se: "sp", dw_conv: "seq", sep_conv: "seq", max_pool: "seq", global_max: "seq", first_step: "seq",
@@ -21,7 +21,7 @@ const RANK = { conv: "seq", pool: "seq", global_avg: "seq", last_step: "seq", co
   patch_embed: "img", to_seq: "img", rand_rotate: "img", rand_zoom: "img", rand_stretch: "seq", spectrogram: "seq",
   adaptive_pool: "sp", attn_pool: "sp", upsample: "sp", pixel_shuffle: "sp", eca: "sp", cbam: "sp", spatial_attn: "sp", mha: "sp",
   linear_attn: "sp", nonlocal: "sp", cross_attn: "sp", pos_enc: "sp", groupnorm: "sp", instancenorm: "sp", spatial_dropout: "sp",
-  permute: "sp", crop: "sp", pad: "sp", rand_flip: "sp", rand_shift: "sp", embedding: "sp" };
+  permute: "sp", crop: "sp", pad: "sp", rand_flip: "sp", rand_shift: "sp", embedding: "sp", mnv3s: "img" };
 const TWO_D = { conv: "conv2d", pool: "pool2d", global_avg: "global_avg2d", dw_conv: "dw_conv2d", sep_conv: "sep_conv2d", max_pool: "max_pool2d",
   global_max: "global_max2d", conv_t: "conv_t2d" };
 const ONE_D = Object.fromEntries(Object.entries(TWO_D).map(([a, b]) => [b, a]));
@@ -103,6 +103,7 @@ const PALETTE = {
   rand_zoom: P("aug", "RandomZoom", "학습 때 그림을 조금 확대·축소", () => ({ type: "rand_zoom", frac: 0.1 })),
   rand_scale: P("aug", "RandomScale", "학습 때 값 전체 세기를 조금 바꿈", () => ({ type: "rand_scale", frac: 0.2 })),
   rand_stretch: P("aug", "RandomStretch", "학습 때 신호를 시간 방향으로 늘이고 줄임", () => ({ type: "rand_stretch", frac: 0.1 })),
+  mnv3s: P("pre", "MobileNetV3-Small", "ImageNet으로 미리 학습한 특징 1024개 (가중치 고정)", () => ({ type: "mnv3s", size: 128 })),
 };
 const ACT_LIST = [["relu", "ReLU", "음수는 0 (가장 많이 씀)"], ["leaky_relu", "LeakyReLU", "음수도 조금 흘림"], ["gelu", "GELU", "부드러운 ReLU (Transformer)"],
   ["silu", "SiLU / Swish", "x·σ(x) (EfficientNet·LLM)"], ["elu", "ELU", "음수 쪽이 부드럽게 −1로"], ["mish", "Mish", "부드럽고 매끈한 ReLU 계열"],
@@ -624,6 +625,7 @@ const LABELS = {
   rand_rotate: (b) => `RandomRotation · ±${b.degrees || 15}°`, rand_shift: (b) => `RandomShift · ±${b.frac ?? 0.1}`,
   rand_zoom: (b) => `RandomZoom · ±${b.frac ?? 0.1}`, rand_scale: (b) => `RandomScale · ±${b.frac ?? 0.2}`,
   rand_stretch: (b) => `RandomStretch · ±${b.frac ?? 0.1}`,
+  mnv3s: (b) => `MobileNetV3-Small · ${b.size || 128}×${b.size || 128} · 고정`,
 };
 // 설정 칸: [종류, 키, 이름, …]
 const num = (k, lab, min, max) => ["num", k, lab, min, max];
@@ -663,6 +665,7 @@ const FIELDS = {
     sel("n_mels", "mel 칸 수", vals(8, 16, 32, 64)), sel("n_mfcc", "MFCC 개수", vals(8, 13, 20, 40))],
   rand_flip: [sel("dir", "방향 (그림)", [["h", "좌우"], ["v", "상하"], ["hv", "좌우·상하"]])],
   rand_rotate: [num("degrees", "최대 각도 (±도)", 1, 180)],
+  mnv3s: [sel("size", "입력 크기", [64, 96, 128, 160, 224].map((v) => [v, `${v}×${v}`]))],
   rand_shift: [FRAC], rand_zoom: [FRAC], rand_scale: [FRAC], rand_stretch: [FRAC],
 };
 

@@ -200,6 +200,7 @@ def test_plan_params_match_torch_state(case):
     plan = codegen.plan_dict(g, L, n_out, image)
     specs = {p[0]: tuple(p[1]) for st in plan["steps"] for p in st["params"]}
     assert specs == {k: tuple(v.shape) for k, v in net.state_dict().items()}, name
-    assert plan["params"] == sum(p.numel() for p in net.parameters())
+    assert plan["params"] == sum(p.numel() for p in net.parameters() if p.requires_grad)
+    assert plan["frozen"] == sum(p.numel() for p in net.parameters() if not p.requires_grad)      # 사전학습 (고정)
     import json
     json.dumps(plan)

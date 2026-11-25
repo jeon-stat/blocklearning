@@ -33,7 +33,8 @@ class WebStudio(Studio):
             self.graph = graph
         if c.ok:
             plan = codegen.plan_dict(graph, d.length, d.n_out, d.image)
-            out["panel"] = {"ok": True, "params": plan["params"], "mb": plan["params"] * 4 / 1e6, "message": "", "warnings": []}
+            out["panel"] = {"ok": True, "params": plan["params"], "frozen": plan["frozen"],
+                            "mb": (plan["params"] + plan["frozen"]) * 4 / 1e6, "message": "", "warnings": []}
         return out
 
     def api_data_load(self, b: dict) -> dict:
@@ -125,7 +126,7 @@ def _opened(studio: Studio, pr: dict) -> dict:
     if pr["state_dict"] is not None:
         try:
             plan_ = codegen.plan_dict(pr["graph"], d.length, d.n_out, d.image)
-            want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"]}
+            want = {p[0]: p[1] for st in plan_["steps"] for p in st["params"] if p[2] != "frozen"}   # 고정 가중치는 저장 안 함
             fits = {k: list(v.shape) for k, v in pr["state_dict"].items()} == want
         except Exception:                                   # 그래프가 지금 데이터 모양에서 검사를 통과하지 못함
             fits = False
@@ -225,7 +226,7 @@ def project_bytes(studio: Studio, state) -> bytes:
     if not graph:
         raise UserError("저장할 모델이 없음", "③ 모델 단계에서 층을 놓으세요")
     buf = io.BytesIO()
-    save_project(buf, graph, d.source, studio.train_settings, _arrays(state) if state is not None else None,
+    save_project(buf, graph, d.source, studio.train_settings, studio.strip_frozen(graph, _arrays(state)) if state is not None else None,
                  studio.results, studio.selection, runs=studio.runs, run_weights=studio.run_weights,
                  current_run=studio.current_run)
     return buf.getvalue()
@@ -328,7 +329,7 @@ def record_project(studio: Studio, state, name: str = "", with_data: bool = Fals
                 extra = {f"data/{n}": z.read(n) for n in z.namelist()}
     buf = io.BytesIO()
     save_project(buf, graph, _portable_source(d.source), studio.train_settings,
-                 _arrays(state) if state is not None else None, studio.results, studio.selection, extra, name,
+                 studio.strip_frozen(graph, _arrays(state)) if state is not None else None, studio.results, studio.selection, extra, name,
                  runs=studio.runs, run_weights=studio.run_weights, current_run=studio.current_run)
     return buf.getvalue()
 

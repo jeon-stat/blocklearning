@@ -545,4 +545,71 @@ class CausalConv1d(nn.Conv1d):
         return F.conv1d(F.pad(x, (pad, 0)), self.weight, self.bias, self.stride, 0, self.dilation, self.groups)
 
 
+class MobileNetV3Small(nn.Module):
+    """Google이 ImageNet으로 미리 학습한 MobileNetV3-Small 특징 추출기 (TF Hub mobilenet_v3_small_100_224/feature_vector,
+    Apache 2.0, BatchNorm은 합성곱에 접혀 있음). 학습하지 않음(고정).
+    그림 (N, 1 또는 3, H, W) → 그림마다 0~1로 → size×size (bilinear) → −1~1 → 특징 1024개.
+    가장자리는 TensorFlow 'SAME'처럼 채움 (stride 2면 아래·오른쪽을 더).
+    CFG: (들어옴, kernel, 넓힘, 나감, SE 채널 (0이면 없음), HardSwish인지, stride)."""
+
+    CFG = ((16, 3, 16, 16, 8, 0, 2), (16, 3, 72, 24, 0, 0, 2), (24, 3, 88, 24, 0, 0, 1), (24, 5, 96, 40, 24, 1, 2),
+           (40, 5, 240, 40, 64, 1, 1), (40, 5, 240, 40, 64, 1, 1), (40, 5, 120, 48, 32, 1, 1), (48, 5, 144, 48, 40, 1, 1),
+           (48, 5, 288, 96, 72, 1, 2), (96, 5, 576, 96, 144, 1, 1), (96, 5, 576, 96, 144, 1, 1))
+    SE_SCALE = 0.16667                                   # 원래 모델의 hard sigmoid: relu6(x + 3) × 0.16667
+
+    def __init__(self, size=128):
+        super().__init__()
+        self.size = size
+        self.stem = nn.Conv2d(3, 16, 3, 2)
+        self.blocks = nn.ModuleList()
+        for i, k, e, o, q, hs, s in self.CFG:
+            b = nn.Module()
+            if e != i:
+                b.expand = nn.Conv2d(i, e, 1)
+            b.dw = nn.Conv2d(e, e, k, s, groups=e)
+            if q:
+                b.se1, b.se2 = nn.Conv2d(e, q, 1), nn.Conv2d(q, e, 1)
+            b.project = nn.Conv2d(e, o, 1)
+            self.blocks.append(b)
+        self.last = nn.Conv2d(96, 576, 1)
+        self.head = nn.Conv2d(576, 1024, 1)
+        self.requires_grad_(False)
+
+    @staticmethod
+    def same(x, k, s):
+        """TensorFlow 'SAME' 채움: 모자란 칸을 위·왼쪽에 반, 아래·오른쪽에 나머지."""
+        if k == 1:
+            return x
+        H, W = x.shape[2], x.shape[3]
+        ph, pw = max((-(-H // s) - 1) * s + k - H, 0), max((-(-W // s) - 1) * s + k - W, 0)
+        return F.pad(x, (pw // 2, pw - pw // 2, ph // 2, ph - ph // 2))
+
+    def prep(self, x):
+        n = x.shape[0]
+        flat = x.reshape(n, -1)
+        lo, hi = flat.min(1)[0].view(n, 1, 1, 1), flat.max(1)[0].view(n, 1, 1, 1)
+        x = (x - lo) / (hi - lo).clamp_min(1e-6)
+        if x.shape[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+        if tuple(x.shape[2:]) != (self.size, self.size):
+            x = F.interpolate(x, size=(self.size, self.size), mode="bilinear", align_corners=False)
+        return x * 2 - 1
+
+    def features(self, x):
+        x = F.hardswish(self.stem(self.same(x, 3, 2)))
+        for (i, k, e, o, q, hs, s), b in zip(self.CFG, self.blocks):
+            act = F.hardswish if hs else F.relu
+            y = act(b.expand(x)) if e != i else x
+            y = act(b.dw(self.same(y, k, s)))
+            if q:
+                y = y * (F.relu6(b.se2(F.relu(b.se1(y.mean((2, 3), keepdim=True)))) + 3) * self.SE_SCALE)
+            y = b.project(y)
+            x = x + y if s == 1 and i == o else y
+        x = F.hardswish(self.last(x)).mean((2, 3), keepdim=True)
+        return F.hardswish(self.head(x)).flatten(1)
+
+    def forward(self, x):
+        return self.features(self.prep(x))
+
+
 RANDOM_MODULES = (DropPath, GaussianNoise, RandomFlip, RandomRotation, RandomShift, RandomZoom, RandomScale, RandomStretch)

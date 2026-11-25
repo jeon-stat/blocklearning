@@ -46,7 +46,7 @@ python -m dlstudio          # 또는 dlstudio
 |---|---|
 | ① 과제 | (고르지 않아도 됨: [과제는 나중에]로 ② 데이터부터 넣으면 데이터를 보고 분류·회귀와 시계열·표·이미지를 정해 과제·추천 모델을 고름, 시계열↔표는 한 번에 바꿀 수 있음) 하고 싶은 일부터 고름: 큰 틀(분류·회귀·객체 탐지·이상 탐지·예측·구간 분할) → 데이터 종류(시계열·표·이미지) → 대표 모델. 대표 모델마다 설명과 쓰는 때. 지금 쓸 수 있는 과제는 아래 표, 나머지는 "준비 중" |
 | ② 데이터 | CSV(한 행 = 샘플, 값 열 + 마지막 열 정답), 샘플마다 CSV 하나인 시계열 폴더(정답은 클래스별 하위 폴더 또는 `파일이름,정답` 표), 이미지 폴더(클래스별 하위 폴더, 흑백 8·16·28·32 크기로 맞춤, Pillow 필요) 또는 픽셀 CSV. 오류는 행·열 위치와 함께 쉬운 말로 |
-| ③ 모델 | 층을 선으로 잇는 그래프 편집기. 왼쪽 목록의 층(Keras 용어)을 끌어 선 위에 놓으면 끼워 넣고, 상자 아래 동그라미를 끌어 다른 상자에 놓으면 선을 이음(Add·Concat). 잔차·Repeat 묶음·갈래, 방향(위→아래·왼쪽→오른쪽)·줄바꿈, 되돌리기·복사·붙여넣기. 층 90여 개를 15개 범주로 (왼쪽 목록에서 범주를 누르면 펼침, 위 칸으로 찾기): 완전연결(Dense·GLU·SwiGLU) · 합성곱(Conv1D·Causal·Conv2D·Depthwise·Separable) · 줄이기·모으기(Avg·Max·GlobalAvg·GlobalMax·Adaptive·AttentionPool·First/LastTimestep) · 키우기(Upsample·PixelShuffle·ConvTranspose) · 순환(LSTM·GRU·SimpleRNN, 양방향·줄 그대로 내보내기, 어디에나) · 어텐션(SE·ECA·CBAM·Spatial·MultiHead·Causal·Cross·Linear·NonLocal) · Transformer 부품(PositionalEncoding sin·학습형, RoPE, PatchEmbedding, CLS token) · 정규화(BatchNorm·LayerNorm·RMSNorm·GroupNorm·InstanceNorm) · 활성화 15종(ReLU·GELU·SiLU·SELU·ReLU6·HardSwish·Softmax·PReLU 등) · 과적합 막기(Dropout·SpatialDropout·DropPath·GaussianNoise) · 합치기·나누기(Add·Concat·Multiply·Average·Maximum·Split) · 모양 바꾸기(Flatten·Reshape·Transpose·ToSequence·Crop·Pad) · 입력 변환(Embedding·Spectrogram·Mel·MFCC) · 증강(Flip·Rotation·Shift·Zoom·Scale·Stretch, 학습 때만) · **묶음** 14종(Conv–BN–ReLU, ResNet·Bottleneck·SE-ResNet, Inception, MobileNet, DenseNet, ConvNeXt, U-Net 한 단계, Transformer Encoder·Decoder, MLP-Mixer, ViT 입구, Residual MLP: 넣는 자리의 채널에 맞춰 만들어짐) · Repeat. 1D·2D 층은 들어오는 모양으로 가림 (그림도 ToSequence 뒤에는 어텐션·Conv1D, 시계열도 Spectrogram 뒤에는 Conv2D). 모든 층은 PyTorch·웹 엔진이 같은 값을 냄(시험으로 확인), PyTorch 코드로 내보내짐 (Keras 코드는 일부 층 빼고) 상자마다 지난 데이터 모양, 옆에 파라미터 수·크기. 안 되는 조립은 그 상자를 빨갛게 하고 이유·고칠 방법 표시 |
+| ③ 모델 | 층을 선으로 잇는 그래프 편집기. 왼쪽 목록의 층(Keras 용어)을 끌어 선 위에 놓으면 끼워 넣고, 상자 아래 동그라미를 끌어 다른 상자에 놓으면 선을 이음(Add·Concat). 잔차·Repeat 묶음·갈래, 방향(위→아래·왼쪽→오른쪽)·줄바꿈, 되돌리기·복사·붙여넣기. 층 90여 개를 16개 범주로 (왼쪽 목록에서 범주를 누르면 펼침, 위 칸으로 찾기): 완전연결(Dense·GLU·SwiGLU) · 합성곱(Conv1D·Causal·Conv2D·Depthwise·Separable) · 줄이기·모으기(Avg·Max·GlobalAvg·GlobalMax·Adaptive·AttentionPool·First/LastTimestep) · 키우기(Upsample·PixelShuffle·ConvTranspose) · 순환(LSTM·GRU·SimpleRNN, 양방향·줄 그대로 내보내기, 어디에나) · 어텐션(SE·ECA·CBAM·Spatial·MultiHead·Causal·Cross·Linear·NonLocal) · Transformer 부품(PositionalEncoding sin·학습형, RoPE, PatchEmbedding, CLS token) · 정규화(BatchNorm·LayerNorm·RMSNorm·GroupNorm·InstanceNorm) · 활성화 15종(ReLU·GELU·SiLU·SELU·ReLU6·HardSwish·Softmax·PReLU 등) · 과적합 막기(Dropout·SpatialDropout·DropPath·GaussianNoise) · 합치기·나누기(Add·Concat·Multiply·Average·Maximum·Split) · 모양 바꾸기(Flatten·Reshape·Transpose·ToSequence·Crop·Pad) · 입력 변환(Embedding·Spectrogram·Mel·MFCC) · 증강(Flip·Rotation·Shift·Zoom·Scale·Stretch, 학습 때만) · 사전학습(MobileNetV3-Small, 아래) · **묶음** 14종(Conv–BN–ReLU, ResNet·Bottleneck·SE-ResNet, Inception, MobileNet, DenseNet, ConvNeXt, U-Net 한 단계, Transformer Encoder·Decoder, MLP-Mixer, ViT 입구, Residual MLP: 넣는 자리의 채널에 맞춰 만들어짐) · Repeat. 1D·2D 층은 들어오는 모양으로 가림 (그림도 ToSequence 뒤에는 어텐션·Conv1D, 시계열도 Spectrogram 뒤에는 Conv2D). 모든 층은 PyTorch·웹 엔진이 같은 값을 냄(시험으로 확인), PyTorch 코드로 내보내짐 (Keras 코드는 일부 층 빼고) 상자마다 지난 데이터 모양, 옆에 파라미터 수·크기. 안 되는 조립은 그 상자를 빨갛게 하고 이유·고칠 방법 표시 |
 | ④ 학습 | 이 PC에서 학습 (GPU 있으면 사용, Adam, 분류 교차 엔트로피·회귀 MSE·탐지 YOLO식 손실). 학습 곡선, 분류는 정확도·혼동 행렬·클래스별 재현율, 회귀는 R²·평균 오차(MAE)·"예측 vs 실제" 산점도, 탐지는 mAP@0.5·클래스별 AP·점수 50%에서 정밀도·재현율과 시험 그림 위 정답(점선)·찾은 상자(실선, 점수 슬라이더), 샘플 하나가 층을 지나는 모습(어텐션 블록이 있으면 **어텐션 열지도**: 그 샘플에서 어디를 봤는지를 그림·신호·표 위에 빨갛게 겹치고, 질문 위치 × 본 위치 지도도). 회귀 정답은 정규화해 학습하고 출력층에서 되돌려, 모델은 원래 단위로 냄. **학습 기록**: 학습할 때마다 모델·설정·성적이 남고(최근 20번, 프로젝트에 저장), [이 모델로]로 그때 모델로 돌아감. 혼동 행렬 칸을 누르면 그 칸(틀린 샘플 등)의 샘플들을 봄 |
 | ⑤ 예측 | 학습한 모델로 새 데이터를 예측(추론). 예시 데이터면 [예시 새 데이터 10개로 예측]으로 학습·시험에 쓰지 않은 10개를 바로 예측하고 정답과 비교: 학습 때와 같은 모양의 CSV(정답 열은 있어도 없어도 됨), 그림 폴더, 시계열 폴더, 표 데이터는 값 직접 넣기. 같은 정규화를 해서 예측하고, 정답이 있으면 맞았는지 표시. 결과는 CSV로 내려받기 |
 
@@ -64,7 +64,7 @@ python -m dlstudio          # 또는 dlstudio
 | 이상 탐지 · 시계열 | 베어링 진동 — 정상만 학습해 결함 찾기 (오타와대, CC BY 4.0) | Dense 오토인코더, Conv 오토인코더 |
 | 이상 탐지 · 표 | 유압 시스템 — 정상만 학습해 냉각기·밸브·펌프 고장 찾기 (UCI, CC BY 4.0) | 오토인코더 |
 | 예측 · 시계열 | 철강 공장 전력 사용량 1시간마다 — 지난 4일로 다음 하루 ([UCI, 광양 철강 공장](https://archive.ics.uci.edu/dataset/851), CC BY 4.0) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
-| 분류 · 이미지 | 강판 표면 양호·불량 64×64 ([SteelBlastQC](https://doi.org/10.34894/EKZNN0), CC BY 4.0) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/), CC BY 4.0, 진단용 아님) / 손글씨 숫자 32×32 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet, CNN + Transformer, ViT |
+| 분류 · 이미지 | 강판 표면 양호·불량 64×64 ([SteelBlastQC](https://doi.org/10.34894/EKZNN0), CC BY 4.0) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/), CC BY 4.0, 진단용 아님) / 손글씨 숫자 32×32 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet, 전이 학습 (MobileNetV3), CNN + Transformer, ViT |
 
 예시 데이터는 모두 공개된 실제 데이터입니다 (합성 데이터 없음). 원본을 작게 줄인 파일과 출처·라이선스·바꾼 내용은 `src/dlstudio/data/*.npz`·`*.SOURCE.txt`, 원본에서 다시 만드는 법은 `tools/build_examples.py`. 웹 버전은 예시를 누를 때만 그 파일을 받습니다.
 
@@ -127,6 +127,7 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 | `jobs.py` | 학습 루프(`fit`)와 작업 스레드(진행·멈추기) |
 | `project.py` | 프로젝트 저장·열기, `.pt` 내보내기 |
 | `codegen.py` | 그래프 → PyTorch·TensorFlow Keras 코드, 가중치 이름 옮기기 |
+| `pretrained.py` · `pretrained/` | 사전학습 가중치 (고정) 읽기·채우기 |
 | `tasks.py` | 과제·대표 모델 목록 |
 | `labeling*.py` | 라벨링 작업실 |
 | `core.py` | 상태와 API (HTTP와 상관없음: 로컬 서버와 웹 버전이 함께 씀) |
@@ -134,6 +135,16 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 | `web.py` · `static/web.js` · `static/engine.js` | 웹 버전: Pyodide 쪽 함수, 화면과 잇는 다리, TF.js 학습 엔진 |
 | `static/store.js` · `static/projects.js` · `static/boot.js` | 웹 버전: 저장소(브라우저·구글 드라이브), 내 프로젝트·자동 저장, 시작 |
 | `static/` | 화면 (외부 라이브러리 없음) |
+
+### 전이 학습 (사전학습 MobileNetV3-Small)
+
+이미지 분류의 대표 모델 [전이 학습 (MobileNetV3)]과 블록 목록의 '사전학습' 범주. Google이 ImageNet 사진으로 미리 학습한 MobileNetV3-Small 특징 추출기(값 151만 개, 6MB)가
+그림 하나를 특징 1024개로 바꾸고, 그 뒤의 층만 학습합니다. 사전학습 부분은 학습하지 않습니다(고정).
+
+- 블록 안에서: 그림마다 0~1로 → 정한 크기(64–224, 기본 128)로 늘이거나 줄임(bilinear) → 흑백이면 3채널로 복사 → −1~1. 가장자리 채움은 원래 모델(TensorFlow)과 같게.
+- 학습 때 특징을 한 번만 뽑아 두고 뒷부분만 반복 학습합니다 (블록이 입력 바로 뒤에 있고, 앞에 증강이 없을 때). 아주 작은 그림(28×28 흉부 X-ray)에서는 처음부터 학습하는 모델보다 나아지지 않을 수 있습니다.
+- 가중치: Google의 [MobileNetV3 small-100-224 feature vector](https://www.kaggle.com/models/google/mobilenet-v3/tfJs/small-100-224-feature-vector/1) (TF Hub `mobilenet_v3_small_100_224/feature_vector/5`, **Apache License 2.0**). `tools/build_pretrained.py`가 TF.js 파일을 `src/dlstudio/pretrained/mnv3s.bin`·`.json`으로 옮기고(축 순서만 바꿈), 원래 모델과 출력이 같은지 확인합니다. 출처·바꾼 내용은 `mnv3s.SOURCE.txt`, 라이선스 원문은 `LICENSE-mnv3s.txt`.
+- 웹 버전은 이 블록을 처음 쓸 때 같은 사이트에서 가중치를 받습니다. 프로젝트·학습 기록에는 고정 가중치를 넣지 않고(열 때 다시 채움), 내보내는 PyTorch 코드·가중치에는 모두 넣습니다. Keras 코드로는 내보내지 않습니다.
 
 ### 이상 탐지 · 시계열 예측
 
