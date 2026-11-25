@@ -20,10 +20,12 @@ def test_example_new_is_held_out(kind):
     assert len(e["names"]) == len(e["X"]) == 10
     X = np.asarray(e["X"], dtype=np.float64)
     seen = np.concatenate([d.raw(d.X_train), d.raw(d.X_test)])
-    if d.task != "forecast":                                       # 같은 샘플이 학습·시험에 없음
+    if d.task not in ("forecast",):                                # 같은 샘플이 학습·시험에 없음
         assert not any(np.isclose(seen, x, atol=1e-6).all(1).any() for x in X), kind
     if d.task == "forecast":
         assert np.asarray(e["truth"]).shape == (10, d.n_out)
+    elif d.task == "segmentation":
+        assert np.asarray(e["truth"]).shape == (10, d.length)
     elif d.task == "detection":
         assert len(e["truth"]) == 10 and sum(len(b) for b in e["truth"]) > 0
     else:
@@ -47,5 +49,7 @@ def test_predict_with_example_new(kind):
     assert r["summary"]["n"] in (10, 10 * 1) and len(r["rows"]) == 10
     if d.task == "detection":
         assert all("truth" in p for p in r["pics"])
+    elif d.task == "segmentation":
+        assert r["has_label"] and r["summary"]["accuracy"] is not None
     else:
         assert r["has_label"]

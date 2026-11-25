@@ -12,6 +12,7 @@
     steelblast/   SteelBlastQC, DataverseNL doi:10.34894/EKZNN0 (*.png, annotations.csv)      CC BY 4.0
     pcb/          PCB-Defect, Mendeley vdj74sngvn v2 (PCB_Defect.zip)                          CC BY 4.0
     optdigits/    UCI Optical Recognition of Handwritten Digits (optdigits-orig.* 풀어 둔 것)    CC BY 4.0
+    pneumatic/    Pneumatic Pressure and Electrical Current Time Series in Manufacturing, Mendeley ypzswhhzh9 v3 (zip 그대로)  CC BY 4.0
 출처·바꾼 내용은 이름마다 <이름>.SOURCE.txt로 함께 씀.
 """
 from __future__ import annotations
@@ -379,7 +380,71 @@ def build_pneumonia(raw: Path):
     save("pneumonia28", new_by="y", source=src, X=z["X"], y=z["y"])
 
 
-BUILD = {"ecg": build_ecg, "bearing": build_bearing, "hydraulic": build_hydraulic,
+# ---------------------------------------------------------------- 공정 단계 구간 분할 (출하 검사 기계의 전류)
+
+SEG_LEN = 256                                       # 창 길이 (100Hz → 2.56초)
+SEG_GROUP = {0: 0, 17: 3, **{k: 1 for k in range(1, 11)}, **{k: 2 for k in range(11, 17)}, **{k: 4 for k in range(18, 26)}}
+SEG_NAMES = ["대기 (0)", "동작 1–10", "동작 11–16", "긴 단계 (17)", "동작 18–25"]
+
+
+def _pneu_csv(z: zipfile.ZipFile, name: str) -> tuple:
+    """CSV (시각;값) → (유닉스 시각, 값). 파일 이름의 날짜를 붙이고, 자정을 넘으면 다음 날."""
+    import datetime
+    import re
+    m = re.search(r"(\d{8})_(\d{6})\.csv$", name)
+    day = datetime.datetime.strptime(m.group(1), "%Y%m%d")
+    t0 = datetime.datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+    T, V = [], []
+    for row in z.read(name).decode().strip().splitlines()[1:]:
+        a, b = row.split(";")
+        t = datetime.datetime.combine(day.date(), datetime.datetime.strptime(a, "%H:%M:%S.%f").time())
+        if t < t0 - datetime.timedelta(hours=1):
+            t += datetime.timedelta(days=1)
+        T.append(t.timestamp())
+        V.append(float(b))
+    return np.asarray(T), np.asarray(V)
+
+
+def build_pneumatic(raw: Path, keep_still: float = 0.15):
+    z = zipfile.ZipFile(next((raw / "pneumatic").glob("*.zip")))
+    names = sorted(n for n in z.namelist() if "/Csv/" in n)
+    S = [_pneu_csv(z, n) for n in names if "PLCstate" in n]
+    st_t = np.concatenate([s[0] for s in S])
+    st_v = np.concatenate([s[1] for s in S]).astype(int)
+    o = np.argsort(st_t)
+    st_t, st_v = st_t[o], st_v[o]
+    group = np.vectorize(lambda s: SEG_GROUP.get(int(s), 0))
+    rng = np.random.default_rng(0)
+    X, Y = [], []
+    for n in names:
+        if "hall_sensor" not in n:
+            continue
+        t, v = _pneu_csv(z, n)
+        lab = group(st_v[np.clip(np.searchsorted(st_t, t, side="right") - 1, 0, None)])
+        for i in range(0, len(v) - SEG_LEN + 1, SEG_LEN):     # 겹치지 않는 창
+            y = lab[i:i + SEG_LEN]
+            still = np.isin(y, (0, 3)).all() and len(np.unique(y)) == 1
+            if still and rng.random() > keep_still:            # 대기·긴 단계만 있는 창은 일부만 (너무 많음)
+                continue
+            X.append(v[i:i + SEG_LEN])
+            Y.append(y)
+    X, Y = np.asarray(X, np.float32), np.asarray(Y, np.uint8)
+    moving = np.flatnonzero(~np.isin(Y, (0, 3)).all(1))
+    new = np.sort(rng.choice(moving, N_NEW, replace=False))   # 예측 예시용: 동작이 들어 있는 창 10개
+    keep = np.setdiff1d(np.arange(len(X)), new)
+    save("pneumatic_seg", X=X[keep], y=Y[keep], X_new=X[new], y_new=Y[new], names=np.asarray(SEG_NAMES), source=f"""
+소형 전기 구동부 출하 검사 기계의 전류 (100Hz)와 공정 단계 — Stržinar Ž, Pregelj B, Petrovčič J, Škrjanc I, Dolanc G.
+Pneumatic Pressure and Electrical Current Time Series in Manufacturing. Mendeley Data V3 (2024), doi:10.17632/ypzswhhzh9.3, CC BY 4.0
+(Univerza v Ljubljani · Institut Jožef Stefan). Data in Brief (2024), PMC11239481
+바꾼 내용: hall sensor 전류(Dump_long_100Hz_hall_sensor_*)를 {SEG_LEN}칸(2.56초)씩 겹치지 않게 잘라, 칸마다 그 시각의 PLC 상태
+(Dump_long_PLCstate_*)를 다섯 묶음으로 붙임: 0 → 대기, 1–10 → 동작 1–10, 11–16 → 동작 11–16, 17 → 긴 단계, 18–25 → 동작 18–25.
+대기·긴 단계만 있는 창은 {keep_still:.0%}만 남김 (너무 많음). 공압 압력은 쓰지 않음 (DL studio의 시계열은 채널 하나).
+예측 예시용: 동작이 들어 있는 창 10개는 학습·시험에서 빼 따로 둠 (X_new, y_new).
+""")
+    print("  단계 비율", np.round(np.bincount(Y.ravel(), minlength=5) / Y.size, 3))
+
+
+BUILD = {"pneumatic": build_pneumatic, "ecg": build_ecg, "bearing": build_bearing, "hydraulic": build_hydraulic,
          "concrete": build_concrete, "steel_energy": build_steel_energy, "digits": build_digits, "steelblast": build_steelblast,
          "steel_plates": build_steel_plates, "pcb": build_pcb, "pneumonia": build_pneumonia}
 

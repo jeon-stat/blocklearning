@@ -7,7 +7,7 @@
 const PY_VERSION = "0.27.7";
 const BASE = "src/dlstudio/";
 const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "nn_extra.py",
-  "labeling.py", "labeling_sources.py", "predict.py", "pretrained.py", "project.py", "tasks.py", "web.py", "weblabel.py"];
+  "labeling.py", "labeling_sources.py", "predict.py", "pretrained.py", "project.py", "segment.py", "tasks.py", "web.py", "weblabel.py"];
 const PRETRAINED = BASE + "pretrained/";                 // 사전학습 가중치 (그 블록을 쓸 때만 받음)
 const gotData = new Set();                               // 받아 둔 예시 데이터 파일 (예시를 누를 때만 받음)
 const E = () => window.DLEngine;
@@ -162,6 +162,15 @@ function activations(body) {
   let pred;
   if (d.task === "detection") pred = `상자 ${E().detDecode(out, 0, d.det, E().DET.show).length}개 찾음`;
   else if (d.task === "forecast") pred = `다음 ${out.length}개 (첫 값 ${Number(out[0].toPrecision(4))})`;
+  else if (d.task === "segmentation") {                       // 시점마다 가장 큰 상태 → 구간 이름
+    const K = d.seg.n_cls, L = d.seg.length, names = [];
+    for (let t = 0; t < L; t++) {
+      let b = 0;
+      for (let k = 1; k < K; k++) if (out[k * L + t] > out[b * L + t]) b = k;
+      if (!names.length || names[names.length - 1] !== b) names.push(b);
+    }
+    pred = names.slice(0, 5).map((k) => s.classes[k]).join(" → ") + (names.length > 5 ? ` … (구간 ${names.length}개)` : "");
+  }
   else if (d.task === "anomaly") {
     let t = 0;
     for (let j = 0; j < out.length; j++) t += (out[j] - s.x[j]) ** 2;

@@ -365,6 +365,9 @@ class Studio:
             pred = f"상자 {len(decode(out, d.n_out.grid, d.n_out.n_cls, SHOW_SCORE))}개 찾음"
         elif d.task == "forecast":
             pred = f"다음 {len(out)}개 (첫 값 {float(out[0]):.4g})"
+        elif d.task == "segmentation":
+            from dlstudio.segment import predicted, states_text
+            pred = states_text(predicted(out[None], 1, len(d.classes))[0], d.classes)
         elif d.task == "anomaly":
             from dlstudio.anomaly import scores
             s, th = float(scores(out[None], d.X_test[i:i + 1])[0]), (self.results or {}).get("threshold")

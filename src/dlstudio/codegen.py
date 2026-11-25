@@ -112,6 +112,8 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
             cfg = _config(n)
             if t == "output" and getattr(n_out, "grid", None):       # 탐지 출력: 격자 칸마다 1×1 필터
                 cfg = dict(cfg, head="grid", per_cell=n_out.per_cell, grid=n_out.grid)
+            if t == "output" and getattr(n_out, "seg", False):       # 구간 분할 출력: 시점마다 1×1 필터
+                cfg = dict(cfg, head="seq", n_cls=n_out.n_cls)
             plan.steps.append(Step(nm, t, cfg, [names[x] for x in ins], shapes[ins[0]], out, key_prefix + _key(k), k,
                                    [tuple(shapes[x]) for x in ins]))
             names[k], shapes[k] = nm, out
@@ -173,6 +175,13 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
                      f"칸마다: 사물 있음 · 칸 안 가운데 x·y · 너비·높이의 제곱근 · 클래스 점수 {A - 5}개"
                      + (f" ({', '.join(map(str, info.get('classes') or []))})" if info.get("classes") else ""))
         lines.append("정답: 그림마다 같은 모양의 목표값 (DL studio의 dlstudio.detect.encode). 찾은 상자는 아래 decode()로.")
+        return lines
+    seq = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "seq"), None)
+    if seq:
+        K = seq["n_cls"]
+        lines.append(f"출력: (샘플 수, {plan.n_out}) = 시점마다 상태 점수 {K}개 × 길이 {plan.n_out // K}를 펼친 것 (상태가 먼저, 모양 (상태, 시점))"
+                     + (f". 상태: {', '.join(map(str, info.get('classes') or []))}" if info.get("classes") else ""))
+        lines.append("정답: 창마다 시점마다 상태 번호 (샘플 수, 길이). 예측 = 시점마다 점수가 가장 큰 상태.")
         return lines
     if info.get("task") == "classification" and info.get("classes"):
         lines.append(f"출력: (샘플 수, {plan.n_out}) 클래스 점수 — 가장 큰 칸이 예측. 순서: {', '.join(map(str, info['classes']))}")
@@ -257,6 +266,8 @@ def _torch_layer(s: Step, n_out: int):
         return None, f"torch.flatten({a}, 1)", []
     if t == "output" and b.get("head") == "grid":
         return f"nn.Conv2d({s.in_shape[0]}, {b['per_cell']}, 1)", f"torch.flatten({me}({a}), 1)", [(s.key + ".0", s.name)]
+    if t == "output" and b.get("head") == "seq":
+        return f"nn.Conv1d({s.in_shape[0]}, {b['n_cls']}, 1)", f"torch.flatten({me}({a}), 1)", [(s.key + ".0", s.name)]
     if t == "output" and b.get("head") == "distance":
         C = _prod(s.in_shape)
         return f"NormalDistance({C}, {X.dist_k(C)})", f"{me}({a})", [(s.key, s.name)]
@@ -362,7 +373,10 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
     if head:
         return "\n".join(lines + _torch_det(head, tr, weights_file, plan))
-    if task in ("regression", "forecast", "anomaly"):         # 이상 탐지는 y = X (입력을 되살림)
+    seq = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "seq"), None)
+    if seq:                                                    # 구간 분할: 시점마다 교차 엔트로피
+        loss, ytype = f"lambda out, t: F.cross_entropy(out.reshape(len(t), {seq['n_cls']}, -1), t)", "torch.long"
+    elif task in ("regression", "forecast", "anomaly"):       # 이상 탐지는 y = X (입력을 되살림)
         loss, ytype = "nn.MSELoss()", "torch.float32"
     else:
         loss, ytype = "nn.CrossEntropyLoss()", "torch.long"
@@ -393,6 +407,7 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
         answer = ("out[:, 0].tolist()                                   # 예측값 (원래 단위)" if task == "regression"
                   else "out.tolist()                                         # 다음 값들 (원래 단위)" if task == "forecast"
                   else "((out - x.reshape(len(x), -1)) ** 2).mean(1).tolist()  # 이상 점수 (클수록 이상)" if task == "anomaly"
+                  else f'[[str(info["classes"][k]) for k in row] for row in out.reshape(len(x), {seq["n_cls"]}, -1).argmax(1).tolist()]  # 시점마다 상태' if seq
                   else '[str(info["classes"][i]) for i in out.argmax(1)]      # 클래스 이름')
         lines += [
             f'def load_trained(path="{weights_file}"):',
@@ -563,6 +578,8 @@ def param_specs(step: Step) -> list:
                 (f"{k}.num_batches_tracked", [], "count")]
     if t == "output" and b.get("head") == "grid":
         return [(f"{k}.0.weight", [b["per_cell"], ins[0], 1, 1], "weight"), (f"{k}.0.bias", [b["per_cell"]], "weight")]
+    if t == "output" and b.get("head") == "seq":
+        return [(f"{k}.0.weight", [b["n_cls"], ins[0], 1], "weight"), (f"{k}.0.bias", [b["n_cls"]], "weight")]
     if t == "output" and b.get("head") == "distance":         # 정상과의 거리: 정상 샘플에서 계산해 넣는 값
         C = _prod(ins)
         K = X.dist_k(C)
@@ -654,6 +671,10 @@ def _keras_lines(s: Step, n_out: int) -> list:
         return [f"{n} = layers.Dropout({float(b.get('rate', 0.5))}, {nm})({a})"]
     if t == "flatten":
         return [f"{n} = layers.Flatten({nm})({a})"]
+    if t == "output" and b.get("head") == "seq":               # 시점마다 1×1 필터, 상태를 앞으로 옮겨 펼침 (PyTorch와 같은 순서)
+        return [f'{n}_steps = layers.Conv1D({b["n_cls"]}, 1, name="{n}_steps")({a})',
+                f'{n}_first = layers.Permute((2, 1), name="{n}_first")({n}_steps)',
+                f"{n} = layers.Flatten({nm})({n}_first)"]
     if t == "output" and b.get("head") == "grid":              # 칸마다 1×1 필터, 채널을 앞으로 옮겨 펼침 (PyTorch와 같은 순서)
         return [f'{n}_cells = layers.Conv2D({b["per_cell"]}, 1, name="{n}_cells")({a})',
                 f'{n}_first = layers.Permute((3, 1, 2), name="{n}_first")({n}_cells)',

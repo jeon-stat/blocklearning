@@ -194,6 +194,23 @@ T_AE_TAB = {"id": "ae_tab_dense", "name": "오토인코더",
             "when": "열이 수십 개 이하인 표 데이터",
             "blocks": [_dense(16), P2, _dense(4), P2, _dense(16), P2, OUT]}
 
+# 구간 분할: 길이를 줄이지 않고 시점마다 상태를 맞힘 (출력 블록이 시점마다 1×1 필터)
+T_SEG_TCN = {"id": "seg_tcn", "name": "TCN (팽창 합성곱)",
+             "desc": "칸을 1·2·4·8·16칸씩 건너뛰며 보는 필터를 겹쳐, 길이를 그대로 둔 채 시점마다 앞뒤 약 2초를 보고 상태를 맞힘",
+             "when": "처음 시작할 때. 빠르고 무난함",
+             "blocks": [_conv(32, 5), P2, _conv(32, 5, 2), P2, _conv(32, 5, 4), P2, _conv(32, 5, 8), P2, _conv(32, 5, 16), P2, OUT]}
+T_SEG_UNET = {"id": "seg_unet", "name": "U-Net식",
+              "desc": "신호를 두 번 줄여 넓게 보고 다시 키운 뒤, 줄이기 전의 자세한 값과 이어 붙여 시점마다 상태를 맞힘 (U-Net 한 단계)",
+              "when": "구간 경계를 정확히 맞혀야 할 때",
+              "blocks": [_conv(16, 5), P2, {"type": "branch", "branches": [[], [
+                  {"type": "pool", "size": 2}, _conv(32, 5), P2, {"type": "pool", "size": 2}, _conv(32, 5), P2,
+                  {"type": "upsample", "mode": "linear"}, {"type": "upsample", "mode": "linear"}]]},
+                  _conv(32, 5), P2, OUT]}
+T_SEG_GRU = {"id": "seg_bigru", "name": "양방향 GRU",
+             "desc": "신호를 앞에서 뒤로, 뒤에서 앞으로 함께 읽어 시점마다의 기억으로 상태를 맞힘 (return_sequences)",
+             "when": "상태의 순서·흐름이 중요할 때. 학습이 더 느림",
+             "blocks": [_conv(16, 5), P2, {"type": "gru", "hidden": 32, "layers": 1, "bidirectional": True, "return_sequences": True}, OUT]}
+
 
 def _soon(id_, name, input_, examples_text, desc):
     return {"id": id_, "name": name, "input": input_, "available": False, "desc": desc,
@@ -278,8 +295,11 @@ CATALOG = [
     {"id": "segmentation", "name": "구간 분할", "icon": "✂️",
      "desc": "긴 신호의 시점마다 어떤 상태인지 표시합니다",
      "subtasks": [
-         _soon("seg_ts", "시계열 구간 분할", "timeseries", "심전도에서 박동 구간 표시, 공정 단계별 구간 나누기",
-               "시점 하나하나에 종류를 붙임"),
+         {"id": "seg_ts", "name": "시계열 구간 분할", "input": "timeseries", "available": True, "task": "segmentation",
+          "desc": "신호의 시점 하나하나에 상태(공정 단계 등)를 붙임. 길이를 줄이지 않는 모델로 시점마다 맞힘",
+          "examples_text": "설비 전류로 지금 어떤 공정 단계인지 나누기, 심전도에서 박동 구간 표시",
+          "example_data": [["pneumatic_seg", "출하 검사 기계 전류 — 시점마다 공정 단계 5묶음 (제조, 100Hz)"]],
+          "templates": [T_SEG_TCN, T_SEG_UNET, T_SEG_GRU]},
      ]},
 ]
 

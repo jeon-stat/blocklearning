@@ -788,3 +788,6 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .proj-card.sel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .18); }
 
 .ae-img { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; margin-right: 4px; }
+.seg-strip { display: block; border-radius: 2px; margin-top: 2px; }
+.seg-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 10px; }
+td.seg-cell { text-align: left; }

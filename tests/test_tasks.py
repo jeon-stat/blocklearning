@@ -30,11 +30,10 @@ def test_catalog_shape_and_json():
         for sub in fam["subtasks"]:
             assert sub["input"] in ("timeseries", "tabular", "image") and sub["examples_text"]
             if sub["available"]:
-                assert sub["task"] in ("classification", "regression", "detection", "forecast", "anomaly") and sub["example_data"] and sub["templates"]
+                assert sub["task"] in ("classification", "regression", "detection", "forecast", "anomaly", "segmentation") and sub["example_data"] and sub["templates"]
                 for t in sub["templates"]:
                     assert t["name"] and t["desc"] and t["when"] and "cost" not in t
-    assert all(s["available"] for f in CATALOG[3:5] for s in f["subtasks"])        # 이상 탐지·예측
-    assert not any(s["available"] for s in CATALOG[5]["subtasks"])                 # 구간 분할은 준비 중
+    assert all(s["available"] for f in CATALOG[3:6] for s in f["subtasks"])        # 이상 탐지·예측·구간 분할
 
 
 def test_find():

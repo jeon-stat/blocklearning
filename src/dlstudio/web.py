@@ -88,7 +88,8 @@ def data_payload(studio: Studio) -> dict:
                                 "classes": [str(c) for c in d.classes] if d.task in ("classification", "detection") else [],
                                 "det": None if d.task != "detection" else
                                 {"grid": d.n_out.grid, "per_cell": d.n_out.per_cell, "n_cls": d.n_out.n_cls,
-                                 "train": d.det["train"], "test": d.det["test"]}})}
+                                 "train": d.det["train"], "test": d.det["test"]},
+                                "seg": None if d.task != "segmentation" else {"n_cls": d.n_out.n_cls, "length": d.n_out.length}})}
 
 
 @_wrap

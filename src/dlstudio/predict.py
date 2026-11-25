@@ -257,6 +257,9 @@ def _table_ae(d, names: list, out: np.ndarray, labels, X, results) -> dict:
 
 
 def table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=None) -> dict:
+    if d.task == "segmentation":
+        from dlstudio import segment
+        return segment.table(d, names, out, truth)
     """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌, 이상 탐지는 점수에).
     results: 학습 결과 (이상 탐지의 기준값)."""
     out = np.asarray(out, dtype=np.float64).reshape(len(names), -1)
@@ -317,6 +320,8 @@ def new_data_kinds(d) -> list:
     ex = ["example"] if (d.source or {}).get("example") else []   # 예시 데이터: 학습·시험에 쓰지 않은 10개
     if d.task == "forecast":
         return ex + ["csv"]
+    if d.task == "segmentation":
+        return ex
     if d.source.get("series_folder"):
         return ex + ["series", "csv"]
     if d.image:

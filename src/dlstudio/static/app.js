@@ -24,7 +24,19 @@ function svgImage(vals, H, W, cell = 6) {
 
 // 객체 탐지 그림: 흑백 그림 위에 정답(점선)·모델이 찾은 상자(실선, 점수) — 상자는 [클래스 번호, (점수,) x, y, w, h] 0–1 비율
 const DET_COLORS = ["#e11d48", "#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
-const TASK_NAME = { classification: "분류", regression: "회귀", detection: "객체 탐지", forecast: "시계열 예측", anomaly: "이상 탐지" };
+const TASK_NAME = { classification: "분류", regression: "회귀", detection: "객체 탐지", forecast: "시계열 예측", anomaly: "이상 탐지",
+  segmentation: "구간 분할" };
+const SEG_COLORS = ["#94a3b8", "#4f46e5", "#14b8a6", "#f97316", "#e11d48", "#a855f7", "#22c55e", "#eab308", "#0ea5e9", "#78716c"];
+function segStrip(states, w = 240, h = 9) {              // 시점마다 상태 → 색 띠 (같은 상태가 이어지면 한 칸)
+  const L = states.length;
+  let s = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" class="seg-strip">`;
+  for (let i = 0, j = 0; i < L; i = j) {
+    while (j < L && states[j] === states[i]) j++;
+    s += `<rect x="${((i * w) / L).toFixed(2)}" y="0" width="${(((j - i) * w) / L).toFixed(2)}" height="${h}" fill="${SEG_COLORS[states[i] % SEG_COLORS.length]}"/>`;
+  }
+  return s + "</svg>";
+}
+const segLegend = (names) => `<p class="muted fc-legend">${names.map((n, k) => `<span style="color:${SEG_COLORS[k % SEG_COLORS.length]}">■</span> ${esc(n)}`).join(" · ")}</p>`;
 // 성적 글자: 정확도·mAP는 %, R²·AUC는 0–1, 복원 오차는 그대로 (낮을수록 좋음)
 function metricText(name, v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "-";
@@ -399,7 +411,10 @@ function renderDataGuide() {
   $("data-guide").textContent = !sub || st.autoTask
     ? "과제를 고르지 않아도 됩니다. CSV·그림 폴더·예시 데이터를 넣으면 분류인지 회귀인지, 시계열·표·이미지 중 무엇인지 보고 과제와 추천 모델을 정해 드립니다. CSV는 한 행 = 샘플 하나, 마지막 열 = 정답."
     : img ? `이미지 폴더: ${GUIDE.image.classification} 픽셀 CSV(한 행 = 픽셀 값들 + 마지막 열 정답)도 됩니다. 처음이면 예시 데이터로 시작해 보세요.`
+    : sub.task === "segmentation" ? "지금은 예시 데이터로만 할 수 있습니다."
     : `CSV 파일: ${GUIDE[sub.input][sub.task]} 첫 줄이 열 이름이면 그대로 씁니다. 처음이면 예시 데이터로 시작해 보세요.`;
+  const onlyEx = !!sub && !st.autoTask && sub.task === "segmentation";   // 구간 분할: 내 데이터로 만드는 것은 아직 없음
+  $("mine-title").hidden = $("mine-grid").hidden = onlyEx;
   const any = !sub || st.autoTask;                           // 과제 없이: 넣는 방법을 다 보임
   $("image-row").hidden = !img && !any;
   $("image-width-box").hidden = !img;
@@ -551,8 +566,9 @@ function onData(s) {
   $("data-summary").hidden = false;
   $("btn-next-data").hidden = false;
   const det = s.task === "detection", fc = s.forecast, ae = s.anomaly;
+  const seg = s.task === "segmentation";
   const task = s.task === "classification" ? `분류 (${s.classes.length}클래스)` : det ? `객체 탐지 (${s.classes.length}클래스)`
-    : fc ? "시계열 예측" : ae ? "이상 탐지" : "회귀";
+    : fc ? "시계열 예측" : ae ? "이상 탐지" : seg ? `구간 분할 (${s.classes.length}상태)` : "회귀";
   const tab = inputKind() === "tabular" && !s.image;
   const cards = fc ? [["학습 창", s.n_train], ["시험 창 (뒤쪽 구간)", s.n_test], ["입력 길이", `지난 ${s.length}개`], ["예측 길이", `다음 ${fc.horizon}개`],
     ["맞힐 값 열", esc(fc.column)], ["점 수", fc.n_points]]
@@ -563,7 +579,7 @@ function onData(s) {
   if (det) cards.push(["상자", `${s.detection.n_boxes}개`], ["격자", `${s.detection.grid}×${s.detection.grid}칸`]);
   if (s.target_range) cards.push(["정답 범위", `${Number(s.target_range[0].toPrecision(3))} ~ ${Number(s.target_range[1].toPrecision(3))}`]);
   $("data-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("") +
-    Object.entries(s.class_counts).map(([k, v]) => `<div class="card"><div class="k">${det ? `'${esc(k)}' 상자` : `클래스 '${esc(k)}'`}</div><div class="v">${v}</div></div>`).join("");
+    Object.entries(s.class_counts).map(([k, v]) => `<div class="card"><div class="k">${det ? `'${esc(k)}' 상자` : seg ? `'${esc(k)}' 시점` : `클래스 '${esc(k)}'`}</div><div class="v">${v}</div></div>`).join("");
   const fmt = (v) => Number(Number(v).toPrecision(4));
   $("data-preview").classList.toggle("table", tab);
   $("data-preview").classList.toggle("thumbs", !!s.image);
@@ -580,6 +596,9 @@ function onData(s) {
     ? s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgSeries([{ v: p.values, color: FC_COLORS.hist },
       { v: p.future, x0: p.values.length, color: FC_COLORS.y, width: 1.8 }], 240, 60, p.values.length)}</div>`).join("") +
       `<p class="muted fc-legend"><span style="color:${FC_COLORS.hist}">━</span> 모델이 보는 지난 값 · <span style="color:${FC_COLORS.y}">━</span> 맞힐 다음 값</p>`
+    : seg
+    ? s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgLine(p.values, 240, 60)}${segStrip(p.states, 240)}</div>`).join("") +
+      segLegend(s.classes)
     : s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgLine(p.values, 240, 60)}</div>`).join("");
   renderAutoTask();
   if (!st.autoTask && st.sub && st.sub.task !== s.task)
@@ -901,7 +920,7 @@ $("btn-train").onclick = async () => {
     const json = sig(graph);
     $("train-status").textContent = "학습 중…";
     const ae = st.summary.anomaly;                              // 이상 탐지: 이상 샘플이 있으면 AUC, 없으면 복원 오차
-    const metric = { classification: "accuracy", detection: "map50" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
+    const metric = { classification: "accuracy", detection: "map50", segmentation: "accuracy" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
     const j = await pollJob(id, (j) => {
       drawCurve(j.progress, metric);
       const last = j.progress[j.progress.length - 1];
@@ -935,7 +954,23 @@ function trainBusy(on, frac = null) {                         // 학습 중: 도
   bar.firstElementChild.style.width = on && frac !== null ? `${Math.min(100, frac * 100)}%` : "";
 }
 $("btn-train-stop").onclick = () => st.trainJob && api(`/api/jobs/${st.trainJob}/cancel`, {}).catch(showError);
+function renderSegResult(r) {                             // 구간 분할: 시점 정확도·혼동 행렬, 시험 창의 정답·예측 띠
+  const names = st.summary.classes, a = r.test_metric;
+  const v = a >= 0.9 ? ["good", `시험 시점의 ${pct(a)}를 맞혔습니다.`, "아래 창에서 경계가 어긋나는 곳을 보세요. ⑤ 예측에서 새 데이터에 써 볼 수 있습니다."]
+    : a >= 0.7 ? ["warn", `시험 시점의 ${pct(a)}를 맞혔습니다. 짧은 상태를 놓치는 곳이 있습니다.`, "Epochs를 늘리거나 다른 대표 모델(U-Net식)을 써 보세요."]
+    : ["bad", `시험 시점의 ${pct(a)}만 맞혔습니다.`, "Epochs를 늘리거나, 필터를 더 넓게 보는 모델(TCN)을 써 보세요."];
+  $("train-result").innerHTML = kv([["Epochs", r.epochs_done], ["시험 시점 정확도", `<b>${pct(a)}</b>`], ["학습 시점 정확도", pct(r.train_metric)]]) +
+    `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>`;
+  renderWarnings("train-warnings", r.warnings);
+  renderConfusion("train-confusion", r.confusion, r.recall, "시점마다 센 혼동 행렬");
+  $("train-scatter").innerHTML = "";
+  $("det-box").hidden = false;
+  $("det-box").innerHTML = `<h3>시험 창 (상태가 많이 바뀌는 것)</h3><div class="seg-gallery">` + r.seg_samples.map((p) =>
+    `<div class="fc-card">${svgLine(p.x, 300, 60)}${segStrip(p.truth, 300)}${segStrip(p.pred, 300)}<div class="muted">맞힌 시점 ${pct(p.acc)}</div></div>`).join("") +
+    `</div><p class="muted fc-legend">띠: 위 = 정답, 아래 = 예측</p>` + segLegend(names);
+}
 function renderTrainResult(r) {
+  if (r.seg_samples) return renderSegResult(r);
   if (r.metric_name === "map50") return renderDetResult(r);
   if (r.fc_samples) return renderFcResult(r);
   if (r.ae_samples) return renderAeResult(r);
@@ -1412,7 +1447,19 @@ function renderPredictAe(r) {                           // 이상 탐지: 샘플
   $("predict-note").textContent = r.shown < s.n ? `표에는 처음 ${r.shown}개만 보입니다. 전부는 CSV로 내려받으세요.` : "";
   $("predict-result").hidden = false;
 }
+function renderPredictSeg(r) {                          // 구간 분할: 창마다 예측 구간 (정답이 있으면 함께)
+  const s = r.summary;
+  const cards = [["창", s.n]].concat(s.accuracy === null ? [] : [["시점 정확도", pct(s.accuracy)]]);
+  $("predict-cards").innerHTML = cards.map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+  const head = ["창", "예측 구간"].concat(r.has_label ? ["정답", "맞힌 시점"] : []);
+  $("predict-table").innerHTML = `<tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr>` + r.rows.map((x) =>
+    `<tr><td>${esc(x.name)}</td><td class="seg-cell">${segStrip(x.seg_pred, 200)}<div>${esc(x.pred)}</div></td>` +
+    (r.has_label ? `<td class="seg-cell">${segStrip(x.seg_truth, 200)}<div>${esc(x.label)}</div></td><td>${pct(x.acc)}</td>` : "") + `</tr>`).join("");
+  $("predict-note").innerHTML = segLegend(s.classes);
+  $("predict-result").hidden = false;
+}
 function renderPredict(r) {
+  if (r.summary.task === "segmentation") return renderPredictSeg(r);
   $("predict-gallery").innerHTML = "";
   if (r.summary.task === "detection") return renderPredictDet(r);
   if (r.summary.task === "forecast") return renderPredictFc(r);

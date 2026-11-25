@@ -152,6 +152,8 @@ class _Walker:
                 return self.det_head(shape, path)
             if b.get("head") == "distance":
                 return self.dist_head(shape, path)
+            if getattr(self.n_out, "seg", False):
+                return self.seg_head(shape, path)
             return self.dense_like(shape, self.n_out, path)
         if shape is None:
             return None
@@ -311,6 +313,19 @@ class _Walker:
             self.issue(path, f"탐지 모델의 출력 블록 바로 앞은 {G}×{G} 격자여야 함 (지금 {now})",
                        f"그림 {G * 8}×{G * 8}을 AvgPool2D로 세 번 줄이면 {G}×{G}가 됩니다. "
                        "GlobalAvgPool2D·Flatten·Dense는 위치를 잃어 탐지에 쓸 수 없습니다")
+            return None
+        return (int(self.n_out),)
+
+    def seg_head(self, shape, path):
+        """구간 분할 출력: 바로 앞이 길이를 그대로 둔 줄 (채널, L)이어야 함 → 시점마다 상태 점수 (K, L)을 펼쳐 냄."""
+        if shape is None:
+            return None
+        L = self.n_out.length
+        if len(shape) != 2 or shape[1] != L:
+            now = f"길이 {shape[1]}" if len(shape) == 2 else f"숫자 {_prod(shape)}개 (시점이 없음)"
+            self.issue(path, f"구간 분할의 출력 블록 바로 앞은 길이 {L}인 줄이어야 함 (지금 {now})",
+                       "시점마다 맞혀야 해서 길이를 줄이는 Pool·stride 2·Flatten·Dense는 쓸 수 없습니다 "
+                       "(줄였다면 Upsample로 되돌리세요. 순환 층은 return_sequences를 켜세요)")
             return None
         return (int(self.n_out),)
 
@@ -511,6 +526,8 @@ def make_layer(b: dict, shape, n_out: int):
     if t == "output" and b.get("head") == "distance":             # 이상 탐지: 정상과의 거리 (점수 하나)
         from dlstudio.nn_extra import NormalDistance
         return NormalDistance(_prod(shape), X.dist_k(_prod(shape)))
+    if t == "output" and getattr(n_out, "seg", False):            # 구간 분할: 시점마다 1×1 필터 → (상태 수, L)을 펼침
+        return nn.Sequential(nn.Conv1d(shape[0], n_out.n_cls, 1), Flatten())
     if t == "output" and getattr(n_out, "grid", None):           # 탐지: 격자 칸마다 1×1 필터 → (값 수, G, G)를 펼침
         return nn.Sequential(nn.Conv2d(shape[0], n_out.per_cell, 1), Flatten())
     if t in ("dense", "output"):

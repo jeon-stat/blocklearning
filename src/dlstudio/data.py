@@ -67,6 +67,9 @@ class Dataset:
             return int(self.y_train.shape[1])
         if self.task == "anomaly":
             return int(self.X_train.shape[1])
+        if self.task == "segmentation":
+            from dlstudio.segment import SegOut
+            return SegOut(len(self.classes), self.length)
         return len(self.classes) if self.task == "classification" else 1
 
     @property
@@ -83,6 +86,9 @@ class Dataset:
             return f"다음 {y.shape[1]}개 (첫 값 {float(y[i][0]):.4g})"
         if self.task == "anomaly":
             return self.classes[int(y[i])]
+        if self.task == "segmentation":
+            from dlstudio.segment import states_text
+            return states_text(y[i], self.classes)
         return self.classes[int(y[i])] if self.task == "classification" else float(y[i])
 
     def raw(self, X: np.ndarray) -> np.ndarray:
@@ -98,6 +104,8 @@ class Dataset:
             return self._det_summary()
         if self.task == "forecast":
             return self._fc_summary()
+        if self.task == "segmentation":
+            return self._seg_summary()
         y_all = np.concatenate([self.y_train, self.y_test])
         if self.task in ("classification", "anomaly"):
             counts = {name: int((y_all == k).sum()) for k, name in enumerate(self.classes)}
@@ -141,6 +149,18 @@ class Dataset:
                     forecast={k: e[k] for k in ("horizon", "stride", "column", "columns", "n_points")},
                     preview=[{"label": f"→ 다음 {e['horizon']}개", "values": [round(float(v), 5) for v in raw[i]],
                               "future": [round(float(v), 5) for v in self.y_train[i]]} for i in picks])
+
+    def _seg_summary(self) -> dict:
+        """구간 분할: 상태마다 시점 수, 미리보기는 상태가 많이 바뀌는 학습 창 (신호 + 시점마다 상태)."""
+        from dlstudio.segment import runs, states_text
+        y = np.concatenate([self.y_train, self.y_test])
+        counts = {name: int((y == k).sum()) for k, name in enumerate(self.classes)}
+        picks = np.argsort([-len(runs(r)) for r in self.y_train[:400]], kind="stable")[:6]
+        raw = self.raw(self.X_train)
+        return dict(self._base_summary(), class_counts=counts, target_range=None, feature_means=None, features=[],
+                    segment={"n_classes": len(self.classes), "length": int(self.length)},
+                    preview=[{"label": states_text(self.y_train[i], self.classes), "values": [round(float(v), 5) for v in raw[i]],
+                              "states": [int(v) for v in self.y_train[i]]} for i in picks])
 
     def _ae_summary(self, counts: dict) -> dict:
         raw_tr, raw_te = self.raw(self.X_train), self.raw(self.X_test)
@@ -827,10 +847,11 @@ FC_EXAMPLES = {"steel_power": ("steel_power", "전력 사용량 (kWh)", 96, 24, 
 AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic", "steelblast_ae": "steelblast",
                "pneumonia_ae": "pneumonia"}         # 이상 탐지: 분류 예시를 정상만 학습으로
 DET_EXAMPLES = {"pcb_det": ("pcb_det", 64)}                                    # 탐지: 종류 → (파일, 그림 크기)
+SEG_EXAMPLES = {"pneumatic_seg": "pneumatic_seg"}                               # 구간 분할: 종류 → 파일 (창 X·시점마다 상태 y)
 ALIASES = {"vibration": "bearing", "process_cls": "steel_plates", "process_reg": "concrete", "wear_rul": "hydraulic_valve",
            "surface": "steelblast", "parts_det": "pcb_det", "factory_power": "steel_power", "vibration_ae": "bearing_ae",
            "process_ae": "hydraulic_ae"}                                       # 예전(합성) 예시 이름 → 바꾼 실제 데이터
-EXAMPLE_KINDS = sorted(set(EXAMPLES) | set(FC_EXAMPLES) | set(AE_EXAMPLES) | set(DET_EXAMPLES))
+EXAMPLE_KINDS = sorted(set(EXAMPLES) | set(FC_EXAMPLES) | set(AE_EXAMPLES) | set(DET_EXAMPLES) | set(SEG_EXAMPLES))
 
 
 def example_files(kind: str) -> list:
@@ -840,6 +861,8 @@ def example_files(kind: str) -> list:
         return [FC_EXAMPLES[kind][0] + ".npz"]
     if kind in DET_EXAMPLES:
         return [DET_EXAMPLES[kind][0] + ".npz"]
+    if kind in SEG_EXAMPLES:
+        return [SEG_EXAMPLES[kind] + ".npz"]
     kind = AE_EXAMPLES.get(kind, kind)
     return [EXAMPLES[kind][0] + ".npz"] if kind in EXAMPLES else []
 
@@ -857,6 +880,11 @@ def example_new(d) -> dict:
         if not len(X):
             raise DataError([Issue(None, None, f"예시 새 데이터가 입력 길이 {d.length}보다 짧음", "② 데이터에서 입력 길이를 줄이세요")])
         return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None, "truth": Y}
+    if kind in SEG_EXAMPLES:
+        z = _npz(SEG_EXAMPLES[kind])
+        X = _float(z["X_new"])
+        return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None,
+                "truth": z["y_new"].astype(np.int64).tolist()}
     if kind in DET_EXAMPLES:
         z = _npz(DET_EXAMPLES[kind][0])
         X, boxes, _ = _det_arrays({"X": z["X_new"], "boxes": z["boxes_new"], "names": z["names"]})
@@ -891,6 +919,11 @@ def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 
         f, col, L0, H0, s0 = FC_EXAMPLES[kind]
         return make_forecast_dataset(_npz(f)["series"], int(L or L0), int(H or H0), int(stride or s0), test_ratio=test_ratio,
                                      normalize=normalize, source={"example": kind}, column=col)
+    if kind in SEG_EXAMPLES:
+        from dlstudio.segment import make_segment_dataset
+        z = _npz(SEG_EXAMPLES[kind])
+        return make_segment_dataset(_float(z["X"]), z["y"].astype(np.int64), [str(c) for c in z["names"]], test_ratio=test_ratio,
+                                    seed=seed, normalize=normalize, source={"example": kind})
     if kind in AE_EXAMPLES:
         from dlstudio.anomaly import to_anomaly
         d = load_example(AE_EXAMPLES[kind], normalize=normalize, test_ratio=test_ratio, seed=seed)

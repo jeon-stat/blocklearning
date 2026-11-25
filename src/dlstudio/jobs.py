@@ -124,6 +124,9 @@ def metric(out: np.ndarray, y: np.ndarray, task: str, X: Optional[np.ndarray] = 
     if task == "anomaly":
         from dlstudio.anomaly import metric as ae_metric
         return ae_metric(out, X, y)
+    if task == "segmentation":
+        from dlstudio.segment import metric as seg_metric
+        return seg_metric(out, y, np.asarray(out).reshape(len(y), -1).shape[1] // np.asarray(y).shape[1])
     o = out[:, 0]
     var = float(np.var(y))
     return 1.0 - float(np.mean((o - y) ** 2)) / var if var > 0 else float("nan")
@@ -189,6 +192,10 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         from dlstudio.detect import torch_loss
         yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev)
         loss_fn = lambda out, t: torch_loss(out, t, det.grid, det.per_cell)
+    elif task == "segmentation":                           # 시점마다 교차 엔트로피 (det = SegOut: 상태 수)
+        from dlstudio.segment import torch_loss as seg_loss
+        yt = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev)
+        loss_fn = lambda out, t: seg_loss(out, t, det.n_cls)
     elif task == "classification":
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev), nn.CrossEntropyLoss()
     else:
@@ -235,7 +242,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
         Xte_t = torch.as_tensor(Fte, dtype=torch.float32, device=dev)
         model.start = head
-    reg = data.task != "classification"                  # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
+    reg = data.task not in ("classification", "segmentation")   # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
     Y = np.asarray(data.target_train, dtype=np.float64).reshape(len(data.X_train), -1)
     mu, sd = target_scale(Y) if reg else (0.0, 1.0)
     y_fit = (Y - mu) / sd if reg else data.y_train
@@ -254,7 +261,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         warnings.simplefilter("ignore")
         try:
             net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
-                      device=dev, callback=cb)
+                      device=dev, callback=cb, det=data.n_out if data.task == "segmentation" else None)
         finally:
             model.start = None
     if reg:
@@ -266,7 +273,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     with torch.no_grad():                                   # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
         Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
         out_tr = np.concatenate([net(Xtr_t[i:i + 1024]).double().numpy() for i in range(0, len(Xtr_t), 1024)])
-    if data.task in ("forecast", "anomaly"):
+    if data.task in ("forecast", "anomaly", "segmentation"):
         return dict(result, **task_result(data, out, out_tr))
     result["train_metric"] = metric(out_tr, data.y_train, data.task)
     if data.task == "classification":
@@ -324,11 +331,14 @@ def metric_name(data) -> str:
     if data.task == "anomaly":
         from dlstudio.anomaly import metric_name as ae_name
         return ae_name(data)
-    return "accuracy" if data.task == "classification" else "r2"
+    return "accuracy" if data.task in ("classification", "segmentation") else "r2"
 
 
 def task_result(data, out: np.ndarray, out_tr: np.ndarray) -> dict:
-    """예측·이상 탐지의 결과 화면 값 (시험·학습 출력에서). 웹 학습도 출력만 넘겨 이것을 씀 (web.task_result)."""
+    """예측·이상 탐지·구간 분할의 결과 화면 값 (시험·학습 출력에서). 웹 학습도 출력만 넘겨 이것을 씀 (web.task_result)."""
+    if data.task == "segmentation":
+        from dlstudio import segment
+        return segment.result(out, out_tr, data)
     if data.task == "forecast":
         from dlstudio import forecast
         return dict(forecast.result(out, data), train_metric=forecast.metric(out_tr, data.y_train))

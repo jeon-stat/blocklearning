@@ -66,6 +66,7 @@ python -m dlstudio          # 또는 dlstudio
 | 이상 탐지 · 이미지 | 강판 표면 — 양호만 학습해 불량 찾기 (SteelBlastQC) / 흉부 X-ray — 정상만 학습해 폐렴 찾기 (PneumoniaMNIST) | 사전학습 특징 + 정상과의 거리 |
 | 예측 · 시계열 | 철강 공장 전력 사용량 1시간마다 — 지난 4일로 다음 하루 ([UCI, 광양 철강 공장](https://archive.ics.uci.edu/dataset/851), CC BY 4.0) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
 | 분류 · 이미지 | 강판 표면 양호·불량 64×64 ([SteelBlastQC](https://doi.org/10.34894/EKZNN0), CC BY 4.0) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/), CC BY 4.0, 진단용 아님) / 손글씨 숫자 32×32 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet, 전이 학습 (MobileNetV3), CNN + Transformer, ViT |
+| 구간 분할 · 시계열 | 출하 검사 기계 전류 100Hz — 시점마다 공정 단계 5묶음 ([Mendeley ypzswhhzh9](https://doi.org/10.17632/ypzswhhzh9.3), CC BY 4.0) | TCN (팽창 합성곱), U-Net식, 양방향 GRU |
 
 예시 데이터는 모두 공개된 실제 데이터입니다 (합성 데이터 없음). 원본을 작게 줄인 파일과 출처·라이선스·바꾼 내용은 `src/dlstudio/data/*.npz`·`*.SOURCE.txt`, 원본에서 다시 만드는 법은 `tools/build_examples.py`. 웹 버전은 예시를 누를 때만 그 파일을 받습니다.
 
@@ -148,6 +149,15 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 - 미세조정: 블록 설정 [함께 학습할 끝 블록]을 1–3으로 하면 끝 블록과 마지막 1×1 합성곱 둘을 함께 학습합니다 (작은 학습률 권장, 예: 0.0003). 15 epoch에서 강판 93.3% → 96.0% (끝 2개), 흉부 X-ray 90.8% → 93.3% (끝 1개)로 올랐지만, 특징을 매번 다시 계산해 3–10배 오래 걸리고 프로젝트에 학습한 값(수 MB)이 저장됩니다. 아주 작은 그림(28×28 흉부 X-ray)에서는 처음부터 학습하는 모델보다 나아지지 않을 수 있습니다.
 - 가중치: Google의 [MobileNetV3 small-100-224 feature vector](https://www.kaggle.com/models/google/mobilenet-v3/tfJs/small-100-224-feature-vector/1) (TF Hub `mobilenet_v3_small_100_224/feature_vector/5`, **Apache License 2.0**). `tools/build_pretrained.py`가 TF.js 파일을 `src/dlstudio/pretrained/mnv3s.bin`·`.json`으로 옮기고(축 순서만 바꿈), 원래 모델과 출력이 같은지 확인합니다. 출처·바꾼 내용은 `mnv3s.SOURCE.txt`, 라이선스 원문은 `LICENSE-mnv3s.txt`.
 - 웹 버전은 이 블록을 처음 쓸 때 같은 사이트에서 가중치를 받습니다. 프로젝트·학습 기록에는 고정 가중치를 넣지 않고(열 때 다시 채움), 내보내는 PyTorch 코드·가중치에는 모두 넣습니다. Keras 코드로는 내보내지 않습니다.
+
+### 구간 분할 (시점마다 상태)
+
+긴 신호의 시점 하나하나에 상태(공정 단계 등)를 붙입니다. 신호를 길이 L의 창으로 자르고, 모델은 길이를 줄이지 않은 채 끝까지 가서 출력 블록이 시점마다 1×1 합성곱으로 상태 점수를 냅니다 (출력 = 상태 수 × L, 상태가 먼저). 손실은 시점마다 교차 엔트로피, 성적은 시점 정확도입니다.
+
+- 출력 블록 바로 앞은 길이 L인 줄이어야 합니다. 길이를 줄이는 Pool·stride 2·Flatten·Dense를 쓰면 빨간 상자로 알려 줍니다 (줄였으면 Upsample로 되돌리기, 순환 층은 return_sequences).
+- 결과: 시점 정확도(시험·학습), 시점마다 센 혼동 행렬·상태별 재현율, 상태가 많이 바뀌는 시험 창의 신호와 정답·예측 색 띠. ⑤ 예측은 예시 새 데이터 10개의 창마다 예측 구간과 정답, CSV(시점마다 한 줄).
+- 예시: 소형 전기 구동부 출하 검사 기계의 전류(100Hz)를 256칸(2.56초)씩 자르고, 기계 PLC 상태를 다섯 묶음(대기 · 동작 1–10 · 동작 11–16 · 긴 단계 17 · 동작 18–25)으로 붙였습니다. 같은 데이터의 공압 압력은 쓰지 않습니다 (시계열은 채널 하나): 별도 실험(겹치지 않는 창 전부, 팽창 합성곱 6층, 30 epoch)에서 압력만으로는 대기와 긴 단계를 가르지 못해 시점 정확도 58%, 전류만으로 98%, 둘 다 쓰면 99.7%였습니다. DL studio 예시(창 일부, TCN 대표 모델)는 웹에서 10 epoch에 86%입니다.
+- 아직 예시 데이터로만 됩니다 (내 CSV로 구간 분할 데이터를 만드는 것은 아직 없음).
 
 ### 이상 탐지 · 시계열 예측
 
