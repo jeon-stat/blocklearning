@@ -150,3 +150,22 @@ def test_segment_csv_long_series(tmp_path):
         warnings.simplefilter("ignore")
         tr = train_job(Job("t"), g, s.data, TrainSettings(epochs=15, lr=1e-2))
     assert tr["test_metric"] > 0.5
+
+
+def test_csv_columns_before_load(tmp_path):
+    """② CSV 열 고르기: 불러오기 전에 열마다 이름·종류·값·짐작한 역할 (번호·글자 = 안 씀, 마지막 = 정답), 긴 시계열 열도."""
+    from dlstudio.core import Studio
+    f = tmp_path / "p.csv"
+    f.write_text("ID,날짜,온도,압력,등급,수율\n" + "\n".join(f"{i + 1},2026-03-{i % 28 + 1:02d},{180 + i % 7},{3 + i % 3 * 0.1:.1f},"
+                                                       f"{'양호' if i % 3 else '불량'},{90 - i % 5}" for i in range(30)), encoding="utf-8")
+    r = Studio().api_data_columns({"path": str(f)})
+    assert r["n_rows"] == 30 and r["header"]
+    assert [(c["name"], c["kind"], c["role"]) for c in r["columns"]] == [
+        ("ID", "number", "skip"), ("날짜", "text", "skip"), ("온도", "number", "input"), ("압력", "number", "input"),
+        ("등급", "text", "skip"), ("수율", "number", "target")]
+    assert r["columns"][4]["sample"][0] == "불량"
+    g = tmp_path / "w.csv"                                              # 머리글 없는 시계열 (140열 + 정답)
+    g.write_text("\n".join(",".join(f"{np.sin(t / 5 + i):.3f}" for t in range(140)) + f",{'정상' if i % 2 else '이상'}" for i in range(20)),
+                 encoding="utf-8")
+    c = Studio().api_data_columns({"path": str(g)})["columns"]
+    assert len(c) == 141 and c[0]["name"] == "열 1" and {x["role"] for x in c[:140]} == {"input"} and c[140]["role"] == "target"

@@ -541,8 +541,8 @@ function csvFormat(sub) {                                // CSV 모양 예시 (�
     ex.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("") + `</table>`;
   const what = { timeseries: "한 행 = 신호 한 구간, 열 = 시점마다의 값", tabular: "한 행 = 샘플 하나, 열 = 측정 항목",
     image: "한 행 = 그림 하나, 열 = 픽셀 값 (28×28이면 784열). 그림 파일 폴더도 됩니다" }[kind];
-  return `<p>${esc(what)}, <b>마지막 열 = ${reg ? "맞힐 숫자" : "정답 이름"}</b>.</p>${table}` +
-    `<p class="muted">첫 줄(열 이름)은 있어도 없어도 됩니다. 정답 열이 마지막이 아니면 [더 보기]에서 정답 열 번호를 바꾸세요. 엑셀에서는 [다른 이름으로 저장 → CSV UTF-8].</p>`;
+  return `<p>${esc(what)}, 정답 열(${reg ? "맞힐 숫자" : "정답 이름"}) 하나 이상. 어느 열이 정답인지는 파일을 고른 뒤 정합니다 (처음엔 마지막 열).</p>${table}` +
+    `<p class="muted">첫 줄(열 이름)은 있어도 없어도 됩니다. 엑셀에서는 [다른 이름으로 저장 → CSV UTF-8].</p>`;
 }
 $("example-btns").onclick = (e) => {
   const b = e.target.closest("[data-ex]");
@@ -653,22 +653,74 @@ function renderRoleBox(s) {                               // ② 역할 표: CSV
   if (seg) $("role-length").value = s.length;
   drawRoles();
 }
-function drawRoles() {
-  const cols = st.summary.columns;
-  $("role-cols").innerHTML = cols.map((c, j) => `<button type="button" class="role r-${st.roles[j]}" data-j="${j}" title="${esc(c.name)}">` +
-    `<span>${esc(c.name)}</span><b>${ROLE_NAME[st.roles[j]]}</b></button>`).join("");
-  const n = (r) => st.roles.filter((x) => x === r).length;
-  $("role-note").textContent = `입력 ${n("input")} · 정답 ${n("target")}` + (n("skip") ? ` · 안 씀 ${n("skip")}` : "");
+function roleGroups(cols, roles) {                        // 같은 역할의 숫자 열이 8개 넘게 이어지면 칩 하나로 (시계열 CSV의 t1 … t140)
+  const out = [], num = (c) => (c.kind || "number") === "number";
+  for (let i = 0; i < cols.length;) {
+    let j = i;
+    while (j + 1 < cols.length && roles[j + 1] === roles[i] && num(cols[j + 1]) && num(cols[i])) j++;
+    if (j - i + 1 >= 8) { out.push([i, j]); i = j + 1; } else { out.push([i, i]); i++; }
+  }
+  return out;
 }
-$("role-cols").onclick = (e) => {
-  const b = e.target.closest("[data-j]");
+function drawRoleChips(el, noteEl, cols, roles) {         // 열 칩 (누르면 입력 → 정답 → 안 씀), 묶음 칩은 그 열들을 한꺼번에
+  el.innerHTML = roleGroups(cols, roles).map(([a, b]) => {
+    const name = b > a ? `${cols[a].name} … ${cols[b].name} · ${b - a + 1}열` : cols[a].name;
+    const tip = b > a ? name : cols[a].sample && cols[a].sample.length ? `${cols[a].name}: ${cols[a].sample.join(", ")} …` : cols[a].name;
+    return `<button type="button" class="role r-${roles[a]}" data-a="${a}" data-b="${b}" title="${esc(tip)}"><span>${esc(name)}</span><b>${ROLE_NAME[roles[a]]}</b></button>`;
+  }).join("");
+  const n = (r) => roles.filter((x) => x === r).length;
+  noteEl.textContent = `입력 ${n("input")} · 정답 ${n("target")}` + (n("skip") ? ` · 안 씀 ${n("skip")}` : "");
+}
+function cycleRoles(e, roles, redraw) {
+  const b = e.target.closest("[data-a]");
   if (!b) return;
-  const j = Number(b.dataset.j);
-  st.roles[j] = ROLE_NEXT[st.roles[j]];
-  drawRoles();
+  const a = Number(b.dataset.a), z = Number(b.dataset.b), next = ROLE_NEXT[roles[a]];
+  for (let j = a; j <= z; j++) roles[j] = next;
+  redraw();
+}
+const rolePick = (roles, r) => roles.map((x, j) => (x === r ? j : -1)).filter((j) => j >= 0);
+function drawRoles() { drawRoleChips($("role-cols"), $("role-note"), st.summary.columns, st.roles); }
+$("role-cols").onclick = (e) => cycleRoles(e, st.roles, drawRoles);
+// CSV 열 고르기 (불러오기 전): 열마다 짐작한 역할을 채워 보여 주고, 사용자가 확인·바꾼 뒤 [불러오기]
+function drawPick() {
+  drawRoleChips($("pick-cols"), $("pick-note"), st.pick.cols, st.pick.roles);
+  const seg = !$("pick-len-box").hidden, table = !!st.sub && !st.autoTask && st.sub.input === "tabular";
+  $("pick-ch-box").hidden = seg || table || rolePick(st.pick.roles, "input").length < 16;   // 채널은 값 열이 많은 시계열에서만
+}
+$("pick-cols").onclick = (e) => cycleRoles(e, st.pick.roles, drawPick);
+async function openPick(path) {
+  $("data-issues").innerHTML = "";
+  try {
+    const r = await api("/api/data/columns", { path });
+    st.pick = { path, cols: r.columns, roles: r.columns.map((c) => c.role) };
+    const seg = !!st.sub && !st.autoTask && st.sub.task === "segmentation";
+    $("pick-file").textContent = $("csv-path").value || path.split(/[\\/]/).pop();
+    $("pick-info").textContent = `${r.n_rows}행 · 열 ${r.columns.length}개`;
+    $("pick-ch-box").hidden = seg || (!!st.sub && !st.autoTask && st.sub.input === "tabular");
+    $("pick-len-box").hidden = !seg;
+    $("pick-channels").value = 1;
+    $("pick-length").value = "";
+    $("csv-pick").hidden = false;
+    drawPick();
+    $("csv-pick").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } catch (e) {
+    showError(e);
+    $("data-issues").innerHTML = (e.issues || []).map((i) => `<li>${esc(i.message)}<span class="hint">→ ${esc(i.hint)}</span></li>`).join("");
+  }
+}
+$("btn-pick-load").onclick = async () => {
+  const roles = st.pick.roles, seg = !$("pick-len-box").hidden;
+  if (!rolePick(roles, "target").length) return showMessage("정답 열을 하나 이상 고르세요", "열 이름을 눌러 '정답'으로 바꾸세요");
+  if (!rolePick(roles, "input").length) return showMessage("입력 열을 하나 이상 고르세요", "열 이름을 눌러 '입력'으로 바꾸세요");
+  if (seg && rolePick(roles, "target").length !== 1) return showMessage("상태 열은 하나만 고르세요", "열 이름을 눌러 '정답'을 하나만 남기세요");
+  const o = Object.assign(dataOptions(), { path: st.pick.path, targets: rolePick(roles, "target"), skip: rolePick(roles, "skip"),
+    channels: $("pick-ch-box").hidden ? 1 : Number($("pick-channels").value) || 1 });
+  delete o.label_col;
+  if (seg) { o.task = "segmentation"; if (Number($("pick-length").value)) o.length = Number($("pick-length").value); }
+  if (await loadData(o)) $("csv-pick").hidden = true;
 };
 $("btn-role-reload").onclick = () => {
-  const pick = (r) => st.roles.map((x, j) => (x === r ? j : -1)).filter((j) => j >= 0);
+  const pick = (r) => rolePick(st.roles, r);
   if (!pick("target").length) return showMessage("정답 열을 하나 이상 고르세요", "열 이름을 눌러 '정답'으로 바꾸세요");
   if (st.summary.task === "segmentation" && pick("target").length !== 1) return showMessage("상태 열은 하나만 고르세요", "열 이름을 눌러 '정답'을 하나만 남기세요");
   loadData({ roles_reload: { targets: pick("target"), skip: pick("skip"), channels: Number($("role-channels").value) || 1,
@@ -688,8 +740,10 @@ $("btn-fc-reload").onclick = () => loadData({ forecast_reload: { column: $("fc-c
 $("btn-csv").onclick = () => {
   if (!pathVal("csv-path")) return showMessage("CSV 파일 경로를 넣으세요", "예: C:\\data\\ecg.csv");
   const o = Object.assign(dataOptions(), { path: pathVal("csv-path") });
-  if (st.sub && st.sub.input === "image") o.image_width = Number($("image-width").value) || 0;   // 비우면 정사각형
-  loadData(o);
+  const own = st.sub && !st.autoTask;
+  if (own && st.sub.input === "image") { o.image_width = Number($("image-width").value) || 0; return loadData(o); }   // 픽셀 CSV: 비우면 정사각형
+  if (own && st.sub.task === "forecast") return loadData(o);                  // 시계열 예측: 맞힐 열은 불러온 뒤 고름
+  openPick(pathVal("csv-path"));                                                // 그 밖: 열 고르기를 먼저
 };
 // 샘플마다 CSV 하나인 폴더 (시계열): 살펴보기 → 값 열·길이·정답 표 고르기 → 불러오기
 const MODE_TEXT = { folders: "정답: 하위 폴더", file: "정답: 정답 표", none: "정답 없음" };

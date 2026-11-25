@@ -339,6 +339,32 @@ def _is_row_number(cells: list) -> bool:
     return all(b - a == 1 for a, b in zip(v, v[1:]))
 
 
+def csv_columns(path: str) -> dict:
+    """불러오기 전에 CSV의 열마다 이름·종류(숫자·글자)·값 몇 개와 짐작한 역할 (② 열 고르기: 사용자가 확인하고 불러옴).
+    짐작은 load_csv의 기본과 같음: 마지막 열 = 정답, 글자뿐인 열·0이나 1부터 1씩 느는 번호 열 = 안 씀, 나머지 = 입력."""
+    numbered = _read_rows(path)
+    if not numbered:
+        raise DataError([Issue(None, None, "파일이 비어 있음", "샘플이 한 행에 하나씩 있는 CSV를 고르세요")])
+    ncol = len(numbered[0][1])
+    if ncol < 2:
+        raise DataError([Issue(1, None, "열이 하나뿐임 (값 열과 정답 열이 모두 있어야 함)", "쉼표로 나뉜 CSV인지, 정답 열이 있는지 확인하세요")])
+    lc, first = ncol - 1, numbered[0][1]
+    header = _is_header(first, [j for j in range(ncol - 1)], lc, numbered[1:])
+    names = [(first[j] if j < len(first) else "") or f"열 {j + 1}" for j in range(ncol)] if header else [f"열 {j + 1}" for j in range(ncol)]
+    rows = [r for _, r in (numbered[1:] if header else numbered)]
+    head = rows[:50]
+    cols = []
+    for j in range(ncol):
+        cells = [r[j] for r in head if j < len(r) and r[j] != ""]
+        num = bool(cells) and sum(_num(c) is not None for c in cells) >= 0.9 * len(cells)
+        role = "target" if j == lc else "skip" if not num or _is_row_number([r[j] if j < len(r) else "" for r in rows]) else "input"
+        cols.append({"name": names[j], "kind": "number" if num else "text", "sample": cells[:3], "role": role})
+    if not any(c["role"] == "input" for c in cols):             # 모두 글자 등: 짐작을 버리고 나머지를 입력으로 (불러올 때 오류로 알려 줌)
+        for c in cols[:-1]:
+            c["role"] = "input"
+    return {"columns": cols, "n_rows": len(rows), "header": header}
+
+
 def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", normalize: bool = True,
              test_ratio: float = 0.2, seed: int = 0, image_width: Optional[int] = None, targets: Optional[list] = None,
              skip: Optional[list] = None, channels: int = 1) -> Dataset:

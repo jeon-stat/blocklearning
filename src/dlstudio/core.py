@@ -337,6 +337,14 @@ class Studio:
         d = self.api_data_load({"folder": p.meta["source"]["path"], "det_file": file, "size": DEFAULT_SIZE})
         return dict(d, label_file=file)
 
+    def api_data_columns(self, b: dict) -> dict:
+        """CSV 열 고르기 (불러오기 전): 열마다 이름·종류·값 몇 개·짐작한 역할."""
+        from dlstudio.data import csv_columns
+        path = _path(b.get("path"))
+        if not os.path.isfile(path):
+            raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
+        return csv_columns(path)
+
     def api_data_scan_folder(self, b: dict) -> dict:
         """샘플마다 CSV 하나인 폴더 살펴보기 (불러오기 전에 파일 수·길이·열·정답 방식)."""
         return scan_series_folder(_path(b.get("path")), label_file=_path(b.get("label_file")) or None)
@@ -763,7 +771,7 @@ ROUTES = {
     "/api/anomaly/threshold": "api_anomaly_threshold",
     "/api/project/save": "api_project_save", "/api/project/open": "api_project_open",
     "/api/project/export": "api_project_export", "/api/task/select": "api_task_select",
-    "/api/data/scan_folder": "api_data_scan_folder", "/api/code": "api_code", "/api/code/save": "api_code_save",
+    "/api/data/scan_folder": "api_data_scan_folder", "/api/data/columns": "api_data_columns", "/api/code": "api_code", "/api/code/save": "api_code_save",
     "/api/runs/restore": "api_runs_restore", "/api/runs/delete": "api_runs_delete", "/api/predict": "api_predict",
     "/api/samples": "api_samples", "/api/preview": "api_preview",
 }
