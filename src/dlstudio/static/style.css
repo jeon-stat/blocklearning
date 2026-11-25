@@ -91,6 +91,14 @@ main { padding: 16px 20px 40px; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .or { color: var(--muted); }
 .status { color: var(--muted); font-size: 14px; }
+.status.busy::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -2px;
+  border: 2px solid var(--accent-bg); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.train-bar { height: 4px; background: var(--line); border-radius: 999px; overflow: hidden; margin: 2px 0 12px; }
+.train-bar > i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.train-bar.indet > i { width: 30%; animation: slide 1.3s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .status.busy::before, .train-bar.indet > i { animation-duration: 3s; } }
 .more { margin: 8px 0; }
 .more summary { cursor: pointer; color: var(--muted); }
 .grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 16px; margin: 10px 0; align-items: end; }

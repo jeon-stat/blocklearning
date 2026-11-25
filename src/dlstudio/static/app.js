@@ -892,6 +892,8 @@ $("btn-train").onclick = async () => {
   hideMessage();                                              // 지난 오류 알림은 지움 (이번 결과와 헷갈리지 않게)
   $("train-status").textContent = "학습 준비 중…";
   st.training = true;
+  const epochs = trainSettings().epochs;
+  trainBusy(true);
   $("btn-train").disabled = true;                              // 두 번 눌러 두 학습이 돌지 않게
   try {
     const { id } = await api("/api/train", { graph, settings: trainSettings() });
@@ -904,6 +906,7 @@ $("btn-train").onclick = async () => {
       drawCurve(j.progress, metric);
       const last = j.progress[j.progress.length - 1];
       if (last) $("train-status").textContent = `epoch ${last.epoch} · loss ${last.loss.toFixed(4)} · 시험 ${metricText(metric, last.test_metric)}`;
+      trainBusy(true, last ? last.epoch / epochs : null);
     });
     if (j.state === "done") {
       st.trained = true;
@@ -921,8 +924,16 @@ $("btn-train").onclick = async () => {
     else { $("train-status").textContent = "실패"; showMessage("학습 실패", "학습률을 낮추거나 블록을 바꿔 보세요", j.error); }
   } catch (e) { $("train-status").textContent = ""; showError(e); }
   st.training = false;
+  trainBusy(false);
   markSteps();
 };
+function trainBusy(on, frac = null) {                         // 학습 중: 도는 표시 + epoch 막대 (첫 epoch 전에는 흐르는 막대)
+  $("train-status").classList.toggle("busy", on);
+  const bar = $("train-bar");
+  bar.hidden = !on;
+  bar.classList.toggle("indet", on && frac === null);
+  bar.firstElementChild.style.width = on && frac !== null ? `${Math.min(100, frac * 100)}%` : "";
+}
 $("btn-train-stop").onclick = () => st.trainJob && api(`/api/jobs/${st.trainJob}/cancel`, {}).catch(showError);
 function renderTrainResult(r) {
   if (r.metric_name === "map50") return renderDetResult(r);

@@ -218,24 +218,77 @@ const ICON = {
   pen: svgI('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
   trash: svgI('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
 };
-// 첫 화면 그림: 블록 그래프 (Input → Conv1D → ReLU → Output, 옆에 학습 곡선)
-const HERO_ART = `<svg viewBox="0 0 360 260" width="100%" height="100%">
-  <defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef2ff"/><stop offset="1" stop-color="#f5f3ff"/></linearGradient></defs>
-  <rect x="0" y="0" width="360" height="260" rx="18" fill="url(#hg)"/>
-  <g font-family="inherit" font-size="11" text-anchor="middle">
-    <path d="M100 52v22M100 104v22M100 156v22" stroke="#94a3b8" stroke-width="1.5"/>
-    <rect x="40" y="24" width="120" height="30" rx="8" fill="#f1efe8" stroke="#888780"/><text x="100" y="43" fill="#1f2937">Input</text>
-    <rect x="40" y="74" width="120" height="30" rx="8" fill="#e1f5ee" stroke="#1d9e75"/><text x="100" y="93" fill="#1f2937">Conv1D · 16</text>
-    <circle cx="100" cy="141" r="15" fill="#eeedfe" stroke="#7f77dd"/><text x="100" y="145" fill="#1f2937">ReLU</text>
-    <rect x="40" y="178" width="120" height="30" rx="8" fill="#faece7" stroke="#d85a30"/><text x="100" y="197" fill="#1f2937">Output</text>
+// 첫 화면 그림: 데이터 → 이어 붙인 블록(모델) → 결과. 점이 흘러감 (움직임을 줄이는 설정이면 멈춤)
+const HERO_ART = `<svg viewBox="0 0 360 260" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="ha-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef2ff"/><stop offset="1" stop-color="#f5f3ff"/></linearGradient>
+    <linearGradient id="ha-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f46e5"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
+    <pattern id="ha-dots" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1" fill="#c7d2fe" opacity=".55"/></pattern>
+    <filter id="ha-sh" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#312e81" flood-opacity=".10"/></filter>
+    <path id="ha-flow" d="M98 130 C118 130 118 58 140 58 L180 58 L180 202 L220 202 C236 202 236 130 252 130"/>
+  </defs>
+  <rect width="360" height="260" rx="18" fill="url(#ha-bg)"/>
+  <rect width="360" height="260" rx="18" fill="url(#ha-dots)"/>
+
+  <!-- 이어 주는 선 -->
+  <path d="M98 130 C118 130 118 58 140 58" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-dasharray="4 5"/>
+  <path d="M220 202 C236 202 236 130 252 130" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-dasharray="4 5"/>
+
+  <!-- 데이터: 그림 조각 + 신호 -->
+  <g filter="url(#ha-sh)">
+    <rect x="18" y="66" width="80" height="128" rx="14" fill="#fff"/>
   </g>
-  <rect x="186" y="40" width="150" height="120" rx="12" fill="#fff" stroke="#e5e7eb"/>
-  <text x="200" y="62" font-size="11" fill="#64748b">시험 정확도</text>
-  <text x="200" y="84" font-size="20" font-weight="700" fill="#4f46e5">93.5%</text>
-  <polyline points="200,140 222,128 244,112 266,104 288,97 310,95 322,94" fill="none" stroke="#4f46e5" stroke-width="2.2"/>
-  <polyline points="200,100 222,116 244,126 266,132 288,136 310,138 322,139" fill="none" stroke="#f97316" stroke-width="1.6" opacity=".7"/>
-  <rect x="186" y="176" width="150" height="40" rx="10" fill="#fff" stroke="#e5e7eb"/>
-  <text x="200" y="200" font-size="11" fill="#334155">PyTorch 코드로 내려받기</text>
+  <g transform="translate(31 80)">
+    <rect width="11" height="11" rx="2" fill="#c7d2fe"/><rect x="13" width="11" height="11" rx="2" fill="#818cf8"/><rect x="26" width="11" height="11" rx="2" fill="#e0e7ff"/><rect x="39" width="11" height="11" rx="2" fill="#a5b4fc"/>
+    <rect y="13" width="11" height="11" rx="2" fill="#818cf8"/><rect x="13" y="13" width="11" height="11" rx="2" fill="#4f46e5"/><rect x="26" y="13" width="11" height="11" rx="2" fill="#a5b4fc"/><rect x="39" y="13" width="11" height="11" rx="2" fill="#e0e7ff"/>
+    <rect y="26" width="11" height="11" rx="2" fill="#e0e7ff"/><rect x="13" y="26" width="11" height="11" rx="2" fill="#a5b4fc"/><rect x="26" y="26" width="11" height="11" rx="2" fill="#6366f1"/><rect x="39" y="26" width="11" height="11" rx="2" fill="#c7d2fe"/>
+  </g>
+  <path d="M30 152 q6 -14 12 0 t12 0 t12 0 t12 -2" fill="none" stroke="#14b8a6" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M30 174 q6 -9 12 0 t12 0 t12 0 t12 0" fill="none" stroke="#f59e0b" stroke-width="2.4" stroke-linecap="round" opacity=".85"/>
+
+  <!-- 흐르는 데이터 (블록 뒤로 지나감) -->
+  <g fill="#4f46e5">
+    <circle r="3.5" opacity=".9"><animateMotion dur="3.6s" repeatCount="indefinite" calcMode="linear"><mpath href="#ha-flow"/></animateMotion></circle>
+    <circle r="3" fill="#14b8a6" opacity=".9"><animateMotion dur="3.6s" begin="-1.2s" repeatCount="indefinite" calcMode="linear"><mpath href="#ha-flow"/></animateMotion></circle>
+    <circle r="3" fill="#f97316" opacity=".9"><animateMotion dur="3.6s" begin="-2.4s" repeatCount="indefinite" calcMode="linear"><mpath href="#ha-flow"/></animateMotion></circle>
+  </g>
+
+  <!-- 모델: 이어 붙인 블록 -->
+  <g filter="url(#ha-sh)">
+    <rect x="140" y="40" width="80" height="36" rx="10" fill="#fff"/>
+    <rect x="140" y="88" width="80" height="36" rx="10" fill="#fff"/>
+    <rect x="140" y="136" width="80" height="36" rx="10" fill="#fff"/>
+    <rect x="140" y="184" width="80" height="36" rx="10" fill="#fff"/>
+  </g>
+  <g>
+    <rect x="140" y="40" width="80" height="36" rx="10" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1.5"/>
+    <rect x="140" y="88" width="80" height="36" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <rect x="140" y="136" width="80" height="36" rx="10" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5"/>
+    <rect x="140" y="184" width="80" height="36" rx="10" fill="#ffedd5" stroke="#f97316" stroke-width="1.5"/>
+    <g fill="#fff" opacity=".9">
+      <rect x="152" y="52" width="40" height="5" rx="2.5"/><rect x="152" y="61" width="26" height="5" rx="2.5"/>
+      <rect x="152" y="100" width="34" height="5" rx="2.5"/><rect x="152" y="109" width="44" height="5" rx="2.5"/>
+      <rect x="152" y="148" width="44" height="5" rx="2.5"/><rect x="152" y="157" width="22" height="5" rx="2.5"/>
+      <rect x="152" y="196" width="30" height="5" rx="2.5"/><rect x="152" y="205" width="40" height="5" rx="2.5"/>
+    </g>
+    <g stroke-width="2" fill="#fff">
+      <circle cx="180" cy="82" r="4" stroke="#3b82f6"/><circle cx="180" cy="130" r="4" stroke="#8b5cf6"/><circle cx="180" cy="178" r="4" stroke="#f97316"/>
+    </g>
+  </g>
+
+  <!-- 결과: 다 됨 + 오르는 곡선 -->
+  <g filter="url(#ha-sh)">
+    <rect x="252" y="66" width="90" height="128" rx="14" fill="#fff"/>
+  </g>
+  <circle cx="297" cy="112" r="26" fill="none" stroke="#eef2ff" stroke-width="7"/>
+  <circle cx="297" cy="112" r="26" fill="none" stroke="url(#ha-ring)" stroke-width="7" stroke-linecap="round"
+          stroke-dasharray="163.4" stroke-dashoffset="18" transform="rotate(-90 297 112)">
+    <animate attributeName="stroke-dashoffset" values="163.4;18;18" keyTimes="0;.45;1" dur="5s" repeatCount="indefinite"/>
+  </circle>
+  <path d="M286 112 l7 7 l13 -14" fill="none" stroke="#4f46e5" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M266 178 C278 176 284 166 294 162 S314 152 328 150" fill="none" stroke="#4f46e5" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M266 178 C278 176 284 166 294 162 S314 152 328 150 L328 182 L266 182 Z" fill="#4f46e5" opacity=".08"/>
+
 </svg>`;
 function ensureHome() {
   if ($("step-home")) return;
@@ -275,6 +328,12 @@ function ensureHome() {
     </div>
     <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요. <a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a></p>`;
   document.querySelector("main").prepend(sec);
+  try {                                                    // 움직임을 줄이는 설정이면 그림을 멈춤
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      sec.querySelectorAll(".hero-art animate").forEach((a) => a.remove());
+      sec.querySelectorAll(".hero-art animateMotion").forEach((a) => a.parentNode.remove());   // 흐르는 점은 뺌
+    }
+  } catch (e) { /* 없음 */ }
   sec.querySelectorAll(".tab").forEach((b) => (b.onclick = () => { tab = b.dataset.kind; render(); }));
   $("home-new").onclick = () => startFresh("task");
   $("home-quick").onclick = () => startFresh("quick");
