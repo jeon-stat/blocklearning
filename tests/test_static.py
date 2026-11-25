@@ -268,3 +268,16 @@ def test_web_label_page_and_python_files():
     listed = set(re.findall(r'"(\w+\.py)"', web[web.index("PY_FILES"):web.index("];", web.index("PY_FILES"))]))
     have = {p.name for p in STATIC.parent.glob("*.py")} - {"__main__.py", "cli.py", "server.py"}
     assert listed == have, (have - listed, listed - have)
+
+
+def test_every_step_has_previous_button_and_history():
+    """② 데이터부터 단계 맨 아래에 [← 이전] (바로 앞 단계로), 단계 이동은 브라우저 기록에도 (뒤로 가기가 사이트를 떠나지 않게)."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    prev = {"data": "task", "model": "data", "train": "model", "predict": "train"}
+    for step, back in prev.items():
+        sec = html[html.index(f'<section id="step-{step}"'):]
+        sec = sec[:sec.index("</section>")]
+        assert f'class="go back" data-go="{back}"' in sec, step
+    assert 'class="go back"' not in html[html.index('<section id="step-task"'):html.index('<section id="step-data"')]
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "history.pushState({ dls: step }" in js and 'addEventListener("popstate"' in js

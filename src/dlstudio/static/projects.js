@@ -322,10 +322,10 @@ async function render() {
       <span>[새 프로젝트]나 [예시로 바로 해 보기]로 시작하세요. 데이터를 넣으면 자동으로 저장됩니다.</span></div>`;
   } catch (e) { list.innerHTML = `<p class="bad">${esc(e.message || e)}</p>`; }
 }
-function home() {
+function home(fromHistory = false) {
   ensureHome();
   if (cur) tab = cur.kind;
-  go("home");
+  go("home", fromHistory === true);                       // 단추로 부르면 이벤트가 들어오므로 true일 때만
   render();
 }
 

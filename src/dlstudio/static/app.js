@@ -163,9 +163,18 @@ function renderScatter(el, sc, mae, caption) {
 }
 
 // ------------------------------------------------------------ 단계 이동
-function go(step) {
+// 단계 이동은 브라우저 기록에도 남김: 뒤로·앞으로 가기(마우스 옆 단추·휴대폰 뒤로 밀기)가 사이트를 떠나지 않고 단계를 오감.
+// 주소는 그대로 (새로 고치면 처음 화면부터). fromHistory: 뒤로·앞으로 가기로 온 것이라 기록을 더하지 않음
+function go(step, fromHistory = false) {
   if (!$("step-" + step)) step = "task";
   st.step = step;
+  if (!fromHistory) {
+    try {
+      const h = history.state && history.state.dls;
+      if (!h) history.replaceState({ dls: step }, "");       // 처음 화면: 지금 칸을 씀 (뒤로 한 번 더면 사이트를 떠남)
+      else if (h !== step) history.pushState({ dls: step }, "");
+    } catch (e) { /* 기록을 못 쓰는 환경 */ }
+  }
   document.querySelectorAll("main > .panel").forEach((el) => (el.hidden = el.id !== "step-" + step));
   document.querySelectorAll(".step").forEach((b) => b.classList.toggle("active", b.dataset.step === step));
   renderEmpty();
@@ -175,6 +184,12 @@ function go(step) {
   const mainEl = document.querySelector("main");          // 사이드바 틀에서는 main이 스크롤됨
   if (mainEl) mainEl.scrollTop = 0;
 }
+window.addEventListener("popstate", (e) => {
+  const step = e.state && e.state.dls;
+  if (!step) return;
+  if (step === "home" && window.DLProjects) return window.DLProjects.home(true);   // 프로젝트 목록을 새로 그림
+  go(step, true);
+});
 function markSteps() {
   const mark = (name, done, stale) => {
     const b = document.querySelector(`.step[data-step="${name}"]`);
@@ -479,6 +494,7 @@ function onData(s) {
   st.trained = false;
   $("det-box").hidden = true;                                // 지난 데이터의 시험 그림은 치움
   $("data-summary").hidden = false;
+  $("btn-next-data").hidden = false;
   const det = s.task === "detection";
   const task = s.task === "classification" ? `분류 (${s.classes.length}클래스)` : det ? `객체 탐지 (${s.classes.length}클래스)` : "회귀";
   const tab = inputKind() === "tabular" && !s.image;
