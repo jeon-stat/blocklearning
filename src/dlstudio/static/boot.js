@@ -13,6 +13,16 @@
   doc.body.querySelectorAll("script").forEach((s) => s.remove());
   document.body.className = doc.body.className;
   document.body.replaceChildren(...Array.from(doc.body.childNodes).map((n) => document.importNode(n, true)));
+  if (!LABEL) {                     // 첫 화면은 '내 프로젝트' (projects.js가 띄움): 스크립트를 받는 동안 ① 과제 화면 대신 '여는 중'
+    document.querySelectorAll("main > .panel").forEach((el) => (el.hidden = true));
+    document.querySelectorAll(".step.active").forEach((b) => b.classList.remove("active"));
+    for (const id of ["btn-open", "btn-save"]) if (document.getElementById(id)) document.getElementById(id).hidden = true;   // 웹에는 없는 단추
+    const w = document.createElement("section");
+    w.id = "boot-wait";
+    w.className = "panel";
+    w.innerHTML = '<p class="muted loading">DL studio를 여는 중… 처음 열 때는 계산 프로그램(Pyodide·TensorFlow.js)을 받느라 10~20초 걸립니다.</p>';
+    document.querySelector("main").prepend(w);
+  }
   const load = (src, integrity) => new Promise((ok, no) => {
     const s = document.createElement("script");
     s.src = src;

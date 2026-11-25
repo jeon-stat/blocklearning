@@ -1287,7 +1287,7 @@ $("code-save").onclick = async () => {
 
 // 화면을 새로 고쳐도 서버에 남은 상태(데이터, 블록, 학습된 모델)를 이어서 씀
 (async () => {
-  go("task");
+  if (!WEB) go("task");                                      // 웹은 첫 화면 '내 프로젝트' (projects.js)
   drawCurve([], "accuracy");
   if (!st.catalog.length) {                                  // 첫 로딩: 빈 화면 대신 무엇을 기다리는지
     $("btn-quick").disabled = true;
