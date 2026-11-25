@@ -158,6 +158,18 @@ def test_quoted_windows_path_accepted(server, tmp_path):
     assert code == 200
 
 
+def test_stop_keeps_model_trained_so_far(server):
+    _call(server, "/api/data/load", {"example": "ecg"})
+    _, j = _call(server, "/api/train", {"blocks": CNN, "settings": {"epochs": 200}})
+    while not _call(server, f"/api/jobs/{j['id']}")[1]["progress"]:
+        time.sleep(0.05)
+    _call(server, f"/api/jobs/{j['id']}/cancel", {})
+    st = _wait(server, j["id"])
+    assert st["state"] == "done" and st["result"]["stopped"] and st["result"]["epochs_done"] < 200
+    s = _call(server, "/api/state")[1]
+    assert s["trained"] is True and s["runs"][-1]["results"]["epochs_done"] == st["result"]["epochs_done"]
+
+
 def test_loading_data_cancels_training_and_drops_its_model(server):
     _call(server, "/api/data/load", {"example": "ecg"})
     _, j = _call(server, "/api/train", {"blocks": CNN, "settings": {"epochs": 200}})

@@ -339,7 +339,8 @@ class Studio:
 
         def run(job):
             r = train_job(job, graph, d, settings)
-            if not job.cancelled and self.data is d:              # 그사이 데이터가 바뀌었으면 버림
+            r["stopped"] = job.stopped                            # [멈추기]: 거기까지 학습한 모델을 남김
+            if (not job.cancelled or job.stopped) and self.data is d:   # 그사이 데이터가 바뀌었거나 다시 시작했으면 버림
                 self.model, self.model_graph, self.train_settings = r["model"], graph, dict(b.get("settings") or {})
                 self.results = {k: v for k, v in r.items() if k != "model"}
                 self.add_run(graph, self.train_settings, self.results,

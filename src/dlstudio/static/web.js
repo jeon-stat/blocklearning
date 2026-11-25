@@ -108,7 +108,8 @@ function startTrain(body) {
   W.running = job;
   E().train(plan, data, s, (p) => { job.progress.push(p); job.progress.splice(0, Math.max(0, job.progress.length - 100)); return job.cancelled; },
     () => job.cancelled).then(({ net, result, out, outTr }) => {
-    if (job.cancelled || W.data !== data) { net.dispose(); job.state = "cancelled"; return; }
+    if ((job.cancelled && !job.stopped) || W.data !== data) { net.dispose(); job.state = "cancelled"; return; }   // 다시 시작·데이터 바뀜은 버림
+    result.stopped = !!job.stopped;
     if (out) Object.assign(result, wrapped(W.mod.task_result(W.studio, new Uint8Array(out.buffer), new Uint8Array(outTr.buffer))));   // 예측·이상 탐지
     if (W.trained) W.trained.net.dispose();
     W.trained = { net, plan, graph: body.graph, settings: body.settings || {}, results: result };
@@ -127,7 +128,7 @@ function startTrain(body) {
 function jobView(path) {
   const id = path.split("/")[3], job = W.jobs[id];
   if (!job) throw { message: "작업을 찾을 수 없음" };
-  if (path.endsWith("/cancel")) { job.cancelled = true; return { ok: true }; }
+  if (path.endsWith("/cancel")) { job.cancelled = job.stopped = true; return { ok: true }; }   // [멈추기]: 거기까지 학습한 것은 남김
   return { id: job.id, kind: job.kind, state: job.state, progress: job.progress.slice(), result: job.result, error: job.error };
 }
 

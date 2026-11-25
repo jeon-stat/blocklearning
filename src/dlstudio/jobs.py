@@ -23,6 +23,7 @@ class Job:
         self.result = None
         self.error: Optional[str] = None
         self.cancelled = False
+        self.stopped = False            # 사용자가 [멈추기]: 거기까지 학습한 결과는 남김 (다른 이유의 취소는 버림)
         self.thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
@@ -71,8 +72,9 @@ class JobManager:
         def run():
             try:
                 result = fn(job)
+                keep = not job.cancelled or (job.stopped and isinstance(result, dict))
                 with job._lock:
-                    job.state, job.result = ("cancelled", None) if job.cancelled else ("done", result)
+                    job.state, job.result = ("done", result) if keep else ("cancelled", None)
             except Exception as e:                               # 화면에 보여 줄 이유
                 with job._lock:
                     job.state = "cancelled" if job.cancelled else "failed"
@@ -92,7 +94,9 @@ class JobManager:
         return self._jobs[job_id]
 
     def cancel(self, job_id: str) -> None:
-        self._jobs[job_id].cancelled = True
+        """사용자가 [멈추기]: 지금 반복이 끝나면 멈추고, 거기까지 학습한 결과를 남김."""
+        j = self._jobs[job_id]
+        j.stopped = j.cancelled = True
 
 
 @dataclass

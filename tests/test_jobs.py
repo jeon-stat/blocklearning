@@ -50,15 +50,16 @@ def test_regression_job():
     assert st["result"]["metric_name"] == "r2" and np.isfinite(st["result"]["test_metric"])
 
 
-def test_cancel_stops_training():
+def test_stop_keeps_training_so_far():
+    """[멈추기]: 지금 반복이 끝나면 멈추고, 거기까지 학습한 모델·결과를 남김."""
     jm, d = JobManager(), _data()
     jid = jm.start("train", lambda job: train_job(job, from_blocks(CNN), d, TrainSettings(epochs=50)))
     while not jm.get(jid)["progress"]:
         time.sleep(0.02)
     jm.cancel(jid)
     st = _wait(jm, jid)
-    assert st["state"] == "cancelled"
-    assert len(st["progress"]) < 50
+    assert st["state"] == "done" and st["result"]["model"] is not None
+    assert 1 <= st["result"]["epochs_done"] == len(st["progress"]) < 50 and 0 <= st["result"]["test_metric"] <= 1
 
 
 def test_new_train_cancels_previous():

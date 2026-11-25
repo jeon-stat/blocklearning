@@ -911,10 +911,10 @@ $("btn-train").onclick = async () => {
       renderTrainResult(j.result);
       $("sample-box").hidden = false;
       showSample();
-      $("train-status").textContent = "끝남";
-      loadRuns();
       const r = j.result;
-      showMessage(`학습 끝남: 시험 ${metricText(r.metric_name, r.test_metric)}`,
+      $("train-status").textContent = r.stopped ? `멈춤 (${r.epochs_done} epoch)` : "끝남";
+      loadRuns();
+      showMessage(`${r.stopped ? `학습 멈춤 (${r.epochs_done} epoch)` : "학습 끝남"}: 시험 ${metricText(r.metric_name, r.test_metric)}`,
         "아래 결과와 '샘플 하나 따라가 보기'를 보세요", "", true);
     } else if (j.state === "cancelled") $("train-status").textContent = "멈춤";
     else { $("train-status").textContent = "실패"; showMessage("학습 실패", "학습률을 낮추거나 블록을 바꿔 보세요", j.error); }
