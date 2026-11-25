@@ -753,13 +753,13 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       W.assign(W.mul(sdT.reshape([-1, 1]))); b.assign(b.mul(sdT).add(muT));
       sdT.dispose(); muT.dispose();
     }
-    // 마지막 평가는 CPU로 (브라우저 GPU(WebGL)가 드물게 묶음 크기에 따라 틀린 값을 냄). GPU 값과 다르면 알림
-    const outGpu = net.predict(Xte);
-    const [out, outTr] = await onCpu(() => [net.predict(Xte), net.predict(Xtr)]);
+    // 마지막 평가: GPU(WebGL) 값을 쓰되, 앞 32개를 CPU로 맞춰 봄. 다르면 (브라우저 GPU가 드물게 틀린 값을 냄) 전체를 CPU로
+    const te = await checkedPredict(net, Xte, d.n_test), tr = await checkedPredict(net, Xtr, d.n_train);
+    const out = te.out, outTr = tr.out;
     const r = { epochs_done: done, test_metric: score(out, "test"),
       metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
       train_metric: score(outTr, "train") };   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
-    if (!same(outGpu, out))
+    if (!te.ok || !tr.ok)
       r.warnings.push({ message: "학습 중 이 브라우저의 GPU 계산이 불안정했습니다. 아래 결과는 CPU로 다시 계산한 값이지만, 학습이 덜 됐을 수 있습니다",
         hint: "페이지를 새로 고친 뒤 다시 학습해 보세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
     if (det) Object.assign(r, detResult(out, det.test, det));
@@ -883,6 +883,18 @@ function detResult(out, gts, det) {
 }
 
 // fn을 CPU 백엔드에서 (이미 CPU거나 CPU가 없으면 그대로). 가중치는 TF.js가 알아서 옮김
+// GPU로 예측하고 앞 몇 개만 CPU로 맞춰 봄 → {out, ok}. 맞지 않으면 전체를 CPU로 다시 (ok false)
+async function checkedPredict(net, X, n, k = 32) {
+  const out = net.predict(X);
+  const m = Math.min(k, n);
+  if (!m || tf.getBackend() === "cpu") return { out, ok: true };
+  const head = X.slice([0], [m]);
+  try {
+    const cpu = await onCpu(() => net.predict(head));
+    if (same(out.subarray(0, cpu.length), cpu)) return { out, ok: true };
+  } finally { head.dispose(); }
+  return { out: await onCpu(() => net.predict(X)), ok: false };
+}
 async function onCpu(fn) {
   const prev = tf.getBackend();
   if (prev === "cpu" || !tf.findBackend("cpu")) return fn();
@@ -913,7 +925,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, toInput, metric, confusion, regressionView, thin, attnView, onCpu, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
+const API = { Net, train, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;

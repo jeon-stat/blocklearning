@@ -215,7 +215,7 @@ async function predictNew(body) {                      // 새 데이터로 예�
   const d = getData(), net = W.trained.net;
   const x = E().toInput(X, n, net.kind, d.length, d.image);
   let out;
-  try { out = await E().onCpu(() => net.predict(x)); } finally { x.dispose(); }
+  try { out = (await E().checkedPredict(net, x, n)).out; } finally { x.dispose(); }
   return wrapped(W.mod.predict_finish(W.studio, new Uint8Array(out.buffer)));
 }
 const VIEW = ["pos", "size", "brk", "shift"];
@@ -288,7 +288,7 @@ async function deepSuggest(body) {                      // 딥러닝 제안: 정
   let probs;
   const x = E().toInput(Xp, meta.n_pred, net.kind, d.length, d.image);
   try {
-    const out = await E().onCpu(() => net.predict(x));
+    const out = (await E().checkedPredict(net, x, meta.n_pred)).out;
     const k = d.n_out;
     probs = new Float32Array(out.length);
     for (let i = 0; i < meta.n_pred; i++) {             // softmax
