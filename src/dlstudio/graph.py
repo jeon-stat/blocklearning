@@ -368,7 +368,8 @@ def _graph_net_class():
             if not self.plan or self.plan[0][0] != "layer" or self.plan[0][2] != [INPUT]:
                 return None
             nid = self.plan[0][1]
-            if type(self.mods[_key(nid)]).__name__ not in FROZEN_MODULES:
+            m = self.mods[_key(nid)]
+            if type(m).__name__ not in FROZEN_MODULES or any(p.requires_grad for p in m.parameters()):   # 미세조정이면 매번 계산
                 return None
             return nid if not any(INPUT in st[2] for st in self.plan[1:]) else None
 

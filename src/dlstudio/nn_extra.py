@@ -557,7 +557,7 @@ class MobileNetV3Small(nn.Module):
            (48, 5, 288, 96, 72, 1, 2), (96, 5, 576, 96, 144, 1, 1), (96, 5, 576, 96, 144, 1, 1))
     SE_SCALE = 0.16667                                   # 원래 모델의 hard sigmoid: relu6(x + 3) × 0.16667
 
-    def __init__(self, size=128):
+    def __init__(self, size=128, train_last=0):
         super().__init__()
         self.size = size
         self.stem = nn.Conv2d(3, 16, 3, 2)
@@ -574,6 +574,9 @@ class MobileNetV3Small(nn.Module):
         self.last = nn.Conv2d(96, 576, 1)
         self.head = nn.Conv2d(576, 1024, 1)
         self.requires_grad_(False)
+        if train_last:                                   # 미세조정: 끝 블록 train_last개와 마지막 1×1 합성곱 둘은 함께 학습
+            for m in list(self.blocks)[len(self.CFG) - train_last:] + [self.last, self.head]:
+                m.requires_grad_(True)
 
     @staticmethod
     def same(x, k, s):

@@ -21,7 +21,7 @@ const yieldNow = () => new Promise((r) => {
 // ------------------------------------------------------------ 가중치 만들기 (PyTorch 기본 초기화와 같은 분포)
 function initParam(step, name, shape, kind, rand, init) {
   const n = prod(shape);
-  if (kind === "frozen") {                                       // 사전학습 가중치 (ensurePretrained로 미리 받아 둠)
+  if (kind === "frozen" || init === "pretrained") {             // 사전학습 가중치 (ensurePretrained로 미리 받아 둠). 미세조정이면 weight
     const src = (PRETRAINED[step.type] || {})[name.slice(step.key.length + 1)];
     return src && src.length === n ? tf.tensor(src, shape) : tf.zeros(shape);
   }
@@ -68,7 +68,7 @@ function setPretrained(kind, index, buf) {                // index: [[이름, �
   if (i !== flat.length) throw new Error("사전학습 가중치 파일이 목록과 다름: " + kind);
   PRETRAINED[kind] = out;
 }
-const pretrainedKinds = (plan) => [...new Set(plan.steps.filter((st) => st.params.some((p) => p[2] === "frozen")).map((st) => st.type))];
+const pretrainedKinds = (plan) => [...new Set(plan.steps.filter((st) => st.params.some((p) => p[2] === "frozen" || p[3] === "pretrained")).map((st) => st.type))];
 async function ensurePretrained(plan, base) {             // 계획에 필요한 사전학습 가중치를 (처음 한 번) 받음
   for (const kind of pretrainedKinds(plan)) {
     if (PRETRAINED[kind]) continue;
@@ -545,7 +545,7 @@ const EXTRA = {
     const padded = x.pad([[0, 0], [0, 0], [m, m]]);
     return perSample(padded, (xi) => xi.slice([0, Math.floor(Math.random() * (2 * m + 1))], [-1, L]));
   },
-  mnv3s: (x, st, P, k) => mnv3s(x, st, P, k),
+  mnv3s: (x, st, P, k, training) => mnv3s(x, st, P, k, training),
   rand_scale: (x, st, P, k, training) => (training ? x.mul(uni(x.shape[0]).mul(2).sub(1).mul(st.cfg.frac ?? 0.2).add(1).reshape([x.shape[0]].concat(new Array(x.rank - 1).fill(1)))) : x),
   rand_stretch: (x, st, P, k, training) => {
     if (!training) return x;
@@ -564,9 +564,9 @@ const MNV3S = [[16, 3, 16, 16, 8, 0, 2], [16, 3, 72, 24, 0, 0, 2], [24, 3, 88, 2
   [48, 5, 288, 96, 72, 1, 2], [96, 5, 576, 96, 144, 1, 1], [96, 5, 576, 96, 144, 1, 1]];
 // 브라우저 GPU(WebGL)는 묶음 크기가 바뀔 때마다 계산 프로그램을 다시 준비함 (이 층은 수십 개라 오래 걸림) → 늘 MNV3S_B장씩
 const MNV3S_B = 64;
-function mnv3s(x, st, P, k) {
+function mnv3s(x, st, P, k, training = false) {
   const n = x.shape[0];
-  if (n === MNV3S_B || tf.getBackend() === "cpu") return mnv3sCore(x, st, P, k);
+  if (n === MNV3S_B || training || tf.getBackend() === "cpu") return mnv3sCore(x, st, P, k);   // 학습(미세조정) 묶음은 크기가 늘 같음
   const parts = [];
   for (let i = 0; i < n; i += MNV3S_B) {
     let xb = x.slice(i, Math.min(MNV3S_B, n - i));

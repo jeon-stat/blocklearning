@@ -49,6 +49,8 @@ def cross_case():
 def extra_cases():
     c = [
         case("glu", "s", [("glu", {"units": 6})]),
+        case("mnv3s", "i", [("mnv3s", {"size": 64})], pre=False),
+        case("mnv3s_tune", "i", [("mnv3s", {"size": 64, "train_last": 1})], pre=False),
         case("swiglu_img", "i", [("glu", {"units": 5, "gate": "silu"})]),
         case("glu_vec", "s", [("global_avg", {}), ("glu", {"units": 3})]),
         case("dw_conv", "s", [("dw_conv", {"kernel": 5, "multiplier": 2})]),

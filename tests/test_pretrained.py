@@ -150,3 +150,43 @@ def test_image_anomaly_distance_head_torch_and_web_engine(tmp_path):
     assert w["got"]["n"] == len(d.X_train) and w["got"]["c"] == 1024
     assert np.allclose(np.asarray(w["out"]), want, rtol=2e-3, atol=2e-3)
     assert w["result"]["test_metric"] == pytest.approx(r["auc"], abs=0.02)
+
+
+def test_fine_tuning_trains_only_the_last_blocks_and_is_saved(tmp_path):
+    """미세조정 (끝 블록 1개): 앞부분은 사전학습 값 그대로, 끝 블록·마지막 1×1 합성곱은 바뀜. 학습한 값은 프로젝트에 저장됨."""
+    d = small(n_train=64, n_test=32)
+    g = from_blocks([{"type": "mnv3s", "size": 64, "train_last": 1}, {"type": "output"}])
+    plan = codegen.plan_dict(g, d.length, d.n_out, d.image)
+    tuned = {p[0] for s in plan["steps"] for p in s["params"] if p[2] == "weight" and p[3:] == ["pretrained"]}
+    assert any(".blocks.10." in k for k in tuned) and any(k.endswith(".head.weight") for k in tuned)
+    assert not any(".blocks.9." in k for k in tuned)
+    r = train_job(Job("t"), g, d, TrainSettings(epochs=2, lr=1e-3))
+    a = arrays("mnv3s")
+    sd = r["model"].state_dict()
+    for k, v in sd.items():
+        name = k.split(".", 2)[-1]
+        if name in a:
+            assert np.array_equal(v.numpy(), a[name]) == (k not in tuned), k
+    frozen = frozen_names(g, d.length, d.n_out, d.image)
+    assert frozen and not frozen & tuned
+    from dlstudio.graph import model_from_saved
+    m = model_from_saved({"graph": g, "state_dict": {k: v.numpy() for k, v in sd.items() if k not in frozen}},
+                         d.length, d.n_out, image=d.image).eval()
+    x = torch.as_tensor(d.X_test.reshape(-1, 1, *d.image), dtype=torch.float32)
+    with torch.no_grad():
+        assert torch.allclose(m(x), r["model"].eval()(x), atol=1e-6)
+
+
+def test_web_engine_fine_tunes_last_block(tmp_path):
+    from tests.test_engine import _train_js, pytestmark as engine_mark
+    if engine_mark.mark.args[0]:
+        pytest.skip(engine_mark.mark.kwargs.get("reason"))
+    d = small(n_train=48, n_test=24)
+    g = from_blocks([{"type": "mnv3s", "size": 64, "train_last": 1}, {"type": "output"}])
+    r = _train_js(tmp_path, g, d, {"epochs": 2, "lr": 1e-3, "batch_size": 16, "seed": 0})
+    a = arrays("mnv3s")
+    for k, v in r["state"].items():
+        name = k.split(".", 2)[-1]
+        if name in a and ".m_" in k:
+            same = np.allclose(np.asarray(v["data"]), a[name].ravel())
+            assert same == (".blocks.10." not in k and ".last." not in k and ".head." not in k), k

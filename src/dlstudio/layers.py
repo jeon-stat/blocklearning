@@ -108,7 +108,8 @@ EXTRA_PARAMS = {
                     ("hop", 1, 128, 8, (1, 2, 4, 8, 16, 32, 64, 128), "hop은 1·2·4·…·128"),
                     ("n_mels", 4, 64, 16, (8, 16, 32, 64), "mel 칸 수는 8·16·32·64"),
                     ("n_mfcc", 4, 40, 13, (8, 13, 20, 40), "MFCC 개수는 8·13·20·40")],
-    "mnv3s": [("size", 64, 224, 128, (64, 96, 128, 160, 224), "크기는 64·96·128·160·224")],
+    "mnv3s": [("size", 64, 224, 128, (64, 96, 128, 160, 224), "크기는 64·96·128·160·224"),
+              ("train_last", 0, 3, 0, (0, 1, 2, 3), "학습할 끝 블록 수는 0–3 (0이면 모두 고정)")],
 }
 # 실수 설정: (키, 최소(포함), 최대(미포함), 기본값, 설명)
 FLOAT_PARAMS = {
@@ -421,15 +422,18 @@ def params(t: str, b: dict, ins, out, k: str, ins2=None) -> list:
     if t == "embedding":
         return [(f"{k}.weight", [o("bins"), o("dim")], "weight", "normal1")]
     if t == "mnv3s":
-        return mnv3s_params(k)
+        return mnv3s_params(k, o("train_last"))
     return []
 
 
-def mnv3s_params(k: str) -> list:
-    """MobileNetV3-Small 가중치 (종류 frozen: 학습하지 않음, 처음 값은 사전학습 파일)."""
-    Fz = lambda name, *shape: (f"{k}.{name}", list(shape), "frozen", "pretrained")
-    out = [Fz("stem.weight", 16, 3, 3, 3), Fz("stem.bias", 16)]
+def mnv3s_params(k: str, train_last: int = 0) -> list:
+    """MobileNetV3-Small 가중치 (처음 값은 사전학습 파일). 종류 frozen = 학습하지 않음.
+    train_last > 0 (미세조정): 끝 블록 train_last개와 마지막 1×1 합성곱 둘은 weight (함께 학습)."""
+    tune = len(MNV3S_CFG) - train_last if train_last else len(MNV3S_CFG) + 1
+    out = []
     for j, (i, kk, e, o, q, hs, s) in enumerate(MNV3S_CFG):
+        kind = "weight" if j >= tune else "frozen"
+        Fz = lambda name, *shape: (f"{k}.{name}", list(shape), kind, "pretrained")
         p = f"blocks.{j}."
         if e != i:
             out += [Fz(p + "expand.weight", e, i, 1, 1), Fz(p + "expand.bias", e)]
@@ -437,8 +441,11 @@ def mnv3s_params(k: str) -> list:
         if q:
             out += [Fz(p + "se1.weight", q, e, 1, 1), Fz(p + "se1.bias", q), Fz(p + "se2.weight", e, q, 1, 1), Fz(p + "se2.bias", e)]
         out += [Fz(p + "project.weight", o, e, 1, 1), Fz(p + "project.bias", o)]
-    return out + [Fz("last.weight", 576, 96, 1, 1), Fz("last.bias", 576),
-                  Fz("head.weight", MNV3S_OUT, 576, 1, 1), Fz("head.bias", MNV3S_OUT)]
+    kind = "weight" if train_last else "frozen"
+    Fz = lambda name, *shape: (f"{k}.{name}", list(shape), kind, "pretrained")
+    stem = [(f"{k}.stem.weight", [16, 3, 3, 3], "frozen", "pretrained"), (f"{k}.stem.bias", [16], "frozen", "pretrained")]
+    return stem + out + [Fz("last.weight", 576, 96, 1, 1), Fz("last.bias", 576),
+                         Fz("head.weight", MNV3S_OUT, 576, 1, 1), Fz("head.bias", MNV3S_OUT)]
 
 
 # ---------------------------------------------------------------- PyTorch 모듈: (이름, 인자) — "nn.X"는 torch 내장, 나머지는 nn_extra
@@ -549,7 +556,7 @@ def torch_args(t: str, b: dict, ins, ins2=None):
     if t == "rand_stretch":
         return "RandomStretch", {"frac": float(o("frac"))}
     if t == "mnv3s":
-        return "MobileNetV3Small", {"size": o("size")}
+        return "MobileNetV3Small", dict({"size": o("size")}, **({"train_last": o("train_last")} if o("train_last") else {}))
     raise ValueError(f"알 수 없는 층 {t}")
 
 
