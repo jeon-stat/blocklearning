@@ -79,7 +79,7 @@ def test_hidden_attribute_always_hides():
 
 def test_series_folder_inputs_exist():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    for i in ("series-row", "series-path", "btn-series-scan", "series-box", "series-column", "series-length",
+    for i in ("series-row", "series-path", "btn-series-scan", "series-box", "series-columns", "series-length",
               "series-resample", "series-label-file", "btn-series-load", "series-guide"):
         assert f'id="{i}"' in html, i
 

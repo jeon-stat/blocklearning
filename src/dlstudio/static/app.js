@@ -159,6 +159,14 @@ function pathOf(vals, x0, y0, w, h) {
 function svgLine(vals, w = 240, h = 50, color = "#4f46e5") {
   return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><polyline fill="none" stroke="${color}" stroke-width="1.3" points="${pathOf(vals, 2, 2, w - 4, h - 4)}"/></svg>`;
 }
+const CH_COLORS = ["#4f46e5", "#64748b", "#d97706", "#db2777", "#2563eb", "#65a30d"];
+function svgChannels(vals, C, w = 240, h = 50) {           // 여러 채널 (채널이 먼저 이어 붙은 값): 채널마다 한 줄씩 위아래로, 저마다 눈금
+  if (!C || C < 2) return svgLine(vals, w, h);
+  const L = vals.length / C, hh = Math.max(18, Math.round(h / C * 1.2));
+  return `<div class="ch-stack">${Array.from({ length: C }, (_, c) => svgLine(vals.slice(c * L, (c + 1) * L), w, hh, CH_COLORS[c % CH_COLORS.length])).join("")}</div>`;
+}
+const chLegend = (names) => (names && names.length > 1
+  ? `<p class="muted fc-legend">${names.map((n, c) => `<span style="color:${CH_COLORS[c % CH_COLORS.length]}">━</span> ${esc(n)}`).join(" · ")}</p>` : "");
 function svgStrips(rows, w = 300, color = "#1d9e75") {
   const n = Math.min(rows.length, 16), sh = 9, h = n * sh + 4;
   let s = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`;
@@ -406,6 +414,7 @@ const GUIDE = {
 };
 GUIDE.timeseries.forecast = "한 행 = 한 시점 (시간 순서대로), 열 = 측정 항목 (예: 시각, 온도, 전력). 맞힐 값 열의 지난 값들로 다음 값들을 예측합니다. 불러온 뒤 맞힐 열·입력 길이·예측 길이를 바꿀 수 있습니다.";
 GUIDE.timeseries.anomaly = "한 행 = 신호 한 구간 (시점마다 값이 한 열씩), 마지막 열 = 상태 (예: 정상, 결함). 정상만 학습하고 나머지는 이상으로 봅니다. 정상만 있어도 됩니다.";
+GUIDE.tabular.multi = "한 행 = 샘플 하나, 열 = 측정 항목과 정답들. 불러온 뒤 역할 표에서 정답 열 이름을 눌러 '정답'으로 바꾸면 (둘 이상) 정답마다 분류·숫자를 스스로 정합니다.";
 GUIDE.tabular.anomaly = "한 행 = 샘플 하나, 열 = 측정 항목, 마지막 열 = 상태 (예: 정상, 불량). 정상만 학습하고 나머지는 이상으로 봅니다. 정상만 있어도 됩니다.";
 function renderDataGuide() {
   const sub = st.sub;
@@ -414,9 +423,9 @@ function renderDataGuide() {
   $("data-guide").textContent = !sub || st.autoTask
     ? "과제를 고르지 않아도 됩니다. CSV·그림 폴더·예시 데이터를 넣으면 분류인지 회귀인지, 시계열·표·이미지 중 무엇인지 보고 과제와 추천 모델을 정해 드립니다. CSV는 한 행 = 샘플 하나, 마지막 열 = 정답."
     : img ? `이미지 폴더: ${GUIDE.image.classification} 픽셀 CSV(한 행 = 픽셀 값들 + 마지막 열 정답)도 됩니다. 처음이면 예시 데이터로 시작해 보세요.`
-    : sub.task === "segmentation" || sub.task === "multi" ? "지금은 예시 데이터로만 할 수 있습니다."
+    : sub.task === "segmentation" ? "지금은 예시 데이터로만 할 수 있습니다."
     : `CSV 파일: ${GUIDE[sub.input][sub.task]} 첫 줄이 열 이름이면 그대로 씁니다. 처음이면 예시 데이터로 시작해 보세요.`;
-  const onlyEx = !!sub && !st.autoTask && (sub.task === "segmentation" || sub.task === "multi");   // 구간 분할·정답 여러 개: 내 데이터로 만드는 것은 아직 없음
+  const onlyEx = !!sub && !st.autoTask && sub.task === "segmentation";   // 구간 분할: 내 데이터로 만드는 것은 아직 없음
   $("mine-title").hidden = $("mine-grid").hidden = onlyEx;
   const any = !sub || st.autoTask;                           // 과제 없이: 넣는 방법을 다 보임
   $("image-row").hidden = !img && !any;
@@ -531,7 +540,7 @@ $("example-btns").onclick = (e) => {
 function dataOptions() {
   const o = { normalize: $("normalize").checked, test_ratio: Number($("test-ratio").value) || 0.2 };
   if ($("label-col").value) o.label_col = Number($("label-col").value) - 1;
-  if ($("task").value !== "auto") o.task = $("task").value;
+  if ($("task").value && $("task").value !== "auto") o.task = $("task").value;
   return o;
 }
 async function loadData(body) {                       // 성공하면 true
@@ -583,7 +592,9 @@ function onData(s) {
       s.image ? ["크기 (픽셀)", `${s.image[0]}×${s.image[1]}`] : [tab ? "측정 항목 (열)" : "길이 (시점)", s.length], ["과제", task]];
   if (ae) cards.push(["정상으로 본 클래스", esc(ae.normal)], ["이상으로 본 클래스", ae.others.length ? ae.others.map(esc).join(", ") : "없음 (정상만)"]);
   renderFcBox(s);
+  renderRoleBox(s);
   if (det) cards.push(["상자", `${s.detection.n_boxes}개`], ["격자", `${s.detection.grid}×${s.detection.grid}칸`]);
+  if (s.channels > 1) cards.push(["채널", (s.channel_names || []).length ? s.channel_names.map(esc).join(" · ") : `${s.channels}개`]);
   if (multi) for (const t of s.targets) cards.push([`정답 '${esc(t.name)}'`, t.kind === "class" ? `${t.classes.length}클래스`
     : `${Number(t.range[0].toPrecision(3))} ~ ${Number(t.range[1].toPrecision(3))}`]);
   if (s.target_range) cards.push(["정답 범위", `${Number(s.target_range[0].toPrecision(3))} ~ ${Number(s.target_range[1].toPrecision(3))}`]);
@@ -606,17 +617,46 @@ function onData(s) {
       { v: p.future, x0: p.values.length, color: FC_COLORS.y, width: 1.8 }], 240, 60, p.values.length)}</div>`).join("") +
       `<p class="muted fc-legend"><span style="color:${FC_COLORS.hist}">━</span> 모델이 보는 지난 값 · <span style="color:${FC_COLORS.y}">━</span> 맞힐 다음 값</p>`
     : seg
-    ? s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgLine(p.values, 240, 60)}${segStrip(p.states, 240)}</div>`).join("") +
-      segLegend(s.classes)
-    : s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgLine(p.values, 240, 60)}</div>`).join("");
+    ? s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgChannels(p.values, s.channels, 240, 60)}${segStrip(p.states, 240)}</div>`).join("") +
+      segLegend(s.classes) + chLegend(s.channel_names)
+    : s.preview.map((p) => `<div class="pv"><div class="lab">${esc(p.label)}</div>${svgChannels(p.values, s.channels, 240, 60)}</div>`).join("") +
+      chLegend(s.channel_names);
   renderAutoTask();
-  if (!st.autoTask && st.sub && st.sub.task !== s.task)
+  if (!st.autoTask && st.sub && st.sub.task !== s.task && !(st.sub.task === "multi" && s.columns))   // 여러 정답: 역할 표에서 정답을 더 고름
     showMessage(`불러온 데이터는 ${TASK_NAME[s.task] || s.task}용인데 고른 과제는 ${st.sub.name}입니다`, "① 과제를 데이터에 맞게 다시 고르거나, 맞는 데이터를 불러오세요");
   $("sample-index").max = s.n_test - 1;
   renderExamples();
   markSteps();
   if (st.ed) { st.ed.redrawPalette(); st.ed.redraw(); scheduleCheck(); }   // 입력 형태가 바뀌면 왼쪽 목록도
 }
+const ROLE_NEXT = { input: "target", target: "skip", skip: "input" }, ROLE_NAME = { input: "입력", target: "정답", skip: "안 씀" };
+function renderRoleBox(s) {                               // ② 역할 표: CSV의 열마다 입력·정답·안 씀 (누르면 바뀜)
+  const cols = s.columns;
+  $("role-box").hidden = !cols;
+  if (!cols) return;
+  st.roles = cols.map((c) => c.role);
+  $("role-channels").value = s.csv_channels || 1;
+  drawRoles();
+}
+function drawRoles() {
+  const cols = st.summary.columns;
+  $("role-cols").innerHTML = cols.map((c, j) => `<button type="button" class="role r-${st.roles[j]}" data-j="${j}" title="${esc(c.name)}">` +
+    `<span>${esc(c.name)}</span><b>${ROLE_NAME[st.roles[j]]}</b></button>`).join("");
+  const n = (r) => st.roles.filter((x) => x === r).length;
+  $("role-note").textContent = `입력 ${n("input")} · 정답 ${n("target")}` + (n("skip") ? ` · 안 씀 ${n("skip")}` : "");
+}
+$("role-cols").onclick = (e) => {
+  const b = e.target.closest("[data-j]");
+  if (!b) return;
+  const j = Number(b.dataset.j);
+  st.roles[j] = ROLE_NEXT[st.roles[j]];
+  drawRoles();
+};
+$("btn-role-reload").onclick = () => {
+  const pick = (r) => st.roles.map((x, j) => (x === r ? j : -1)).filter((j) => j >= 0);
+  if (!pick("target").length) return showMessage("정답 열을 하나 이상 고르세요", "열 이름을 눌러 '정답'으로 바꾸세요");
+  loadData({ roles_reload: { targets: pick("target"), skip: pick("skip"), channels: Number($("role-channels").value) || 1 } });
+};
 function renderFcBox(s) {                               // 예측 데이터: 맞힐 열·입력·예측 길이·간격을 바꿔 다시 만들기
   const fc = s.forecast;
   $("fc-box").hidden = !fc;
@@ -649,10 +689,10 @@ async function scanSeries() {
     $("series-info").innerHTML = `CSV <b>${s.n_files}</b>개 · 길이 <b>${lo}–${hi}</b> (중앙값 ${med}) · <b>${MODE_TEXT[s.mode]}</b>` +
       (s.classes ? ` (${s.classes.map(esc).join(", ")})` : "") +
       (s.skipped.length ? `<div class="muted">${s.skipped.map(esc).join(" · ")}</div>` : "");
-    const prev = $("series-column").value, same = st.seriesScanPath === path;   // 같은 폴더를 다시 볼 때만 고른 값 유지
+    const prev = seriesColumns(), same = st.seriesScanPath === path;   // 같은 폴더를 다시 볼 때만 고른 값 유지
     st.seriesScanPath = path;
-    $("series-column").innerHTML = s.columns.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
-    $("series-column").value = same && s.columns.includes(prev) ? prev : s.default_column;
+    const keep = same && prev.length && prev.every((c) => s.columns.includes(c)) ? prev : [s.default_column];
+    $("series-columns").innerHTML = s.columns.map((c) => `<label class="chk"><input type="checkbox" value="${esc(c)}"${keep.includes(c) ? " checked" : ""}> ${esc(c)}</label>`).join("");
     if (!same || !$("series-length").value) $("series-length").value = s.default_length;
     const none = s.mode === "none";
     $("btn-series-load").hidden = none;
@@ -661,7 +701,7 @@ async function scanSeries() {
       `<li>클래스마다 하위 폴더로 나누기: <code>폴더/정상/*.csv</code>, <code>폴더/이상/*.csv</code></li>` +
       `<li>정답 표 CSV를 만들어 위 '정답 표 CSV' 칸에 넣기: 첫 열 = 파일 이름, 둘째 열 = 정답 (예: <code>Cycle_10,정상</code>)</li>` +
       (WEB ? `<li><a href="label.html" target="_blank" rel="noopener">라벨링 페이지에서 정답 붙이기</a> (새 탭): 같은 폴더를 고르고 정답을 붙인 뒤, 여기 '라벨링한 데이터'에서 불러오기</li></ol>`
-        : `<li><a href="/label?folder=${encodeURIComponent(path)}&column=${encodeURIComponent($("series-column").value)}" target="_blank">` +
+        : `<li><a href="/label?folder=${encodeURIComponent(path)}&column=${encodeURIComponent(seriesColumns()[0] || "")}" target="_blank">` +
           `라벨링 작업실에서 정답 붙이기</a> (새 탭): 격자로 훑고, 규칙으로 한꺼번에, 하나씩 크게 보며</li></ol>`);
   } catch (e) {
     showError(e);
@@ -669,6 +709,7 @@ async function scanSeries() {
   }
 }
 $("btn-series-scan").onclick = scanSeries;
+function seriesColumns() { return [...document.querySelectorAll("#series-columns input:checked")].map((el) => el.value); }   // 둘 이상이면 여러 채널
 $("btn-label").onclick = () => window.open(WEB ? "label.html" : "/label", "_blank");   // 라벨링은 따로 페이지 (새 탭)
 $("series-path").oninput = () => {                        // 폴더를 바꾸면 이전 살펴보기 결과는 버림
   st.seriesScan = null;
@@ -676,7 +717,9 @@ $("series-path").oninput = () => {                        // 폴더를 바꾸면
 };
 $("series-label-file").onchange = () => { if (pathVal("series-path")) scanSeries(); };
 $("btn-series-load").onclick = async () => {
-  const o = Object.assign(dataOptions(), { series_folder: pathVal("series-path"), column: $("series-column").value,
+  const cols = seriesColumns();
+  if (!cols.length) return showMessage("값 열을 하나 이상 고르세요", "둘 이상 고르면 여러 채널 시계열이 됩니다");
+  const o = Object.assign(dataOptions(), { series_folder: pathVal("series-path"), column: cols.length > 1 ? cols : cols[0],
     length: Number($("series-length").value) || (st.seriesScan && st.seriesScan.default_length) || 64,
     resample: $("series-resample").value });
   const lf = pathVal("series-label-file");
@@ -1651,7 +1694,7 @@ async function showSample() {
     const inPic = im ? svgImage(a.input, im[0], im[1], Math.max(3, Math.round(96 / im[1])))
       : inputKind() === "tabular"                                // 표 데이터: 열 이름과 값 (크기가 제각각이라 그림보다 표)
       ? `<table class="tab"><tr>${st.summary.features.map((f) => `<th>${esc(f)}</th>`).join("")}</tr>` +
-        `<tr>${a.input.map((v) => `<td>${num(v)}</td>`).join("")}</tr></table>` : svgLine(a.input, 600, 60);
+        `<tr>${a.input.map((v) => `<td>${num(v)}</td>`).join("")}</tr></table>` : svgChannels(a.input, st.summary.channels, 600, 60);
     let html = `<div class="fs"><div class="name">입력</div>${inPic}</div>`;
     for (const [id, b, depth] of orderItems(a.order, graph)) {
       const v = a.values[id];

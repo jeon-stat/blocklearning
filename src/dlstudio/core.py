@@ -19,6 +19,7 @@ from dlstudio.blocks import to_model_input
 from dlstudio.data import (EXAMPLE_KINDS, ALIASES, DataError, _read_table, load_csv, load_example, load_image_folder,
                            load_series_folder, scan_series_folder)
 from dlstudio.graph import build_graph_model, check_graph, from_blocks
+from dlstudio.data import channels_of
 from dlstudio.jobs import JobManager, TrainSettings, confusion, regression_view, train_job
 
 
@@ -76,7 +77,7 @@ class Studio:
         return self.model
 
     def model_input(self, X):
-        return to_model_input(self.model.kind, X, image=self.data.image)
+        return to_model_input(self.model.kind, X, image=self.data.image, channels=channels_of(self.data.length))
 
     def api_data_load(self, b: dict) -> dict:
         opts = {k: b[k] for k in ("normalize", "test_ratio", "seed") if k in b}
@@ -86,6 +87,17 @@ class Studio:
             if src.get("task") != "forecast":
                 raise UserError("지금 데이터는 시계열 예측 데이터가 아님", "② 데이터에서 시계열 예측 데이터를 불러오세요")
             src.update({k: b["forecast_reload"].get(k) for k in ("column", "L", "H", "stride") if b["forecast_reload"].get(k)})
+            return {"summary": self.load_source(src), "source": self.data.source}
+        if b.get("roles_reload"):                           # ② 역할 표: 지금 CSV를 열 역할·채널 수만 바꿔 다시
+            src = dict(self.need_data().source or {})
+            if not src.get("path") or src.get("task") == "forecast":
+                raise UserError("역할 표는 CSV로 불러온 데이터에만 씀", "② 데이터에서 CSV를 불러오세요")
+            r = b["roles_reload"]
+            src.update(targets=[int(j) for j in r.get("targets") or []], skip=[int(j) for j in r.get("skip") or []],
+                       channels=max(1, int(r.get("channels") or 1)))
+            if not src["targets"]:
+                raise UserError("정답 열이 없음", "역할 표에서 정답 열을 하나 이상 고르세요")
+            src["label_col"] = src["targets"][0]
             return {"summary": self.load_source(src), "source": self.data.source}
         if b.get("task") == "forecast" and not b.get("example"):   # 긴 시계열 CSV 하나 (한 행 = 한 시점)
             from dlstudio.forecast import load_forecast_csv
@@ -102,7 +114,8 @@ class Studio:
             d = load_example(kind, **opts, **{k: b[k] for k in ("L", "H", "stride") if b.get(k)})
         elif b.get("series_folder"):
             lf = _path(b.get("label_file")) or None
-            d = load_series_folder(_path(b["series_folder"]), str(b.get("column", "")), int(b.get("length", 0)),
+            col = b.get("column", "")
+            d = load_series_folder(_path(b["series_folder"]), [str(c) for c in col] if isinstance(col, list) else str(col), int(b.get("length", 0)),
                                    resample=b.get("resample", "interp"), label_file=lf, task=b.get("task", "auto"),
                                    only_labeled=bool(b.get("only_labeled")), **opts)
         elif b.get("folder") and b.get("det_file"):                # 탐지: 그림 폴더 + 탐지 정답 파일 (라벨링에서 만듦)
@@ -123,7 +136,8 @@ class Studio:
                 raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
             iw = b.get("image_width")
             d = load_csv(path, label_col=b.get("label_col"), task=b.get("task", "auto"),
-                         image_width=None if iw is None or iw == "" else int(iw), **opts)
+                         image_width=None if iw is None or iw == "" else int(iw), targets=b.get("targets") or None,
+                         skip=b.get("skip") or None, channels=int(b.get("channels") or 1), **opts)
         if b.get("task") == "anomaly" and d.task != "anomaly":       # 분류처럼 읽은 것 → 정상만 학습하는 이상 탐지로
             from dlstudio.anomaly import to_anomaly
             d = to_anomaly(d, b.get("normal"))
@@ -394,8 +408,11 @@ class Studio:
         if d is None:
             return ""
         import json
-        return json.dumps([d.task, [str(c) for c in d.classes], int(d.length), int(len(d.y_train)), int(len(d.y_test)),
-                           list(d.image) if d.image else None], ensure_ascii=False)
+        key = [d.task, [str(c) for c in d.classes], int(d.length), int(len(d.y_train)), int(len(d.y_test)),
+               list(d.image) if d.image else None]
+        if channels_of(d.length) > 1:
+            key.append(channels_of(d.length))
+        return json.dumps(key, ensure_ascii=False)
 
     def add_run(self, graph: dict, settings: dict, results: dict, weights: Optional[dict]) -> int:
         n = max([r["n"] for r in self.runs], default=0) + 1
@@ -476,7 +493,7 @@ class Studio:
         import torch
         d, m = self.need_data(), self.need_model()
         new = predict.read_new(d, _paths(b))
-        X = to_model_input(m.kind, new["X"], image=d.image)
+        X = to_model_input(m.kind, new["X"], image=d.image, channels=channels_of(d.length))
         outs = []
         with torch.no_grad():
             for i in range(0, len(X), 512):
@@ -527,7 +544,7 @@ class Studio:
             raise UserError(i.message, i.hint or "③ 모델의 문제를 먼저 고치세요")
         trained = self.model is not None and self.model_graph is not None and _same_model(graph, self.model_graph)
         m = self.model if trained else build_graph_model(graph, d.length, d.n_out, image=d.image, seed=0)
-        vals = activations(m, to_model_input(m.kind, d.X_train[:1], image=d.image)[0])
+        vals = activations(m, to_model_input(m.kind, d.X_train[:1], image=d.image, channels=channels_of(d.length))[0])
         if node not in vals:
             raise UserError("이 블록의 값을 찾을 수 없음", "블록을 다시 고르세요")
         return {"node": node, "value": vals[node], "trained": trained, "label": _label_of(d, 0)}
@@ -587,7 +604,8 @@ class Studio:
                                            **{k: src.get(k) for k in ("series_folder", "column", "length",
                                                                       "resample", "label_file", "only_labeled")}))["summary"]
         return self.api_data_load(dict(load, path=src.get("path"), label_col=src.get("label_col"),
-                                       image_width=src.get("image_width"), task=src.get("task", "auto")))["summary"]
+                                       image_width=src.get("image_width"), task=src.get("task", "auto"),
+                                       targets=src.get("targets"), skip=src.get("skip"), channels=src.get("channels")))["summary"]
 
     def api_project_export(self, b: dict) -> dict:
         from dlstudio.project import export_torch

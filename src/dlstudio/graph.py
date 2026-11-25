@@ -298,6 +298,10 @@ def _order_out(sc: _Scope) -> list:
     return [[k, _order_out(sc.bodies[k])] if k in sc.bodies else k for k in sc.order]
 
 
+def channels_of(length) -> int:
+    return getattr(length, "channels", 1)
+
+
 def check_graph(graph, length: int, n_out: int, image: tuple = None, rules: bool = True) -> GraphChecked:
     """그래프 검사와 노드마다 출력 모양. length: 데이터 길이(이미지면 H·W), n_out: 클래스 수(회귀면 1), image: (H, W)."""
     c = _Checker(length, n_out, image)
@@ -308,7 +312,7 @@ def check_graph(graph, length: int, n_out: int, image: tuple = None, rules: bool
     sc = c.scope(top, INPUT)
     if not image and any(sc.nodes[k]["type"] in RNN_TYPES and INPUT in (sc.nodes[k].get("inputs") or []) for k in sc.nodes):
         kind = "rnn"
-    start = (1,) + tuple(image) if image else (1, length)
+    start = (1,) + tuple(image) if image else (channels_of(length), int(length))
     c.shapes[INPUT] = start
     c.shape_pass(sc, start)
     if rules and not c.issues:                             # 모양이 다 맞을 때만 (계획을 만들어 봄)
@@ -464,7 +468,7 @@ def build_graph_model(graph: dict, length: int, n_out: int, seed: int = 0, image
             plan.append(("layer2" if t in X.TWO_INPUT else "layer", k, ins))
         return plan, mods
 
-    plan, mods = build(sc, (1,) + tuple(image) if image else (1, length))
+    plan, mods = build(sc, (1,) + tuple(image) if image else (channels_of(length), int(length)))
     return _graph_net_class()(plan, mods, checked.kind, sc.exit, block_modules).float()
 
 

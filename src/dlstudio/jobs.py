@@ -319,7 +319,8 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     img = data.image
     model = build_graph_model(graph, data.length, data.n_out, seed=settings.seed, image=img)
     kind = model.kind
-    Xtr, Xte = to_model_input(kind, data.X_train, image=img), to_model_input(kind, data.X_test, image=img)
+    C = getattr(data.length, "channels", 1)
+    Xtr, Xte = to_model_input(kind, data.X_train, image=img, channels=C), to_model_input(kind, data.X_test, image=img, channels=C)
     dev = _device(settings.device)
     Xte_t = torch.as_tensor(Xte, dtype=torch.float32, device=dev)
     done = []

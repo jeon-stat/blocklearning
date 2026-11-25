@@ -3,5 +3,6 @@ Pneumatic Pressure and Electrical Current Time Series in Manufacturing. Mendeley
 (Univerza v Ljubljani · Institut Jožef Stefan). Data in Brief (2024), PMC11239481
 바꾼 내용: hall sensor 전류(Dump_long_100Hz_hall_sensor_*)를 256칸(2.56초)씩 겹치지 않게 잘라, 칸마다 그 시각의 PLC 상태
 (Dump_long_PLCstate_*)를 다섯 묶음으로 붙임: 0 → 대기, 1–10 → 동작 1–10, 11–16 → 동작 11–16, 17 → 긴 단계, 18–25 → 동작 18–25.
-대기·긴 단계만 있는 창은 15%만 남김 (너무 많음). 공압 압력은 쓰지 않음 (DL studio의 시계열은 채널 하나).
+대기·긴 단계만 있는 창은 15%만 남김 (너무 많음).
+P: 같은 창의 공압 라인 압력 (Dump_long_100Hz_line_pressure_*, bar)을 전류 시각에 맞춰 보간 — 두 채널 예시 (전류 + 압력).
 예측 예시용: 동작이 들어 있는 창 10개는 학습·시험에서 빼 따로 둠 (X_new, y_new).

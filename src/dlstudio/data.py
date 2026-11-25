@@ -39,6 +39,31 @@ class DataError(Exception):
         super().__init__("; ".join(i.message for i in issues[:3]))
 
 
+class SeqLength(int):
+    """여러 채널 시계열의 길이 L (int처럼 쓰임)에 채널 수 C를 함께 지님 → 모델 입력 모양 (C, L).
+    X는 (샘플, C·L)로 채널이 먼저 (채널 1의 L개, 채널 2의 L개, …)."""
+
+    def __new__(cls, length: int, channels: int):
+        o = super().__new__(cls, int(length))
+        o.channels = int(channels)
+        return o
+
+    def __getnewargs__(self):
+        return (int(self), self.channels)
+
+    def __reduce__(self):
+        return (SeqLength, (int(self), self.channels))
+
+
+def channels_of(length) -> int:
+    return getattr(length, "channels", 1)
+
+
+def seq_length(length: int, channels: int = 1):
+    """채널이 하나면 그냥 int (지금까지와 똑같음)."""
+    return SeqLength(length, channels) if channels > 1 else int(length)
+
+
 @dataclass
 class Dataset:
     X_train: np.ndarray
@@ -117,6 +142,11 @@ class Dataset:
     def summary(self) -> dict:
         s = self._summary()
         s.setdefault("losses", self._losses())
+        src = self.source or {}
+        if src.get("columns") and not self.image:              # CSV: 열마다 역할 (② 역할 표)
+            tg, sk = set(src.get("targets") or [src.get("label_col")]), set(src.get("skip") or [])
+            s["columns"] = [{"name": n, "role": "target" if j in tg else "skip" if j in sk else "input"} for j, n in enumerate(src["columns"])]
+            s["csv_channels"] = int(src.get("channels") or 1)
         return s
 
     def _summary(self) -> dict:
@@ -146,7 +176,7 @@ class Dataset:
             label = lambda i: f"{float(self.y_train[i]):.4g}"
         raw = self.raw(self.X_train)
         y_range = None if self.task == "classification" else [float(np.min(y_all)), float(np.max(y_all))]
-        return {"n_train": int(len(self.y_train)), "n_test": int(len(self.y_test)), "length": int(self.length),
+        return {**self._channel_info(), "n_train": int(len(self.y_train)), "n_test": int(len(self.y_test)), "length": int(self.length),
                 "task": self.task, "classes": list(self.classes), "class_counts": counts, "target_range": y_range,
                 "features": [] if self.image else (list(self.features) or [f"열 {i}" for i in range(1, self.length + 1)]),
                 "image": list(self.image) if self.image else None,
@@ -156,8 +186,12 @@ class Dataset:
                 [round(float(v), 4) for v in self.raw(self.X_train).mean(0)],    # ⑤ 직접 넣기 칸의 처음 값
                 "preview": [{"label": label(i), "values": [round(float(v), 5) for v in raw[i]]} for i in picks]}
 
+    def _channel_info(self) -> dict:
+        C = channels_of(self.length)
+        return {"channels": C, "channel_names": list((self.source or {}).get("channel_names") or [])[:C]} if C > 1 else {}
+
     def _base_summary(self) -> dict:
-        return {"n_train": int(len(self.X_train)), "n_test": int(len(self.X_test)), "length": int(self.length), "losses": self._losses(),
+        return {**self._channel_info(), "n_train": int(len(self.X_train)), "n_test": int(len(self.X_test)), "length": int(self.length), "losses": self._losses(),
                 "task": self.task, "classes": list(self.classes), "image": list(self.image) if self.image else None,
                 "features": [] if self.image else (list(self.features) or [f"열 {i}" for i in range(1, self.length + 1)]),
                 "example": (self.source or {}).get("example"), "predict_kinds": self._predict_kinds()}
@@ -298,9 +332,12 @@ def _read_table(path) -> tuple:
 
 
 def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", normalize: bool = True,
-             test_ratio: float = 0.2, seed: int = 0, image_width: Optional[int] = None) -> Dataset:
+             test_ratio: float = 0.2, seed: int = 0, image_width: Optional[int] = None, targets: Optional[list] = None,
+             skip: Optional[list] = None, channels: int = 1) -> Dataset:
     """CSV → Dataset. label_col은 0부터 (None이면 마지막 열). 첫 줄의 특징 칸에 숫자가 아닌 것이 있으면 머리글로 건너뜀.
-    image_width: None이면 이미지가 아님. 0이면 픽셀 수가 제곱수일 때 정사각형, 아니면 그 너비 (높이 = 픽셀 수 ÷ 너비)."""
+    image_width: None이면 이미지가 아님. 0이면 픽셀 수가 제곱수일 때 정사각형, 아니면 그 너비 (높이 = 픽셀 수 ÷ 너비).
+    역할 표 (② 데이터): targets = 정답 열 번호들 (둘 이상이면 정답 여러 개 — 열마다 분류·값을 스스로 정함),
+    skip = 쓰지 않을 열, channels = 값 열을 채널 몇 개로 나눌지 (시계열: 채널 1의 값들, 채널 2의 값들, … 순서)."""
     numbered = _read_rows(path)
     if not numbered:
         raise DataError([Issue(None, None, "파일이 비어 있음", "샘플이 한 행에 하나씩 있는 CSV를 고르세요")])
@@ -308,15 +345,29 @@ def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", nor
     if ncol < 2:
         raise DataError([Issue(1, None, "열이 하나뿐임 (값 열과 정답 열이 모두 있어야 함)",
                                "쉼표로 나뉜 CSV인지, 정답 열이 있는지 확인하세요")])
-    lc = ncol - 1 if label_col is None else label_col
-    if not 0 <= lc < ncol:
-        raise DataError([Issue(None, None, f"정답 열 번호 {lc + 1}이(가) 없음 (열 {ncol}개)", "정답 열을 다시 고르세요")])
-    feats = [j for j in range(ncol) if j != lc]
+    lcs = [int(j) for j in targets] if targets else [ncol - 1 if label_col is None else int(label_col)]
+    skips = {int(j) for j in skip or []}
+    for lc in lcs + sorted(skips):
+        if not 0 <= lc < ncol:
+            raise DataError([Issue(None, None, f"열 번호 {lc + 1}이(가) 없음 (열 {ncol}개)", "정답·안 쓸 열을 다시 고르세요")])
+    lc = lcs[0]
+    feats = [j for j in range(ncol) if j not in lcs and j not in skips]
+    if not feats:
+        raise DataError([Issue(None, None, "입력으로 쓸 열이 없음", "역할 표에서 입력 열을 하나 이상 두세요")])
     first = numbered[0][1]
     names: list = []
+    all_names = [f"열 {j + 1}" for j in range(ncol)]
     if _is_header(first, feats, lc, numbered[1:]):
         names = [first[j] or f"열 {j + 1}" for j in feats]
+        all_names = [first[j] or f"열 {j + 1}" for j in range(ncol)]
         numbered = numbered[1:]
+    if not targets and not skip and image_width is None:      # 역할을 안 정했으면: 글자뿐인 열(이름·날짜·등급 등)은 안 씀
+        head = [r for _, r in numbered[:20]]
+        text = [j for j in feats if head and sum(_num(r[j]) is None for r in head if j < len(r)) >= 0.9 * len(head)]
+        if text and len(text) < len(feats):
+            skips |= set(text)
+            feats = [j for j in feats if j not in skips]
+            names = [all_names[j] for j in feats] if names else []
 
     issues, X, labels = [], [], []
     for rn, r in numbered:
@@ -336,16 +387,34 @@ def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", nor
                                     "값 열에는 숫자만 있어야 합니다"))
                 v = np.nan
             vals.append(v)
-        if r[lc] == "":
-            issues.append(Issue(rn, lc + 1, f"{rn}행의 정답 칸이 비어 있음", "정답을 채우거나 그 행을 지우세요"))
+        for t in lcs:
+            if r[t] == "":
+                issues.append(Issue(rn, t + 1, f"{rn}행의 정답 칸({all_names[t]})이 비어 있음", "정답을 채우거나 그 행을 지우세요"))
         X.append(vals)
-        labels.append(r[lc])
+        labels.append([r[t] for t in lcs])
         if len(issues) >= MAX_ISSUES:
             break
     if issues:
         raise DataError(issues[:MAX_ISSUES])
-    src = {"path": str(path), "label_col": lc, "normalize": normalize, "test_ratio": test_ratio, "seed": seed, "task": task}
+    src = {"path": str(path), "label_col": lc, "normalize": normalize, "test_ratio": test_ratio, "seed": seed, "task": task,
+           "columns": all_names}
+    if targets:
+        src["targets"] = lcs
+    if skips:
+        src["skip"] = sorted(skips)
+    if channels > 1:
+        src["channels"] = int(channels)
     X = np.asarray(X, dtype=np.float64)
+    if len(lcs) > 1:                                      # 정답 여러 개: 열마다 분류(글자·정수 20종류 이하)·값
+        from dlstudio.multi import make_multi_dataset
+        cols, tg = [], []
+        for k, t in enumerate(lcs):
+            kind, cls, yv = _labels(np.asarray([row[k] for row in labels], dtype=object), "auto", None)
+            cols.append(yv.astype(np.float64))
+            tg.append({"name": all_names[t], "kind": "class" if kind == "classification" else "value", "classes": cls})
+        return make_multi_dataset(X, np.stack(cols, 1), tg, test_ratio=test_ratio, seed=seed, normalize=normalize,
+                                  source=src, features=names)
+    labels = [row[0] for row in labels]
     image = None
     if image_width is not None:
         image = _csv_image_shape(X.shape[1], int(image_width))
@@ -353,8 +422,8 @@ def load_csv(path: str, label_col: Optional[int] = None, task: str = "auto", nor
             X = X / X.max()
         src["image_width"] = int(image_width)
         names = []
-    return make_dataset(X, np.asarray(labels, dtype=object), task=task,
-                        normalize=normalize, test_ratio=test_ratio, seed=seed, source=src, features=names, image=image)
+    return make_dataset(X, np.asarray(labels, dtype=object), task=task, normalize=normalize, test_ratio=test_ratio, seed=seed,
+                        source=src, features=[] if channels > 1 else names, image=image, channels=1 if image else int(channels))
 
 
 def _csv_image_shape(n: int, width: int) -> tuple:
@@ -534,9 +603,19 @@ def _label_table(label_file: str, keys: set, key=None) -> dict:
     return table
 
 
-def read_series_folder(path: str, column: str, length: int, resample: str = "interp",
+def _columns(column) -> list:
+    """값 열: 이름 하나 또는 여러 개 (여러 채널)."""
+    cols = [str(c) for c in column] if isinstance(column, (list, tuple)) else [str(column)]
+    if not cols or not all(cols):
+        raise DataError([Issue(None, None, "값 열을 고르지 않음", "값 열을 하나 이상 고르세요")])
+    return cols
+
+
+def read_series_folder(path: str, column, length: int, resample: str = "interp",
                        label_file: Optional[str] = None, only_labeled: bool = False) -> tuple:
-    """폴더 → (샘플 이름, X (n, length), 정답 문자열 배열 또는 None, 방식). 정답이 없어도 읽음 (라벨링 작업실용)."""
+    """폴더 → (샘플 이름, X (n, 채널 수 × length), 정답 문자열 배열 또는 None, 방식). 정답이 없어도 읽음 (라벨링 작업실용).
+    column: 값 열 이름 또는 이름 목록 (여러 채널: 채널이 먼저 이어 붙임)."""
+    cols = _columns(column)
     if not isinstance(length, int) or not 8 <= length <= SERIES_MAX_LEN:
         raise DataError([Issue(None, None, f"길이 {length}는 쓸 수 없음", f"8–{SERIES_MAX_LEN:,} 사이로 정하세요")])
     if resample not in ("interp", "crop"):
@@ -558,7 +637,7 @@ def read_series_folder(path: str, column: str, length: int, resample: str = "int
             shown = ", ".join(Path(n).stem for n in missing[:5]) + (" …" if len(missing) > 5 else "")
             raise DataError([Issue(None, None, f"정답 표에 없는 파일 {len(missing)}개: {shown}", "정답 표에 그 파일들의 행을 더하세요")])
         labels = np.asarray([pick(n, f) for n, f, _ in files], dtype=object)
-    X = np.stack([_fit_length(_series_values(n, f, column), length, resample) for n, f, _ in files])
+    X = np.stack([np.concatenate([_fit_length(v, length, resample) for v in _series_matrix(n, f, cols)]) for n, f, _ in files])
     return [n for n, _, _ in files], X, labels, mode
 
 
@@ -571,10 +650,12 @@ def load_series_folder(path: str, column: str, length: int, resample: str = "int
         raise DataError([Issue(None, None, f"정답이 없음 (CSV {len(names)}개)",
                                "클래스마다 하위 폴더(예: 정상/, 이상/)로 나누거나, 정답 표 CSV(파일이름, 정답)를 지정하세요. "
                                "라벨링 작업실은 준비 중입니다")])
+    cols = _columns(column)
     src = {"series_folder": str(path), "column": column, "length": length, "resample": resample,
            "label_file": label_file, "normalize": normalize, "test_ratio": test_ratio, "seed": seed, "task": task,
-           "only_labeled": only_labeled}
-    return make_dataset(X, labels, task=task, normalize=normalize, test_ratio=test_ratio, seed=seed, source=src)
+           "only_labeled": only_labeled, "channel_names": cols}
+    return make_dataset(X, labels, task=task, normalize=normalize, test_ratio=test_ratio, seed=seed, source=src,
+                        channels=len(cols))
 
 
 def image_files(path: str) -> list:
@@ -784,7 +865,7 @@ def _labels(y: np.ndarray, task: str, classes: Optional[list]):
 
 def make_dataset(X: np.ndarray, y: np.ndarray, task: str = "auto", normalize: bool = True, test_ratio: float = 0.2,
                  seed: int = 0, classes: Optional[list] = None, source: Optional[dict] = None,
-                 features: Optional[list] = None, image: Optional[tuple] = None) -> Dataset:
+                 features: Optional[list] = None, image: Optional[tuple] = None, channels: int = 1) -> Dataset:
     """배열 → Dataset: 과제 판단, 문자열 정답 변환, (분류면 클래스 비율을 지켜) 나누기, 학습 데이터로 정규화.
     task "anomaly": 분류처럼 읽되 종류가 하나(정상만)여도 됨 — 이상 탐지로 바꾸는 일은 anomaly.to_anomaly."""
     one_ok = task == "anomaly"
@@ -824,8 +905,10 @@ def make_dataset(X: np.ndarray, y: np.ndarray, task: str = "auto", normalize: bo
     src.setdefault("normalize", normalize)
     src.setdefault("test_ratio", test_ratio)
     src.setdefault("seed", seed)
-    return Dataset((Xtr - mean) / std, (Xte - mean) / std, yv[train], yv[test], task, names, X.shape[1],
-                   mean, std, src, list(features or []), tuple(image) if image else None)
+    if channels > 1 and X.shape[1] % channels:
+        raise DataError([Issue(None, None, f"값 {X.shape[1]}개를 채널 {channels}개로 나눌 수 없음", "채널마다 길이가 같아야 합니다")])
+    return Dataset((Xtr - mean) / std, (Xte - mean) / std, yv[train], yv[test], task, names,
+                   seq_length(X.shape[1] // channels, channels), mean, std, src, list(features or []), tuple(image) if image else None)
 
 
 # ---------------------------------------------------------------- 예시 데이터 (모두 공개된 실제 데이터)
@@ -900,7 +983,9 @@ FC_EXAMPLES = {"steel_power": ("steel_power", "전력 사용량 (kWh)", 96, 24, 
 AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic", "steelblast_ae": "steelblast",
                "pneumonia_ae": "pneumonia"}         # 이상 탐지: 분류 예시를 정상만 학습으로
 DET_EXAMPLES = {"pcb_det": ("pcb_det", 64)}                                    # 탐지: 종류 → (파일, 그림 크기)
-SEG_EXAMPLES = {"pneumatic_seg": "pneumatic_seg"}                               # 구간 분할: 종류 → 파일 (창 X·시점마다 상태 y)
+SEG_EXAMPLES = {"pneumatic_seg": ("pneumatic_seg", ["X"]),                       # 구간 분할: 종류 → (파일, 채널 배열들) (창·시점마다 상태 y)
+                "pneumatic_seg2": ("pneumatic_seg", ["X", "P"])}
+SEG_CHANNELS = {"X": "전류 (A)", "P": "공압 압력 (bar)"}
 MULTI_EXAMPLES = {"hydraulic_multi": ("hydraulic", _hydraulic_multi, HYDRAULIC_TARGETS, HYDRAULIC_FEATURES)}   # 정답 여러 개
 ALIASES = {"vibration": "bearing", "process_cls": "steel_plates", "process_reg": "concrete", "wear_rul": "hydraulic_valve",
            "surface": "steelblast", "parts_det": "pcb_det", "factory_power": "steel_power", "vibration_ae": "bearing_ae",
@@ -917,7 +1002,7 @@ def example_files(kind: str) -> list:
     if kind in DET_EXAMPLES:
         return [DET_EXAMPLES[kind][0] + ".npz"]
     if kind in SEG_EXAMPLES:
-        return [SEG_EXAMPLES[kind] + ".npz"]
+        return [SEG_EXAMPLES[kind][0] + ".npz"]
     if kind in MULTI_EXAMPLES:
         return [MULTI_EXAMPLES[kind][0] + ".npz"]
     kind = AE_EXAMPLES.get(kind, kind)
@@ -938,8 +1023,9 @@ def example_new(d) -> dict:
             raise DataError([Issue(None, None, f"예시 새 데이터가 입력 길이 {d.length}보다 짧음", "② 데이터에서 입력 길이를 줄이세요")])
         return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None, "truth": Y}
     if kind in SEG_EXAMPLES:
-        z = _npz(SEG_EXAMPLES[kind])
-        X = _float(z["X_new"])
+        f, chans = SEG_EXAMPLES[kind]
+        z = _npz(f)
+        X = np.concatenate([_float(z[c + "_new"]) for c in chans], 1)
         return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None,
                 "truth": z["y_new"].astype(np.int64).tolist()}
     if kind in MULTI_EXAMPLES:
@@ -982,9 +1068,11 @@ def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 
                                      normalize=normalize, source={"example": kind}, column=col)
     if kind in SEG_EXAMPLES:
         from dlstudio.segment import make_segment_dataset
-        z = _npz(SEG_EXAMPLES[kind])
-        return make_segment_dataset(_float(z["X"]), z["y"].astype(np.int64), [str(c) for c in z["names"]], test_ratio=test_ratio,
-                                    seed=seed, normalize=normalize, source={"example": kind})
+        f, chans = SEG_EXAMPLES[kind]
+        z = _npz(f)
+        return make_segment_dataset(np.concatenate([_float(z[c]) for c in chans], 1), z["y"].astype(np.int64),
+                                    [str(c) for c in z["names"]], test_ratio=test_ratio, seed=seed, normalize=normalize,
+                                    source={"example": kind, "channel_names": [SEG_CHANNELS[c] for c in chans]}, channels=len(chans))
     if kind in MULTI_EXAMPLES:
         from dlstudio.multi import make_multi_dataset
         f, make, targets, feats = MULTI_EXAMPLES[kind]

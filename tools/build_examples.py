@@ -415,11 +415,14 @@ def build_pneumatic(raw: Path, keep_still: float = 0.15):
     st_t, st_v = st_t[o], st_v[o]
     group = np.vectorize(lambda s: SEG_GROUP.get(int(s), 0))
     rng = np.random.default_rng(0)
-    X, Y = [], []
+    X, Y, P = [], [], []
     for n in names:
         if "hall_sensor" not in n:
             continue
         t, v = _pneu_csv(z, n)
+        pn = n.replace("hall_sensor", "line_pressure")         # 같은 시각의 공압 압력 (두 번째 채널) → 전류 시각에 맞춤
+        pt, pv = _pneu_csv(z, pn) if pn in names else (t, np.full(len(t), np.nan))
+        pres = np.interp(t, pt, pv)
         lab = group(st_v[np.clip(np.searchsorted(st_t, t, side="right") - 1, 0, None)])
         for i in range(0, len(v) - SEG_LEN + 1, SEG_LEN):     # 겹치지 않는 창
             y = lab[i:i + SEG_LEN]
@@ -427,18 +430,21 @@ def build_pneumatic(raw: Path, keep_still: float = 0.15):
             if still and rng.random() > keep_still:            # 대기·긴 단계만 있는 창은 일부만 (너무 많음)
                 continue
             X.append(v[i:i + SEG_LEN])
+            P.append(pres[i:i + SEG_LEN])
             Y.append(y)
-    X, Y = np.asarray(X, np.float32), np.asarray(Y, np.uint8)
+    X, Y, P = np.asarray(X, np.float32), np.asarray(Y, np.uint8), np.asarray(P, np.float32)
     moving = np.flatnonzero(~np.isin(Y, (0, 3)).all(1))
     new = np.sort(rng.choice(moving, N_NEW, replace=False))   # 예측 예시용: 동작이 들어 있는 창 10개
     keep = np.setdiff1d(np.arange(len(X)), new)
-    save("pneumatic_seg", X=X[keep], y=Y[keep], X_new=X[new], y_new=Y[new], names=np.asarray(SEG_NAMES), source=f"""
+    save("pneumatic_seg", X=X[keep], y=Y[keep], X_new=X[new], y_new=Y[new], P=P[keep], P_new=P[new], names=np.asarray(SEG_NAMES),
+         source=f"""
 소형 전기 구동부 출하 검사 기계의 전류 (100Hz)와 공정 단계 — Stržinar Ž, Pregelj B, Petrovčič J, Škrjanc I, Dolanc G.
 Pneumatic Pressure and Electrical Current Time Series in Manufacturing. Mendeley Data V3 (2024), doi:10.17632/ypzswhhzh9.3, CC BY 4.0
 (Univerza v Ljubljani · Institut Jožef Stefan). Data in Brief (2024), PMC11239481
 바꾼 내용: hall sensor 전류(Dump_long_100Hz_hall_sensor_*)를 {SEG_LEN}칸(2.56초)씩 겹치지 않게 잘라, 칸마다 그 시각의 PLC 상태
 (Dump_long_PLCstate_*)를 다섯 묶음으로 붙임: 0 → 대기, 1–10 → 동작 1–10, 11–16 → 동작 11–16, 17 → 긴 단계, 18–25 → 동작 18–25.
-대기·긴 단계만 있는 창은 {keep_still:.0%}만 남김 (너무 많음). 공압 압력은 쓰지 않음 (DL studio의 시계열은 채널 하나).
+대기·긴 단계만 있는 창은 {keep_still:.0%}만 남김 (너무 많음).
+P: 같은 창의 공압 라인 압력 (Dump_long_100Hz_line_pressure_*, bar)을 전류 시각에 맞춰 보간 — 두 채널 예시 (전류 + 압력).
 예측 예시용: 동작이 들어 있는 창 10개는 학습·시험에서 빼 따로 둠 (X_new, y_new).
 """)
     print("  단계 비율", np.round(np.bincount(Y.ravel(), minlength=5) / Y.size, 3))

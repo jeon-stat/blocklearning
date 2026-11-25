@@ -14,7 +14,7 @@ from typing import Optional
 
 from dlstudio import layers as X
 from dlstudio.blocks import RNN_TYPES
-from dlstudio.graph import BODY_IN, INPUT, _Checker, _config, _key
+from dlstudio.graph import BODY_IN, INPUT, _Checker, _config, _key, channels_of
 
 FRAMEWORKS = ("pytorch", "tensorflow")
 RESERVED = {"x", "self", "torch", "nn", "F", "tf", "keras", "layers", "model", "np", "h", "s"}
@@ -86,7 +86,7 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
         raise ValueError(checked.issues[0].message)
     c = _Checker(length, n_out, image)
     sc = c.scope(c.form(graph), INPUT)
-    start = (1,) + tuple(image) if image else (1, length)
+    start = (1,) + tuple(image) if image else (channels_of(length), int(length))
     plan = Plan(kind=checked.kind, in_shape=start, n_out=n_out)
     used: set = set()
     counts: dict = {}
@@ -162,7 +162,10 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
         shape = f"(샘플 수, {L[1]}, {L[2]}, 1)" if channels_last else f"(샘플 수, 1, {L[1]}, {L[2]})"
         what = "흑백 그림 (높이 × 너비)"
     elif plan.kind == "rnn":
-        shape, what = f"(샘플 수, {L[1]}, 1)", "시점마다 값 하나 (순환 층은 시점이 먼저)"
+        shape, what = f"(샘플 수, {L[1]}, {L[0]})", ("시점마다 값 하나" if L[0] == 1 else f"시점마다 채널 {L[0]}개의 값") + " (순환 층은 시점이 먼저)"
+    elif L[0] > 1:
+        shape = f"(샘플 수, {L[1]}, {L[0]})" if channels_last else f"(샘플 수, {L[0]}, {L[1]})"
+        what = f"채널 {L[0]}개의 시계열 (채널마다 길이 {L[1]})"
     else:
         shape = f"(샘플 수, {L[1]}, 1)" if channels_last else f"(샘플 수, 1, {L[1]})"
         what = "값 한 줄 (시계열이면 시점, 표면 특징)"

@@ -83,7 +83,7 @@ def data_payload(studio: Studio) -> dict:
     f32 = lambda a: np.ascontiguousarray(a, dtype=np.float32).tobytes()
     return {"X_train": f32(d.X_train), "X_test": f32(d.X_test), "y_train": f32(d.y_train), "y_test": f32(d.y_test),
             "meta": json.dumps({"n_train": int(len(d.y_train)), "n_test": int(len(d.y_test)), "n_features": int(d.X_train.shape[1]),
-                                "task": d.task, "n_out": int(d.n_out), "length": int(d.length),
+                                "task": d.task, "n_out": int(d.n_out), "length": int(d.length), "channels": getattr(d.length, "channels", 1),
                                 "image": list(d.image) if d.image else None,
                                 "classes": [str(c) for c in d.classes] if d.task in ("classification", "detection") else [],
                                 "det": None if d.task != "detection" else

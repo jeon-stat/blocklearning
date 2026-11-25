@@ -368,7 +368,7 @@ def check(blocks: list, length: int, n_out: int, image: tuple = None) -> Checked
         kind = "image"
     else:
         kind = "rnn" if isinstance(blocks[0], dict) and blocks[0].get("type") in RNN_TYPES else "cnn"
-    w.walk(blocks, (1,) + tuple(image) if image else (1, length), (), "top")
+    w.walk(blocks, (1,) + tuple(image) if image else (channels_of(length), int(length)), (), "top")
     for i, b in enumerate(blocks):                          # 증강은 맨 앞(증강끼리)에만
         if isinstance(b, dict) and b.get("type") in X.AUG_TYPES and any(
                 not (isinstance(p, dict) and p.get("type") in X.AUG_TYPES) for p in blocks[:i]):
@@ -391,13 +391,18 @@ def _torch():
     return torch, nn
 
 
-def to_model_input(kind: str, X, image: tuple = None):
-    """(n, L) → CNN은 (n, 1, L), RNN은 (n, L, 1), 이미지는 (n, 1, H, W)."""
+def channels_of(length) -> int:
+    return getattr(length, "channels", 1)
+
+
+def to_model_input(kind: str, X, image: tuple = None, channels: int = 1):
+    """(n, C·L) → CNN은 (n, C, L), RNN은 (n, L, C), 이미지는 (n, 1, H, W). 채널이 여럿이면 X는 채널이 먼저."""
     import numpy as np
     X = np.asarray(X)
     if kind == "image":
         return X.reshape(len(X), 1, image[0], image[1])
-    return X[:, None, :] if kind == "cnn" else X[:, :, None]
+    x = X.reshape(len(X), channels, -1)
+    return x if kind == "cnn" else x.transpose(0, 2, 1)
 
 
 def _modules():
@@ -592,5 +597,5 @@ def build_model(blocks: list, length: int, n_out: int, seed: int = 0, image: tup
             shape = shapes[path]
         return nn.Sequential(*mods), shape
 
-    seq, _ = build(blocks, (1,) + tuple(image) if image else (1, length), (), c.shapes)
+    seq, _ = build(blocks, (1,) + tuple(image) if image else (channels_of(length), int(length)), (), c.shapes)
     return StudioNet(list(seq), c.kind, paths).float()

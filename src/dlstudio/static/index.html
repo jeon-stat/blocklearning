@@ -91,7 +91,7 @@
     <div class="box series-box" id="series-box" hidden>
       <div id="series-info" class="series-info"></div>
       <div class="grid4">
-        <label>값 열 <select id="series-column"></select></label>
+        <div class="series-cols"><span>값 열</span><span id="series-columns"></span></div>
         <label>길이 (시점 수로 맞춤) <input id="series-length" type="number" min="8" max="65536" step="8"></label>
         <label>길이 맞추기 <select id="series-resample"><option value="interp">처음부터 끝까지 고르게 다시 뽑기</option><option value="crop">앞에서 자르고 모자라면 채우기</option></select></label>
       </div>
@@ -114,6 +114,11 @@
       <div id="auto-task" class="auto-task" hidden></div>
       <div class="cards" id="data-cards"></div>
       <p class="muted split-note">학습 샘플로 모델을 가르치고, 학습에 쓰지 않고 남겨 둔 <b>시험 샘플</b>로 처음 보는 데이터도 맞히는지 잽니다. 나누는 비율은 위 [더 보기]의 시험 비율.</p>
+      <div class="box role-box" id="role-box" hidden>
+        <div class="role-cols" id="role-cols"></div>
+        <div class="row"><label>채널 수 <input id="role-channels" type="number" min="1" max="64" value="1"></label>
+          <button id="btn-role-reload">이 역할로 다시 읽기</button><span class="muted" id="role-note"></span></div>
+      </div>
       <div class="box fc-box" id="fc-box" hidden>
         <div class="grid4">
           <label>맞힐 값 열 <select id="fc-column"></select></label>

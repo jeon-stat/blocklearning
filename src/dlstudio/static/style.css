@@ -809,3 +809,12 @@ td.seg-cell { text-align: left; }
 .loss-box.multi > .loss-k { align-self: flex-start; }
 .loss-row .loss-k { font-weight: 500; color: var(--text); }
 .loss-box.multi > button { align-self: flex-start; }
+.ch-stack { display: flex; flex-direction: column; gap: 2px; }
+.series-cols { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.series-cols .chk { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.role-cols { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow: auto; }
+.role-box .role { display: inline-flex; gap: 6px; align-items: center; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: none; font-size: 13px; }
+.role-box .role span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-box .role.r-target { background: var(--accent-bg); border-color: var(--accent); }
+.role-box .role.r-skip { opacity: .5; text-decoration: line-through; }
+.role-box .row { margin-top: 8px; }

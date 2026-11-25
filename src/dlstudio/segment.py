@@ -32,24 +32,28 @@ class SegOut(int):
 
 
 def make_segment_dataset(X, Y, classes: list, test_ratio: float = 0.2, seed: int = 0, normalize: bool = True,
-                         source: dict | None = None):
-    """창들 (n, L) · 시점마다 상태 (n, L) → 구간 분할 Dataset (X는 학습 몫 전체 평균·표준편차로 정규화)."""
-    from dlstudio.data import DataError, Dataset, Issue
+                         source: dict | None = None, channels: int = 1):
+    """창들 (n, C·L, 채널이 먼저) · 시점마다 상태 (n, L) → 구간 분할 Dataset (X는 채널마다 학습 몫 전체 평균·표준편차로 정규화)."""
+    from dlstudio.data import DataError, Dataset, Issue, seq_length
     X, Y = np.asarray(X, dtype=np.float64), np.asarray(Y, dtype=np.int64)
-    n, L = X.shape
-    if Y.shape != X.shape:
+    n, L = Y.shape
+    if X.shape != (n, channels * L):
         raise DataError([Issue(None, None, "창마다 시점 수만큼 상태가 있어야 함", "신호와 상태의 길이를 맞추세요")])
     order = np.random.default_rng(seed).permutation(n)
     n_te = max(1, int(round(n * test_ratio)))
     te, tr = order[:n_te], order[n_te:]
     if len(tr) < MIN_TRAIN:
         raise DataError([Issue(None, None, f"학습 창이 {len(tr)}개뿐임", f"창이 {MIN_TRAIN}개 이상 되게 신호를 늘리거나 창 길이를 줄이세요")])
-    mu, sd = (float(X[tr].mean()), float(X[tr].std()) or 1.0) if normalize else (0.0, 1.0)
+    mu, sd = np.zeros(channels * L), np.ones(channels * L)
+    if normalize:
+        for c in range(channels):
+            part = X[tr][:, c * L:(c + 1) * L]
+            mu[c * L:(c + 1) * L], sd[c * L:(c + 1) * L] = float(part.mean()), float(part.std()) or 1.0
     src = dict(source or {}, task="segmentation")
     src.setdefault("normalize", normalize)
     src.setdefault("test_ratio", test_ratio)
-    return Dataset((X[tr] - mu) / sd, (X[te] - mu) / sd, Y[tr], Y[te], "segmentation", [str(c) for c in classes], int(L),
-                   np.full(L, mu), np.full(L, sd), src, [], None, None, {"segment": True})
+    return Dataset((X[tr] - mu) / sd, (X[te] - mu) / sd, Y[tr], Y[te], "segmentation", [str(c) for c in classes],
+                   seq_length(L, channels), mu, sd, src, [], None, None, {"segment": True})
 
 
 def predicted(out: np.ndarray, n: int, K: int) -> np.ndarray:
@@ -96,7 +100,7 @@ def result(out: np.ndarray, out_tr: np.ndarray, d) -> dict:
     rec = [None if cm[k].sum() == 0 else float(cm[k, k] / cm[k].sum()) for k in range(K)]
     order = np.argsort([-len(runs(r)) for r in y], kind="stable")[:N_SHOW]
     raw = d.raw(d.X_test)
-    show = [{"index": int(i), "x": np.round(raw[i], 4).tolist(), "truth": y[i].tolist(), "pred": p[i].tolist(),
+    show = [{"index": int(i), "x": np.round(raw[i][:d.length], 4).tolist(), "truth": y[i].tolist(), "pred": p[i].tolist(),
              "acc": float((p[i] == y[i]).mean())} for i in order]
     return {"confusion": cm.tolist(), "recall": rec, "seg_samples": show,
             "train_metric": metric(out_tr, d.y_train, K)}

@@ -768,7 +768,7 @@ async function featuresAt(net, X, name, batch = 64) {
 async function fitDistance(plan, d, fit, onEpoch) {
   const net = new Net(plan, 0);
   const head = plan.steps.find((st) => st.name === plan.out), src = head.inputs[0];
-  const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image), Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image);
+  const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image, d.channels), Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image, d.channels);
   let Ftr = null, Fte = null;
   try {
     Ftr = await featuresAt(net, Xtr, src);
@@ -787,10 +787,13 @@ async function fitDistance(plan, d, fit, onEpoch) {
 }
 
 // ------------------------------------------------------------ 데이터 모양: (n, 특징) → 모델 입력
-function toInput(X, n, kind, length, image) {         // X: Float32Array (n × 특징)
+function toInput(X, n, kind, length, image, channels = 1) {   // X: Float32Array (n × 특징), 여러 채널이면 채널이 먼저
   if (kind === "image") return tf.tensor4d(X, [n, 1, image[0], image[1]]);
-  if (kind === "rnn") return tf.tensor3d(X, [n, length, 1]);
-  return tf.tensor3d(X, [n, 1, length]);
+  const x = tf.tensor3d(X, [n, channels || 1, length]);
+  if (kind !== "rnn") return x;
+  const t = x.transpose([0, 2, 1]);                        // 순환 모델: (n, L, C)
+  x.dispose();
+  return t;
 }
 
 // ------------------------------------------------------------ 지표 (jobs.py와 같음)
@@ -989,8 +992,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     mu[h.start] = m; sd[h.start] = Math.sqrt(q / d.n_train) || 1;
   });
   const back = (out) => (reg || multi ? out.map((v, i) => v * sd[i % nY] + mu[i % nY]) : out);
-  const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image);
-  const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image);
+  const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image, d.channels);
+  const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image, d.channels);
   const head = frozenHead(plan);                           // 고정한 사전학습 층: 특징을 한 번만 뽑고 뒷부분만 학습
   const Ftr = head ? await headFeatures(net, Xtr) : Xtr, Fte = head ? await headFeatures(net, Xte) : Xte;
   const ytr = seg ? tf.tidy(() => tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), seg.n_cls).toFloat().reshape([d.n_train, seg.length, seg.n_cls]))

@@ -155,7 +155,7 @@ function activations(body) {
   const i = Number(body.sample_index || 0);
   const s = wrapped(W.mod.sample(W.studio, i));
   const d = getData(), net = W.trained.net;
-  const x = E().toInput(Float32Array.from(s.x), 1, net.kind, d.length, d.image);
+  const x = E().toInput(Float32Array.from(s.x), 1, net.kind, d.length, d.image, d.channels);
   const attention = {};
   const values = Object.fromEntries(Object.entries(net.trace(x, attention)).map(([k, v]) => [k, E().thin(v)]));   // 층마다 줄이기
   const out = net.predict(x);
@@ -246,7 +246,7 @@ async function predictNew(body) {                      // 새 데이터로 예�
   const u8 = bytesOf(W.mod.predict_x(W.studio));
   const X = new Float32Array(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
   const d = getData(), net = W.trained.net;
-  const x = E().toInput(X, n, net.kind, d.length, d.image);
+  const x = E().toInput(X, n, net.kind, d.length, d.image, d.channels);
   let out;
   try { out = (await E().checkedPredict(net, x, n)).out; } finally { x.dispose(); }
   return wrapped(W.mod.predict_finish(W.studio, new Uint8Array(out.buffer)));
@@ -261,7 +261,7 @@ async function preview(body) {                         // ③ 블록 미리보�
   const d = getData();
   const trained = !!W.trained && bare(W.trained.graph) === bare(body.graph);
   const net = trained ? W.trained.net : new (E().Net)(plan, 0);
-  const x = E().toInput(d.X_train.slice(0, d.n_features), 1, net.kind, d.length, d.image);
+  const x = E().toInput(d.X_train.slice(0, d.n_features), 1, net.kind, d.length, d.image, d.channels);
   try {
     const vals = net.trace(x);
     if (!(body.node in vals)) throw { message: "이 블록의 값을 찾을 수 없음", hint: "블록을 다시 고르세요" };
@@ -320,7 +320,7 @@ async function deepSuggest(body) {                      // 딥러닝 제안: 정
   const { net, result } = await E().train(prep.plan, d, { epochs, lr: 0.003, batch_size: 32, seed: 0 },
     (pr) => { if (body.onProgress) body.onProgress(`${prep.model} 학습 중… ${pr.epoch}/${epochs}`); return false; });
   let probs;
-  const x = E().toInput(Xp, meta.n_pred, net.kind, d.length, d.image);
+  const x = E().toInput(Xp, meta.n_pred, net.kind, d.length, d.image, d.channels);
   try {
     const out = (await E().checkedPredict(net, x, meta.n_pred)).out;
     const k = d.n_out;
