@@ -879,11 +879,12 @@ $("btn-train").onclick = async () => {
     st.trainJob = id;
     const json = sig(graph);
     $("train-status").textContent = "학습 중…";
-    const metric = { classification: "accuracy", detection: "map50" }[st.summary.task] || "r2";
+    const ae = st.summary.anomaly;                              // 이상 탐지: 이상 샘플이 있으면 AUC, 없으면 복원 오차
+    const metric = { classification: "accuracy", detection: "map50" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
     const j = await pollJob(id, (j) => {
       drawCurve(j.progress, metric);
       const last = j.progress[j.progress.length - 1];
-      if (last) $("train-status").textContent = `epoch ${last.epoch} · loss ${last.loss.toFixed(4)} · 시험 ${metric === "r2" ? last.test_metric.toFixed(3) : pct(last.test_metric)}`;
+      if (last) $("train-status").textContent = `epoch ${last.epoch} · loss ${last.loss.toFixed(4)} · 시험 ${metricText(metric, last.test_metric)}`;
     });
     if (j.state === "done") {
       st.trained = true;

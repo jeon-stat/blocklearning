@@ -156,6 +156,7 @@ async function openProject(kind, p) {
     quietUntil = Date.now() + 3000;
     applyOpened(r);                                           // app.js
     dirty = false; dataDirty = false;
+    if (r.notice) onChange("train");                          // 예시 데이터가 바뀌어 학습 결과를 비웠으면 그 상태를 저장 (카드 요약·진행도)
     status("열었음");
     showMessage(`'${p.name}'을(를) 열었음`, r.notice || "", "", true);
   } catch (e) { status("열지 못함", true); showError(e.message !== undefined ? e : { message: String(e) }); }
@@ -362,6 +363,7 @@ function selectCard(id) {
 // 왼쪽 '만들기' 흐름(과제~예측): 내 프로젝트 화면에서는 프로젝트를 골랐을 때만, 다른 단계에서는 늘
 function showSteps() {
   showCurrent();
+  if (st.step !== "home") markSteps();                    // 홈에서 고른 카드의 진행으로 칠한 것은 단계로 가면 지금 상태로 되돌림
   const show = st.step !== "home" || !!selId;
   document.querySelectorAll("#steps .nav-label, #steps .step:not(.home-step)").forEach((el) => (el.style.display = show ? "" : "none"));
 }
