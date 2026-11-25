@@ -215,6 +215,8 @@
       <div class="grid4">
         <label>Learning rate <input id="lr" type="number" step="0.0001" value="0.001"></label>
         <label>Batch size <input id="batch" type="number" min="1" value="32"></label>
+        <label class="check"><input id="keep-best" type="checkbox" checked> 가장 좋았던 epoch 남기기</label>
+        <label>조기 종료 <select id="early-stop"><option value="0">끔</option><option value="5">5 epoch</option><option value="10">10 epoch</option><option value="20">20 epoch</option></select></label>
         <label>장치 <select id="device"><option value="auto">자동 (GPU 있으면 GPU)</option><option value="cpu">CPU</option><option value="cuda">GPU</option></select></label>
       </div>
     </details>

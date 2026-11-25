@@ -11,6 +11,8 @@ from typing import Callable, Optional
 import numpy as np
 
 MAX_PROGRESS = 100
+VAL_FRAC = 0.1             # 가장 좋은 epoch·조기 종료: 학습 몫에서 떼어 쓰는 검증 몫 (시험 몫은 고르는 데 쓰지 않음)
+MIN_VAL_SPLIT = 20         # 학습 샘플이 이보다 적으면 검증 몫을 떼지 않음
 JOIN_SECONDS = 60          # 같은 종류의 새 작업을 시작할 때 앞 작업이 멈추기를 기다리는 시간
 
 
@@ -106,6 +108,8 @@ class TrainSettings:
     batch_size: int = 32
     device: str = "auto"
     seed: int = 0
+    keep_best: bool = False       # 검증 손실이 가장 낮았던 epoch의 모델을 남김
+    early_stop: int = 0           # 검증 손실이 이 epoch 수 동안 나아지지 않으면 멈춤 (0이면 안 멈춤)
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "TrainSettings":
@@ -179,9 +183,12 @@ def target_scale(Y: np.ndarray) -> tuple:
 
 
 def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None,
-        det=None):
+        det=None, keep_best: bool = False, early_stop: int = 0, val_score=None):
     """평범한 torch 학습: Adam, 분류는 교차 엔트로피, 회귀는 MSE, 탐지는 YOLO식 손실 (det: DetOut). 반복마다
-    callback({"epoch", "loss", "model"}), True를 돌려주면 멈춤. 돌려주는 모델은 CPU."""
+    callback({"epoch", "loss", "val_loss", "best_epoch", "model"}), True를 돌려주면 멈춤. 돌려주는 모델은 CPU.
+    keep_best·early_stop: 학습 몫의 VAL_FRAC를 검증 몫으로 떼어 epoch마다 검증 손실을 재고, 가장 낮았던 epoch의 모델을
+    남기거나(keep_best) early_stop epoch 동안 나아지지 않으면 멈춤. 결과는 net.fit_info {best_epoch, early_stopped, n_val}.
+    val_score(검증 출력, 검증 샘플 번호) → 클수록 좋은 성적: 주면 손실 대신 이것으로 고름 (탐지: 손실이 성적을 잘 대변하지 못함)."""
     import torch
     from torch import nn
     torch.manual_seed(seed)
@@ -201,7 +208,14 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
     else:
         yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(len(Xt), -1), nn.MSELoss()
     opt = torch.optim.Adam(net.parameters(), lr=lr)
+    Xv = yv = None
+    if (keep_best or early_stop) and len(Xt) >= MIN_VAL_SPLIT:
+        perm = torch.randperm(len(Xt), generator=torch.Generator().manual_seed(seed + 1)).to(dev)
+        nv = max(2, int(round(len(Xt) * VAL_FRAC)))
+        Xv, yv, Xt, yt = Xt[perm[:nv]], yt[perm[:nv]], Xt[perm[nv:]], yt[perm[nv:]]
+        val_idx = perm[:nv].cpu().numpy()
     n = len(Xt)
+    best, best_ep, since, best_state, early = float("inf"), None, 0, None, False
     for epoch in range(1, epochs + 1):
         net.train()
         losses = []
@@ -215,9 +229,43 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
             losses.append(float(loss.detach()))
         if not np.isfinite(np.mean(losses)):
             raise FloatingPointError("손실이 발산함 (NaN) → 학습률(Learning rate)을 낮추세요")
-        if callback is not None and callback({"epoch": epoch, "loss": float(np.mean(losses)), "model": net}):
+        val_loss = None
+        if Xv is not None:                                   # 검증 손실 (평가 모드)
+            net.eval()
+            with torch.no_grad():
+                outs = [net(Xv[i:i + 256]) for i in range(0, len(Xv), 256)]
+                tot = sum(float(loss_fn(o, yv[i * 256:i * 256 + len(o)])) * len(o) for i, o in enumerate(outs))
+            val_loss = tot / len(Xv)
+            key = val_loss if val_score is None else -val_score(torch.cat(outs).double().cpu().numpy(), val_idx)
+            if key < best:
+                best, best_ep, since = key, epoch, 0
+                if keep_best:
+                    best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
+            else:
+                since += 1
+        if callback is not None and callback({"epoch": epoch, "loss": float(np.mean(losses)), "val_loss": val_loss,
+                                              "best_epoch": best_ep, "model": net}):
             break
+        if early_stop and Xv is not None and since >= early_stop:
+            early = True
+            break
+    if best_state is not None:
+        net.load_state_dict(best_state)
+    net.fit_info = {"best_epoch": best_ep, "early_stopped": early, "n_val": 0 if Xv is None else len(Xv)}
     return net.cpu().eval()
+
+
+def _progress(info: dict, test_metric) -> dict:
+    """진행 한 줄: epoch, 학습 손실, (있으면) 검증 손실·가장 좋은 epoch, 시험 성적."""
+    p = {"epoch": info["epoch"], "loss": float(info["loss"]), "test_metric": test_metric}
+    if info.get("val_loss") is not None:
+        p["val_loss"], p["best_epoch"] = float(info["val_loss"]), info.get("best_epoch")
+    return p
+
+
+def _fit_result(net) -> dict:
+    fi = getattr(net, "fit_info", None) or {}
+    return {"best_epoch": fi.get("best_epoch"), "early_stopped": bool(fi.get("early_stopped")), "n_val": fi.get("n_val", 0)}
 
 
 def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
@@ -253,15 +301,15 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         with torch.no_grad():
             out = net(Xte_t).detach().double().cpu().numpy() * sd + mu
         done.append(info["epoch"])
-        job.report({"epoch": info["epoch"], "loss": float(info["loss"]),
-                    "test_metric": metric(out, data.y_test, data.task, data.X_test)})
+        job.report(_progress(info, metric(out, data.y_test, data.task, data.X_test)))
         return job.cancelled
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
             net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
-                      device=dev, callback=cb, det=data.n_out if data.task == "segmentation" else None)
+                      device=dev, callback=cb, det=data.n_out if data.task == "segmentation" else None,
+                      keep_best=settings.keep_best, early_stop=settings.early_stop)
         finally:
             model.start = None
     if reg:
@@ -269,7 +317,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     with torch.no_grad():
         out = net(torch.as_tensor(Xte, dtype=torch.float32)).double().numpy()
     result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task, data.X_test),
-              "metric_name": metric_name(data), "warnings": [], "confusion": None, "recall": None}
+              "metric_name": metric_name(data), "warnings": [], "confusion": None, "recall": None, **_fit_result(net)}
     with torch.no_grad():                                   # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
         Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
         out_tr = np.concatenate([net(Xtr_t[i:i + 1024]).double().numpy() for i in range(0, len(Xtr_t), 1024)])
@@ -366,15 +414,16 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
         with torch.no_grad():
             out = net(Xte_t).detach().double().cpu().numpy()
         done.append(info["epoch"])
-        job.report({"epoch": info["epoch"], "loss": float(info["loss"]),
-                    "test_metric": detect.metric(out, data.det["test"], G, K)})
+        job.report(_progress(info, detect.metric(out, data.det["test"], G, K)))
         return job.cancelled
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
             net = fit(model, Xfit, data.y_train, "detection", settings.epochs, settings.lr, settings.batch_size,
-                      seed=settings.seed, device=dev, callback=cb, det=det)
+                      seed=settings.seed, device=dev, callback=cb, det=det, keep_best=settings.keep_best,
+                      early_stop=settings.early_stop,
+                      val_score=lambda o, idx: detect.metric(o, [data.det["train"][i] for i in idx], G, K))
         finally:
             model.start = None
     with torch.no_grad():
@@ -382,5 +431,5 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
         Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
         out_tr = np.concatenate([net(Xtr_t[i:i + 512]).double().numpy() for i in range(0, len(Xtr_t), 512)])
     r = detect.result(out, data.det["test"], G, K)
-    return dict(r, model=net, epochs_done=len(done), metric_name="map50", warnings=[], confusion=None, recall=None,
+    return dict(r, model=net, epochs_done=len(done), metric_name="map50", warnings=[], confusion=None, recall=None, **_fit_result(net),
                 train_metric=detect.metric(out_tr, data.det["train"], G, K))

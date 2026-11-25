@@ -862,7 +862,7 @@ $("btn-redo").onclick = () => st.ed && st.ed.redo();
 // ------------------------------------------------------------ ③ 학습
 function trainSettings() {
   return { epochs: Number($("epochs").value) || 30, lr: Number($("lr").value) || 0.001, batch_size: Number($("batch").value) || 32,
-    device: $("device").value };
+    device: $("device").value, keep_best: $("keep-best").checked, early_stop: Number($("early-stop").value) || 0 };
 }
 async function pollJob(id, onTick) {
   for (;;) {
@@ -883,7 +883,8 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
     s += `<line x1="${L}" y1="${yv(f)}" x2="${L + pw}" y2="${yv(f)}" stroke="#e3e6eb"/>` +
       `<text x="${L - 6}" y="${yv(f) + 4}" font-size="11" text-anchor="end" fill="#4f46e5">${acc ? f * 100 + "%" : recon ? Number((f * mmax).toPrecision(2)) : f}</text>`;
   }
-  const loss = progress.map((p) => p.loss), lmax = Math.max(0, ...loss) || 1;
+  const loss = progress.map((p) => p.loss), vloss = progress.map((p) => p.val_loss), hasVal = vloss.some((v) => v !== undefined && v !== null);
+  const lmax = Math.max(0, ...loss, ...(hasVal ? vloss.filter((v) => v !== undefined && v !== null) : [])) || 1;
   s += `<text x="${L + pw + 6}" y="${yv(1) + 4}" font-size="11" fill="#f97316">${Number(lmax.toPrecision(2))}</text>` +
     `<text x="${L + pw + 6}" y="${yv(0) + 4}" font-size="11" fill="#f97316">0</text>`;
   if (!n) s += `<text x="${L + pw / 2}" y="${T + ph / 2}" font-size="13" text-anchor="middle" fill="#94a3b8">[학습 시작]을 누르면 epoch마다 곡선이 그려집니다</text>`;
@@ -891,6 +892,11 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
     const xs = (i) => L + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
     const lp = loss.map((v, i) => `${xs(i).toFixed(1)},${yv(v / lmax).toFixed(1)}`);
     const mp = progress.map((p, i) => `${xs(i).toFixed(1)},${yv(Math.max(0, Math.min(1, p.test_metric / mmax))).toFixed(1)}`);
+    if (hasVal) {                                           // 검증 loss (점선)과 가장 좋았던 epoch (세로 점선)
+      s += `<polyline fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4 3" points="${vloss.map((v, i) => `${xs(i).toFixed(1)},${yv(v / lmax).toFixed(1)}`).join(" ")}"/>`;
+      const be = progress[n - 1].best_epoch, bi = progress.findIndex((p) => p.epoch === be);
+      if (bi >= 0) s += `<line x1="${xs(bi)}" y1="${T}" x2="${xs(bi)}" y2="${T + ph}" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="3 3"/>`;
+    }
     s += `<polyline fill="none" stroke="#f97316" stroke-width="2" points="${lp.join(" ")}"/>` +
       `<polyline fill="none" stroke="#4f46e5" stroke-width="2" points="${mp.join(" ")}"/>` +
       `<text x="${L}" y="${H - 8}" font-size="11" fill="#6b7280">epoch 1</text>` +
@@ -921,10 +927,12 @@ $("btn-train").onclick = async () => {
     $("train-status").textContent = "학습 중…";
     const ae = st.summary.anomaly;                              // 이상 탐지: 이상 샘플이 있으면 AUC, 없으면 복원 오차
     const metric = { classification: "accuracy", detection: "map50", segmentation: "accuracy" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
+    const t0 = performance.now();
     const j = await pollJob(id, (j) => {
       drawCurve(j.progress, metric);
       const last = j.progress[j.progress.length - 1];
-      if (last) $("train-status").textContent = `epoch ${last.epoch} · loss ${last.loss.toFixed(4)} · 시험 ${metricText(metric, last.test_metric)}`;
+      const left = last && last.epoch < epochs ? ` · 약 ${fmtLeft(((performance.now() - t0) / 1000 / last.epoch) * (epochs - last.epoch))} 남음` : "";
+      if (last) $("train-status").textContent = `epoch ${last.epoch} · loss ${last.loss.toFixed(4)} · 시험 ${metricText(metric, last.test_metric)}${left}`;
       trainBusy(true, last ? last.epoch / epochs : null);
     });
     if (j.state === "done") {
@@ -959,7 +967,7 @@ function renderSegResult(r) {                             // 구간 분할: 시�
   const v = a >= 0.9 ? ["good", `시험 시점의 ${pct(a)}를 맞혔습니다.`, "아래 창에서 경계가 어긋나는 곳을 보세요. ⑤ 예측에서 새 데이터에 써 볼 수 있습니다."]
     : a >= 0.7 ? ["warn", `시험 시점의 ${pct(a)}를 맞혔습니다. 짧은 상태를 놓치는 곳이 있습니다.`, "Epochs를 늘리거나 다른 대표 모델(U-Net식)을 써 보세요."]
     : ["bad", `시험 시점의 ${pct(a)}만 맞혔습니다.`, "Epochs를 늘리거나, 필터를 더 넓게 보는 모델(TCN)을 써 보세요."];
-  $("train-result").innerHTML = kv([["Epochs", r.epochs_done], ["시험 시점 정확도", `<b>${pct(a)}</b>`], ["학습 시점 정확도", pct(r.train_metric)]]) +
+  $("train-result").innerHTML = kv([["Epochs", epochsText(r)], ["시험 시점 정확도", `<b>${pct(a)}</b>`], ["학습 시점 정확도", pct(r.train_metric)]]) +
     `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>`;
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", r.confusion, r.recall, "시점마다 센 혼동 행렬");
@@ -980,7 +988,7 @@ function renderTrainResult(r) {
   const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(4)));
   const has = (v) => v !== null && v !== undefined;
   const base = isAcc ? baselineOf(r) : null;
-  const rows = [["Epochs", r.epochs_done], [`시험 ${isAcc ? "정확도" : "R²"}`, `<b>${f(r.test_metric)}</b>`]];
+  const rows = [["Epochs", epochsText(r)], [`시험 ${isAcc ? "정확도" : "R²"}`, `<b>${f(r.test_metric)}</b>`]];
   if (has(r.train_metric)) rows.push([`학습 ${isAcc ? "정확도" : "R²"}`, f(r.train_metric)]);
   if (has(base)) rows.push(["찍기 기준", `${pct(base)} <span class="muted">(가장 많은 클래스만 답할 때)</span>`]);
   if (!isAcc) rows.push(["시험 평균 오차 MAE", m(r.mae)], ["찍기 기준", `R² 0 <span class="muted">(늘 평균값만 답할 때)</span>`]);
@@ -1005,7 +1013,7 @@ function fcVerdict(r) {
 function renderFcResult(r) {
   const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(4)));
   const better = r.naive_mae > 0 ? 1 - r.mae / r.naive_mae : 0;
-  const rows = [["Epochs", r.epochs_done], ["시험 평균 오차 MAE", `<b>${m(r.mae)}</b> <span class="muted">(원래 단위)</span>`], ["시험 RMSE", m(r.rmse)],
+  const rows = [["Epochs", epochsText(r)], ["시험 평균 오차 MAE", `<b>${m(r.mae)}</b> <span class="muted">(원래 단위)</span>`], ["시험 RMSE", m(r.rmse)],
     ["단순 예측 MAE", `${m(r.naive_mae)} <span class="muted">(${esc(r.naive_name)})</span>`],
     ["단순 예측보다", better >= 0 ? `오차 ${Math.round(better * 100)}% 작음` : `오차 ${Math.round(-better * 100)}% 큼`],
     ["시험 R²", r.test_metric.toFixed(3)]];
@@ -1070,7 +1078,7 @@ function aeHist(r, th) {                                   // 점수 분포: 정
 function renderAeResult(r) {
   const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(3)));
   const both = r.metric_name === "auc";
-  const rows = [["Epochs", r.epochs_done]];
+  const rows = [["Epochs", epochsText(r)]];
   if (both) rows.push(["시험 AUC", `<b>${r.auc.toFixed(3)}</b> <span class="muted">(이상 하나·정상 하나를 뽑을 때 이상 점수가 더 클 확률, 0.5 = 찍기)</span>`]);
   else rows.push(["시험 정상의 평균 이상 점수", `<b>${m(r.test_metric)}</b>`]);
   rows.push(["기준값 (처음)", `${m(r.threshold)} <span class="muted">(학습 정상의 95%가 이 아래)</span>`]);
@@ -1134,7 +1142,7 @@ function detVerdict(r) {                               // 탐지 결과를 쉬�
 }
 function renderDetResult(r) {
   const cls = st.summary.classes || [], pr = r.pr || {};
-  const rows = [["Epochs", r.epochs_done], ["시험 mAP@0.5", `<b>${pct(r.test_metric)}</b>`]];
+  const rows = [["Epochs", epochsText(r)], ["시험 mAP@0.5", `<b>${pct(r.test_metric)}</b>`]];
   if (r.train_metric !== null && r.train_metric !== undefined) rows.push(["학습 mAP@0.5", pct(r.train_metric)]);
   (r.ap || []).forEach((a, k) => { if (a !== null) rows.push([`AP '${cls[k]}'`, pct(a)]); });
   if (pr.precision !== undefined) rows.push(["점수 50% 이상만 볼 때",
@@ -1341,7 +1349,13 @@ function applySettings(s) {                              // 학습 설정 칸에
   if (s.epochs) $("epochs").value = s.epochs;
   if (s.lr) $("lr").value = s.lr;
   if (s.batch_size) $("batch").value = s.batch_size;
+  if (s.keep_best !== undefined) $("keep-best").checked = !!s.keep_best;
+  if (s.early_stop !== undefined) $("early-stop").value = String(s.early_stop || 0);
 }
+function epochsText(r) {                                  // "30" · "21 (조기 종료) · 가장 좋았던 11"
+  return `${r.epochs_done}${r.early_stopped ? " (조기 종료)" : ""}` + (r.best_epoch ? ` · 가장 좋았던 ${r.best_epoch}` : "");
+}
+function fmtLeft(sec) { return sec < 60 ? `${Math.max(1, Math.round(sec))}초` : `${Math.round(sec / 60)}분`; }
 function applyTrained(graph, results, settings) {        // 학습한 모델을 지금 모델로 (기록 되돌리기)
   setGraph(graph);
   st.graphJson = sig(graph);

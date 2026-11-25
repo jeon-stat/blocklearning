@@ -901,8 +901,23 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     : tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), d.n_out).toFloat();
   const opt = tf.train.adam(s.lr || 1e-3, 0.9, 0.999, 1e-8);
   const rand = rng((s.seed || 0) * 104729 + 3);
-  const bs = Math.max(1, s.batch_size || 32), n = d.n_train;
-  let done = 0;
+  const lossOf = (out, yb) => (det ? detLoss(out, yb, det.grid, det.per_cell)
+    : seg ? tf.losses.softmaxCrossEntropy(yb, out.reshape([-1, seg.n_cls, seg.length]).transpose([0, 2, 1]))   // 시점마다
+    : reg ? tf.losses.meanSquaredError(yb, out) : tf.losses.softmaxCrossEntropy(yb, out));
+  // 가장 좋은 epoch·조기 종료 (jobs.fit과 같음): 학습 몫의 10%를 검증 몫으로 떼어 검증 손실(탐지는 검증 mAP)로 고름
+  let Xfit = Ftr, yfit = ytr, Xv = null, yv = null, vIdx = null;
+  if ((s.keep_best || s.early_stop) && d.n_train >= 20) {
+    const r2 = rng((s.seed || 0) * 7907 + 11), order = Array.from({ length: d.n_train }, (_, i) => i);
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r2() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    const nv = Math.max(2, Math.round(d.n_train * 0.1));
+    vIdx = order.slice(0, nv);
+    const vi = tf.tensor1d(vIdx, "int32"), ti = tf.tensor1d(order.slice(nv), "int32");
+    [Xv, yv, Xfit, yfit] = [tf.gather(Ftr, vi), tf.gather(ytr, vi), tf.gather(Ftr, ti), tf.gather(ytr, ti)];
+    vi.dispose(); ti.dispose();
+  }
+  const bs = Math.max(1, s.batch_size || 32), n = Xfit.shape[0];
+  let done = 0, bestKey = Infinity, bestEpoch = null, since = 0, early = false, bestState = null;
+  const dropBest = () => { if (bestState) Object.values(bestState).forEach((t) => t.dispose()); bestState = null; };
   net.start = head;
   try {
     for (let epoch = 1; epoch <= (s.epochs || 30); epoch++) {
@@ -915,13 +930,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
         const pending = [];
         const loss = tf.tidy(() => {
           const ii = tf.tensor1d(idx, "int32");
-          const xb = tf.gather(Ftr, ii), yb = tf.gather(ytr, ii);
-          return opt.minimize(() => {
-            const out = net.forward(xb, true, pending);
-            return det ? detLoss(out, yb, det.grid, det.per_cell)
-              : seg ? tf.losses.softmaxCrossEntropy(yb, out.reshape([-1, seg.n_cls, seg.length]).transpose([0, 2, 1]))   // 시점마다
-              : reg ? tf.losses.meanSquaredError(yb, out) : tf.losses.softmaxCrossEntropy(yb, out);
-          }, true, net.trainable);
+          const xb = tf.gather(Xfit, ii), yb = tf.gather(yfit, ii);
+          return opt.minimize(() => lossOf(net.forward(xb, true, pending), yb), true, net.trainable);
         });
         for (const [buf, val] of pending) {
           if (val) { buf.assign(val); val.dispose(); } else tf.tidy(() => buf.assign(buf.add(tf.scalar(1, "int32"))));   // 정수(int32) 그대로 +1 (숫자 1을 더하면 실수가 됨)
@@ -933,10 +943,25 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       }
       const out = back(net.predict(Fte));
       done = epoch;
-      const stop = onEpoch && onEpoch({ epoch, loss: lossSum / Math.max(1, nb), test_metric: score(out, "test") });
+      let valLoss = null;
+      if (Xv) {                                               // 검증 손실 (평가 모드)
+        const vo = tf.tidy(() => net.forward(Xv, false));
+        valLoss = tf.tidy(() => lossOf(vo, yv).dataSync()[0]);
+        const key = det ? -detMetric(await vo.data(), vIdx.map((i) => det.train[i]), det) : valLoss;
+        vo.dispose();
+        if (key < bestKey) {
+          bestKey = key; bestEpoch = epoch; since = 0;
+          if (s.keep_best) { dropBest(); bestState = Object.fromEntries(Object.entries(net.P).map(([k, v]) => [k, tf.clone(v)])); }
+        } else since++;
+      }
+      const p = { epoch, loss: lossSum / Math.max(1, nb), test_metric: score(out, "test") };
+      if (valLoss !== null) Object.assign(p, { val_loss: valLoss, best_epoch: bestEpoch });
+      const stop = onEpoch && onEpoch(p);
       if (stop || (isCancelled && isCancelled())) break;
+      if (s.early_stop && Xv && since >= s.early_stop) { early = true; break; }
       await yieldNow();
     }
+    if (bestState) { for (const [k, v] of Object.entries(bestState)) net.P[k].assign(v); dropBest(); }   // 가장 좋았던 epoch로
     if (reg) {                                              // 정규화한 정답으로 배운 출력층에 되돌림을 접어 넣음 (원래 단위로 냄)
       const last = plan.steps.find((st) => st.name === plan.out);
       const kk = last.key + (last.in_shape.length >= 2 ? ".1" : "");
@@ -952,7 +977,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     const out = te.out, outTr = tr.out;
     const r = { epochs_done: done, test_metric: score(out, "test"),
       metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
-      train_metric: score(outTr, "train") };   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+      train_metric: score(outTr, "train"),   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+      best_epoch: bestEpoch, early_stopped: early, n_val: vIdx ? vIdx.length : 0 };
     if (!te.ok || !tr.ok)
       r.warnings.push({ message: "학습 중 이 브라우저의 GPU 계산이 불안정했습니다. 아래 결과는 CPU로 다시 계산한 값이지만, 학습이 덜 됐을 수 있습니다",
         hint: "페이지를 새로 고친 뒤 다시 학습해 보세요. 계속되면 다른 브라우저(크롬·엣지)를 써 보세요" });
@@ -966,6 +992,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     return { net, result: r };
   } finally {
     net.start = null;
+    dropBest();
+    if (Xv) [Xv, yv, Xfit, yfit].forEach((t) => t.dispose());
     [Xtr, Xte, ytr].forEach((t) => t.dispose());
     if (head) [Ftr, Fte].forEach((t) => t.dispose());
     opt.dispose();
