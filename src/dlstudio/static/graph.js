@@ -1330,7 +1330,7 @@ function mount(els, opts) {
       `<label>세로 <input type="number" data-size="h" value="${esc(Math.round(boxes[0].h))}" min="${SIZE_MIN[1]}" max="${SIZE_MAX[1]}" step="5"></label>` +
       `<button data-a="size-reset">기본 크기로</button></div><span class="muted">고른 상자 오른쪽 아래 네모를 끌어도 됨</span></details>`;
   }
-  let openCat = "conv", search = "";
+  let openCat = null, search = "";                     // 처음에는 모든 범주를 접어 둠
   function packNote(p, kind) {
     if (kind === "image" && !p.ranks.includes(3)) return "줄(시계열) 모양에 씀 — 그림은 ToSequence 뒤에";
     if (kind !== "image" && !p.ranks.includes(2) && !p.ranks.includes(1)) return "그림 모양에 씀";
