@@ -202,7 +202,7 @@ function go(step, fromHistory = false) {
   document.querySelectorAll("main > .panel").forEach((el) => (el.hidden = el.id !== "step-" + step));
   document.querySelectorAll(".step").forEach((b) => b.classList.toggle("active", b.dataset.step === step));
   renderEmpty();
-  if (step === "model" && st.summary) ensureEditor();       // 데이터가 없으면 편집기 대신 안내 (모양을 정할 수 없음)
+  if (step === "model" && st.summary) { ensureEditor(); if (st.fitPending) fitSoon(); }   // 데이터가 없으면 편집기 대신 안내 (모양을 정할 수 없음)
   if (step === "predict") renderPredictStep();
   window.scrollTo(0, 0);
   const mainEl = document.querySelector("main");          // 사이드바 틀에서는 main이 스크롤됨
@@ -362,7 +362,7 @@ async function chooseTemplate(fam, sub, tpl) {
   const subChanged = st.sub !== sub;
   st.fam = fam; st.sub = sub; st.tpl = tpl;
   if (st.ed) setGraph(tpl.graph);
-  else st.pendingGraph = tpl.graph;
+  else { st.pendingGraph = tpl.graph; st.fitPending = true; }
   renderTask();
   renderDataGuide();
   renderTemplateButtons();
@@ -685,6 +685,13 @@ function setGraph(g) {
   st.graph = JSON.parse(JSON.stringify(g));
   st.ed.set(st.graph);
   scheduleCheck();
+  fitSoon();
+}
+// 모델을 통째로 바꾸면(대표 모델·프로젝트 열기) 처음에는 전체 보기. 판이 보일 때 맞춤 (안 보이면 모델 화면을 열 때)
+function fitSoon() {
+  st.fitPending = true;
+  if (!st.ed || $("step-model").hidden || !$("canvas").clientWidth) return;
+  requestAnimationFrame(() => { if (st.fitPending && st.ed) { st.ed.zoomFit(); st.fitPending = false; } });
 }
 function scheduleCheck() {
   st.checkSeq++;                                         // 바뀌기 전 그래프의 검사 결과가 늦게 와도 그리지 않음
