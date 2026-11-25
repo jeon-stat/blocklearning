@@ -84,6 +84,7 @@ def extra_cases():
         case("cbam2d", "i", [("cbam", {"ratio": 2, "kernel": 7})]),
         case("spatial_attn2d", "i", [("spatial_attn", {"kernel": 5})]),
         case("mha", "s", [("mha", {"heads": 2})]),
+        case("mha_long", "s", [("mha", {"heads": 2})], L=140),          # 어텐션 지도 줄이기 (64×128)
         case("mha_causal_rope", "s", [("mha", {"heads": 2, "causal": True, "pos": "rope"})]),
         case("mha2d", "i", [("mha", {"heads": 4})]),
         case("linear_attn", "s", [("linear_attn", {"heads": 2})]),

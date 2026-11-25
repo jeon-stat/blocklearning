@@ -12,7 +12,8 @@ for (const c of cases) {
   const x = tf.tensor(c.x.data, c.x.shape);
   const r = { params: net.numParams() };
   r.y = Array.from(tf.tidy(() => net.forward(x, false)).dataSync());
-  const tr = net.trace(x.slice(0, 1));
+  r.attn = {};
+  const tr = net.trace(x.slice(0, 1), r.attn);
   r.trace = Object.fromEntries(Object.entries(tr).map(([k, v]) => [k, v.flat(Infinity)]));
   if (c.grad) {                                          // 학습 모드(BatchNorm은 묶음 통계) 교차 엔트로피의 기울기
     const y = tf.oneHot(tf.tensor1d(c.grad.labels, "int32"), c.plan.n_out).toFloat();

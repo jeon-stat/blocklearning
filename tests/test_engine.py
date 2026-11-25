@@ -42,7 +42,8 @@ def _fixture(case, seed=1):
     state = {k: {"shape": list(v.shape), "data": v.detach().numpy().ravel().tolist()} for k, v in net.state_dict().items()}
     fx = {"name": name, "plan": codegen.plan_dict(g, L, n_out, image), "state": state,
           "x": {"shape": list(x.shape), "data": x.numpy().ravel().tolist()}}
-    exp = {"y": y, "trace": tr, "params": sum(p.numel() for p in net.parameters())}
+    from dlstudio.analysis import attention
+    exp = {"y": y, "trace": tr, "params": sum(p.numel() for p in net.parameters()), "attn": attention(net, x[0].numpy())}
     from dlstudio.nn_extra import RANDOM_MODULES
     has_dropout = any(isinstance(m, (torch.nn.modules.dropout._DropoutNd,) + RANDOM_MODULES) for m in net.modules())
     if not has_dropout:                                     # 학습 모드: 묶음 통계 BatchNorm, 교차 엔트로피 기울기
@@ -82,6 +83,12 @@ def test_engine_matches_torch(results, name):
     for k, v in e["trace"].items():                          # 샘플 따라가기 값 (노드 id마다)
         assert k in g["trace"], (name, k)
         assert np.allclose(g["trace"][k], v, atol=2e-4, rtol=1e-3), (name, k)
+    assert sorted(g["attn"]) == sorted(e["attn"]), name                # 어텐션 지도 (샘플 따라가기)
+    for k, a in e["attn"].items():
+        b = g["attn"][k]
+        assert (b["q"], b["k"]) == (a["q"], a["k"]), (name, k)
+        for f in ("map", "mean", "first"):
+            assert np.allclose(b[f], a[f], atol=2e-4), (name, k, f)
     if "grads" in e:
         assert abs(g["loss"] - e["loss"]) < 1e-4 * max(1, abs(e["loss"])), name
         for k, v in e["grads"].items():

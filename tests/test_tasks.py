@@ -64,7 +64,7 @@ def test_every_template_checks_and_converts_on_its_example(fam, sub, t):
 def test_image_task_listed():
     fam, sub, t = find("classification", "cls_img", "cnn2d")
     assert sub["input"] == "image" and sub["example_data"][0][0] == "surface"
-    assert [x["id"] for x in sub["templates"]] == ["cnn2d", "lenet", "resnet2d"]
+    assert [x["id"] for x in sub["templates"]] == ["cnn2d", "lenet", "resnet2d", "cnn_transformer", "vit"]
 
 
 @pytest.mark.parametrize("kind", ["surface", "pneumonia", "digits"])

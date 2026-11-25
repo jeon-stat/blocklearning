@@ -921,6 +921,67 @@ function valuePic(v, b, w = 600) {                     // 층 하나의 값 그�
 }
 const shapeOf = (v) => (Array.isArray(v) ? [v.length].concat(shapeOf(v[0]) || []) : null);
 
+// ------------------------------------------------------------ 어텐션 열지도 (샘플 따라가기)
+// at = {q, k, map, mean, first}: 질문 위치 q개 × 본 위치 k개의 softmax 가중치(head 평균). 입력 위에 '어디를 봤나'를 겹쳐 그림
+const heat = (t) => `rgba(239,68,68,${(0.08 + 0.72 * t).toFixed(3)})`;      // 0–1 → 빨강 진하기
+function attnFocus(at, graph) {                         // 무엇을 보여 줄지: CLS 자리가 본 곳 · 점수 가중치 · 모든 위치의 평균
+  const cls = (graph.nodes || []).some((n) => n.type === "cls_token");
+  if (at.q === 1) return { v: at.first, what: "위치마다 점수(softmax) — 클수록 더 많이 반영" };
+  if (cls && at.k > 1) return { v: at.first.slice(1), what: "맨 앞 요약 자리(CLS)가 본 곳" };
+  return { v: at.mean, what: "위치마다 받은 주의 (모든 위치가 본 정도의 평균)" };
+}
+function gridOf(n, H, W) {                              // 토큰 n개 → 그림 비율에 맞는 격자 (gh × gw)
+  for (const d of [0, -1, 1, -2, 2]) {
+    const gh = Math.round(Math.sqrt((n * H) / W)) + d;
+    if (gh >= 1 && n % gh === 0) return [gh, n / gh];
+  }
+  return null;
+}
+function attnOverlay(focus, input) {                    // 입력(그림·신호·표) 위에 받은 주의를 겹침
+  const v = focus, n = v.length, hi = Math.max(...v) || 1, im = st.summary.image;
+  if (im) {
+    const [H, W] = im, g = gridOf(n, H, W);
+    if (g) {
+      const [gh, gw] = g, px = 180;
+      let s = `<svg viewBox="0 0 ${W} ${H}" width="${px}" height="${Math.round((px * H) / W)}" class="img">` +
+        `<image href="${grayURL(input, H, W)}" width="${W}" height="${H}" preserveAspectRatio="none" style="image-rendering:pixelated"/>`;
+      for (let i = 0; i < gh; i++) for (let j = 0; j < gw; j++)
+        s += `<rect x="${(j * W) / gw}" y="${(i * H) / gh}" width="${W / gw}" height="${H / gh}" fill="${heat(v[i * gw + j] / hi)}"><title>${(v[i * gw + j] * 100).toFixed(1)}%</title></rect>`;
+      return s + `</svg>`;
+    }
+  }
+  const feats = st.summary.features;
+  if (!im && inputKind() === "tabular" && feats && feats.length === n)        // 표: 열마다 가로 막대 (열 이름이 길어도 겹치지 않게)
+    return `<table class="attn-cols">${v.map((x, j) => `<tr><td>${esc(feats[j])}</td><td><span style="width:${Math.max(1, Math.round((x / hi) * 160))}px;background:${heat(x / hi)}"></span></td><td>${(x * 100).toFixed(1)}%</td></tr>`).join("")}</table>`;
+  if (!im && !Array.isArray(input[0]) && input.length >= n) {          // 신호: 토큰 하나가 신호의 같은 길이 구간을 맡는다고 보고 배경에 칠함
+    const w = 600, h = 70, bw = (w - 4) / n;
+    let s = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`;
+    v.forEach((x, j) => (s += `<rect x="${(2 + j * bw).toFixed(2)}" y="0" width="${(bw + 0.3).toFixed(2)}" height="${h}" fill="${heat(x / hi)}"><title>${j}번 위치 ${(x * 100).toFixed(1)}%</title></rect>`));
+    return s + `<polyline fill="none" stroke="#1f2937" stroke-width="1.3" points="${pathOf(input, 2, 2, w - 4, h - 4)}"/></svg>`;
+  }
+  return svgBars(v, Math.min(600, n * 14 + 10), 60, null, "#ef4444");
+}
+function attnMatrix(m) {                                // 질문 위치(세로) × 본 위치(가로) 지도 → PNG
+  const R = m.length, C = m[0].length, c = document.createElement("canvas");
+  c.width = C; c.height = R;
+  const g = c.getContext("2d"), im = g.createImageData(C, R);
+  let hi = 0;
+  for (const row of m) for (const x of row) if (x > hi) hi = x;
+  for (let i = 0; i < R; i++) for (let j = 0; j < C; j++) {
+    const t = m[i][j] / (hi || 1), o = (i * C + j) * 4;
+    im.data[o] = 255 - Math.round(176 * t); im.data[o + 1] = 255 - Math.round(185 * t); im.data[o + 2] = 255 - Math.round(26 * t); im.data[o + 3] = 255;
+  }
+  g.putImageData(im, 0, 0);
+  const sc = Math.max(1, Math.floor(160 / Math.max(R, C)));
+  return `<img src="${c.toDataURL()}" width="${C * sc}" height="${R * sc}" style="image-rendering:pixelated;border:1px solid #e5e7eb" alt="어텐션 지도">`;
+}
+function attnPic(at, graph, input) {
+  const f = attnFocus(at, graph);
+  let html = `<div class="attn"><div><div class="shape">어디를 봤나 · ${esc(f.what)}</div>${attnOverlay(f.v, input)}</div>`;
+  if (at.q > 1) html += `<div><div class="shape">어텐션 지도 · 세로 질문 위치 ${at.q}개 × 가로 본 위치 ${at.k}개${at.q > at.map.length || at.k > at.map[0].length ? " (줄여 그림)" : ""}</div>${attnMatrix(at.map)}</div>`;
+  return html + `</div>`;
+}
+
 // ------------------------------------------------------------ ③ 블록 미리보기 (누를 때만)
 async function runPreview() {
   const id = st.previewNode, f = id && F.findNode(st.graph, id);
@@ -1099,7 +1160,9 @@ $("btn-predict-download").onclick = () => {
 };
 
 async function showSample() {
-  const i = Number($("sample-index").value) || 0;
+  const n = st.summary ? st.summary.n_test : 0;               // 데이터를 바꾸면 예전 번호가 범위를 넘을 수 있음 → 맞춤
+  const i = Math.max(0, Math.min(Number($("sample-index").value) || 0, n - 1));
+  $("sample-index").value = i;
   try {
     const a = await api("/api/activations", { sample_index: i });
     const num = (v) => (typeof v === "number" ? Number(v.toPrecision(4)) : v);
@@ -1114,7 +1177,16 @@ async function showSample() {
     for (const [id, b, depth] of orderItems(a.order, graph)) {
       const v = a.values[id];
       if (!v || b.type === "input") continue;
-      html += `<div class="fs" style="margin-left:${depth * 12}px"><div class="name">${esc(blockName(b))}</div>${valuePic(v, b)}</div>`;
+      const at = a.attention && a.attention[id];
+      html += `<div class="fs" style="margin-left:${depth * 12}px"><div class="name">${esc(blockName(b))}</div>${valuePic(v, b)}` +
+        `${at ? attnPic(at, graph, a.input) : ""}</div>`;
+    }
+    const ids = Object.keys(a.attention || {});
+    if (ids.length) {                                       // 맨 위에 마지막 어텐션 블록의 '어디를 봤나'를 먼저
+      const last = orderItems(a.order, graph).map(([id]) => id).filter((id) => ids.includes(id)).pop() || ids[ids.length - 1];
+      const f = attnFocus(a.attention[last], graph);
+      html = `<div class="fs attn-top"><div class="name">어텐션 열지도 — 마지막 어텐션 블록이 어디를 봤나</div>` +
+        `${attnOverlay(f.v, a.input)}<div class="shape">${esc(f.what)}. 빨갈수록 많이 봄. 블록마다의 지도는 아래 각 블록에 있습니다.</div></div>` + html;
     }
     $("sample-flow").innerHTML = html;
   } catch (e) { showError(e); }

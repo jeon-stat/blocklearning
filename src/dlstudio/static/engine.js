@@ -253,13 +253,18 @@ function rope(x) {                                     // (N, heads, T, d): 짝 
   const [x1, x2] = tf.unstack(x.reshape([n, h, T, d / 2, 2]), 4);
   return tf.stack([x1.mul(cos).sub(x2.mul(sin)), x1.mul(sin).add(x2.mul(cos))], 4).reshape([n, h, T, d]);
 }
+// 샘플 따라가기의 어텐션 지도: trace(x, attn)가 도는 동안만 블록마다 softmax 가중치(head 평균)를 받아 둠
+let ATT = null, ATT_NODE = null;
+const keepAttn = (w) => { if (ATT && ATT_NODE) ATT[ATT_NODE] = w.slice([0], [1]).squeeze([0]); };   // 배치 첫 샘플
 function attend(q, k, v, causal) {                    // (N, h, T, d) → softmax(QKᵀ/√d)V
   let att = tf.matMul(q, k, false, true).mul(1 / Math.sqrt(q.shape[3]));
   if (causal) {
     const T = att.shape[2], m = tf.linalg.bandPart(tf.ones([T, T]), -1, 0);     // 아래 삼각(자기 포함) = 1
     att = att.mul(m).add(m.sub(1).mul(1e9));                                       // 미래 = −1e9 (PyTorch masked_fill과 같은 값)
   }
-  return tf.matMul(tf.softmax(att), v);
+  const w = tf.softmax(att);
+  if (ATT) keepAttn(w.mean(1));
+  return tf.matMul(w, v);
 }
 function qkv(x, P, k, heads) {
   const s = toSeq(x), z = linear(s.reshape([-1, s.shape[2]]), P[k + ".qkv.weight"], P[k + ".qkv.bias"]).reshape([s.shape[0], s.shape[1], -1]);
@@ -360,7 +365,9 @@ const EXTRA = {
   first_step: (x) => x.slice([0, 0, 0], [-1, -1, 1]).squeeze([2]),
   attn_pool: (x, st, P, k) => {
     const s = spatialOf(x), sc = linearCh(s, P[k + ".score.weight"], P[k + ".score.bias"]).squeeze([1]);   // (N, T)
-    return s.mul(tf.softmax(sc).expandDims(1)).sum(-1);
+    const w = tf.softmax(sc);
+    if (ATT) keepAttn(w.expandDims(1));
+    return s.mul(w.expandDims(1)).sum(-1);
   },
   upsample: (x, st) => {
     const sp = x.shape.slice(2);
@@ -405,6 +412,7 @@ const EXTRA = {
     const s = toSeq(x), L = (n) => linearCh(tf.transpose(s, [0, 2, 1]), P[k + `.${n}.weight`], P[k + `.${n}.bias`]);   // (N, h, T)
     const th = L("theta"), ph = L("phi"), g = L("g");
     const att = tf.softmax(tf.matMul(th, ph, true, false));                     // (N, T, T)
+    if (ATT) keepAttn(att);
     const y = tf.matMul(att, g, false, true);                                    // (N, T, h)
     const o = linear(y.reshape([-1, y.shape[2]]), P[k + ".out.weight"], P[k + ".out.bias"]).reshape([y.shape[0], y.shape[1], -1]);
     return x.add(fromSeq(o, x.shape));
@@ -548,6 +556,7 @@ class Net {
   forward(x, training = false, pending = [], record = null) {
     const vals = { x: this.kind === "rnn" ? tf.transpose(x, [0, 2, 1]) : x };   // 순환 모델 입력 (N, L, 1) → 층들이 쓰는 (N, 1, L)
     for (const st of this.plan.steps) {
+      ATT_NODE = st.node;
       const y = layer(st, st.inputs.map((n) => vals[n]), this.P, training, pending);
       vals[st.name] = y;
       if (record) record[st.node] = y;
@@ -571,12 +580,15 @@ class Net {
     return flat;
   }
 
-  trace(x1) {                                         // 샘플 하나 → 노드 id마다 값 (배치 차원 뺀 중첩 배열)
+  trace(x1, attn = null) {                            // 샘플 하나 → 노드 id마다 값 (배치 차원 뺀 중첩 배열). attn이 있으면 어텐션 지도도
     return tf.tidy(() => {
       const rec = {};
-      this.forward(x1, false, [], rec);
+      const got = attn ? {} : null;
+      ATT = got;
+      try { this.forward(x1, false, [], rec); } finally { ATT = null; ATT_NODE = null; }
       const out = {};
       for (const [k, v] of Object.entries(rec)) out[k] = v.squeeze([0]).arraySync();
+      if (attn) for (const [k, v] of Object.entries(got)) attn[k] = attnView(v.arraySync());
       return out;
     });
   }
@@ -838,6 +850,14 @@ function same(a, b) {
 }
 
 // 샘플 따라가기 값: (C, L)이 200점보다 길면 고르게 200점, 소수 다섯째 자리 (analysis._thin과 같음)
+// 어텐션 가중치 (질문 T, 본 위치 S) → 화면용 (analysis.attn_view와 같은 꼴): 지도(줄여서)·위치마다 평균·첫 자리(CLS)가 본 곳
+function attnView(a) {
+  const T = a.length, S = a[0].length, r5 = (v) => Math.round(v * 1e5) / 1e5;
+  const pick = (n, m) => (n > m ? Array.from({ length: m }, (_, i) => Math.round((i * (n - 1)) / (m - 1))) : Array.from({ length: n }, (_, i) => i));
+  const rows = pick(T, 64), cols = pick(S, 128);
+  const mean = Array.from({ length: S }, (_, j) => r5(a.reduce((t, row) => t + row[j], 0) / T));
+  return { q: T, k: S, map: rows.map((i) => cols.map((j) => r5(a[i][j]))), mean, first: a[0].map(r5) };
+}
 function thin(v) {
   const r5 = (x) => Math.round(x * 1e5) / 1e5;
   if (!Array.isArray(v)) return r5(v);
@@ -848,7 +868,7 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, toInput, metric, confusion, regressionView, thin, onCpu, ACT, tf,
+const API = { Net, train, toInput, metric, confusion, regressionView, thin, attnView, onCpu, ACT, tf,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
 if (typeof window !== "undefined") window.DLEngine = API;

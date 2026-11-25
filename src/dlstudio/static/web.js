@@ -138,14 +138,15 @@ function activations(body) {
   const s = wrapped(W.mod.sample(W.studio, i));
   const d = getData(), net = W.trained.net;
   const x = E().toInput(Float32Array.from(s.x), 1, net.kind, d.length, d.image);
-  const values = Object.fromEntries(Object.entries(net.trace(x)).map(([k, v]) => [k, E().thin(v)]));   // 층마다 줄이기
+  const attention = {};
+  const values = Object.fromEntries(Object.entries(net.trace(x, attention)).map(([k, v]) => [k, E().thin(v)]));   // 층마다 줄이기
   const out = net.predict(x);
   x.dispose();
   let pred;
   if (d.task === "detection") pred = `상자 ${E().detDecode(out, 0, d.det, E().DET.show).length}개 찾음`;
   else if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; }
   else pred = out[0];
-  return { index: i, label: s.label, prediction: pred, input: s.input, values, order: s.order };
+  return { index: i, label: s.label, prediction: pred, input: s.input, values, attention, order: s.order };
 }
 
 // ------------------------------------------------------------ 코드·가중치·프로젝트 (내려받기)

@@ -738,3 +738,14 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .pitem[class*="p-"] { border-left-color: var(--cc); }
 .flow-svg .c-blue { fill: #e8f0fe; stroke: #2563eb; } .flow-svg .c-amber { fill: #fef3e2; stroke: #d97706; }
 .flow-svg .c-pink { fill: #fdeef4; stroke: #db2777; }
+
+/* 어텐션 열지도 (샘플 따라가기) */
+.attn { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; margin-top: 6px; padding: 6px 8px; background: #fef2f2; border-radius: 6px; }
+.attn svg, .attn img { max-width: 100%; height: auto; }
+.attn-top { border: 1px solid #fecaca; border-radius: 8px; padding: 8px; background: #fff7f7; }
+.attn-top svg { max-width: 100%; height: auto; }
+.attn-cols { border-collapse: collapse; font-size: 12px; }
+.attn-cols td { padding: 1px 6px; white-space: nowrap; }
+.attn-cols td:first-child { text-align: right; color: #374151; }
+.attn-cols td:last-child { color: #6b7280; font-variant-numeric: tabular-nums; }
+.attn-cols span { display: inline-block; height: 10px; border-radius: 2px; vertical-align: middle; }

@@ -106,6 +106,45 @@ T_DET_RES = {"id": "det_res", "name": "깊은 탐지 모델",
                         _res(_c2(64), BN, P2), OUT]}
 
 
+# Transformer 계열: 위치(토큰)마다 값 c개인 줄 (c, T)에 Encoder 블록을 쌓음.
+# Encoder 블록 = LayerNorm → Self-attention + 지름길 → LayerNorm → FFN(4배·GELU, 1×1) + 지름길 (Pre-LN, ViT·GPT식)
+LN = {"type": "layernorm"}
+GELU = {"type": "act", "kind": "gelu"}
+
+
+def _encoder(c, heads):
+    return [_res(LN, {"type": "mha", "heads": heads}), _res(LN, _conv(c * 2, 1), GELU, _conv(c, 1))]
+
+
+T_TRANSFORMER = {"id": "transformer", "name": "Transformer",
+                 "desc": "필터로 짧은 모양을 찾아 줄인 뒤, 위치마다 '다른 어느 위치를 볼지'를 스스로 정하는 Self-attention을 두 번 "
+                         "쌓은 모델. 학습 뒤 샘플 따라가기에서 어디를 봤는지(어텐션 열지도)가 보임",
+                 "when": "먼 위치끼리의 관계가 중요할 때. 데이터가 적으면 CNN보다 덜 배울 수 있음",
+                 "blocks": [_conv(32, 5), P2, {"type": "max_pool", "size": 2}, {"type": "pos_enc", "mode": "sin"},
+                            *_encoder(32, 4), *_encoder(32, 4), LN, GAP, OUT]}
+
+T_FT_TRANSFORMER = {"id": "ft_transformer", "name": "FT-Transformer식",
+                    "desc": "열 하나를 토큰 하나로 보고(값 → 16개 값, 열마다 다른 위치 값을 더함), 열끼리 서로 보며 섞는 "
+                            "Self-attention을 쌓은 표 데이터 Transformer. 어느 열이 어느 열을 봤는지가 보임",
+                    "when": "열끼리 얽힌 관계가 중요할 때. MLP보다 느리고, 행이 적으면 MLP가 나을 수 있음",
+                    "blocks": [{"type": "reshape", "channels": 1}, _conv(16, 1), {"type": "pos_enc", "mode": "learned"},
+                               *_encoder(16, 2), *_encoder(16, 2), LN, GAP, OUT]}
+
+T_VIT = {"id": "vit", "name": "ViT (Vision Transformer)",
+         "desc": "그림을 4×4 조각으로 잘라 조각마다 토큰으로 만들고, 맨 앞 요약 자리(CLS)와 함께 Self-attention을 쌓은 뒤 "
+                 "CLS 자리로 판단하는 모델. 요약 자리가 그림의 어느 조각을 봤는지가 보임",
+         "when": "Transformer를 그림에 써 보고 싶을 때. 작은 데이터에서는 CNN보다 정확도가 낮고 학습이 느림",
+         "blocks": [{"type": "patch_embed", "patch": 4, "dim": 32}, {"type": "cls_token"}, {"type": "pos_enc", "mode": "learned"},
+                    *_encoder(32, 4), *_encoder(32, 4), LN, {"type": "first_step"}, OUT]}
+
+T_HYBRID = {"id": "cnn_transformer", "name": "CNN + Transformer",
+            "desc": "CNN으로 그림을 줄여 특징 지도를 만든 뒤, 지도의 칸들을 한 줄(토큰)로 펴서 Self-attention으로 칸끼리 "
+                    "보게 하는 모델 (DETR·하이브리드 ViT식). 어느 칸을 봤는지가 보임",
+            "when": "ViT가 잘 안 배울 때. CNN이 먼저 모양을 찾아 줘서 작은 데이터에서도 무난",
+            "blocks": [_c2(16), P2, P2D, _c2(32), P2, P2D, {"type": "to_seq"}, {"type": "pos_enc", "mode": "learned"},
+                       *_encoder(32, 4), LN, GAP, OUT]}
+
+
 def _soon(id_, name, input_, examples_text, desc):
     return {"id": id_, "name": name, "input": input_, "available": False, "desc": desc,
             "examples_text": examples_text}
@@ -119,18 +158,18 @@ CATALOG = [
           "desc": "시간에 따라 측정한 신호 한 구간을 보고 종류를 맞힘",
           "examples_text": "심전도 정상·부정맥, 설비 진동 정상·결함, 센서 파형으로 공정 상태 판별",
           "example_data": [["ecg", "심전도 정상·이상 (의료)"], ["vibration", "설비 진동 정상·결함 (제조)"]],
-          "templates": [T_CNN, T_RESNET, T_INCEPTION, T_TCN, T_LSTM]},
+          "templates": [T_CNN, T_RESNET, T_INCEPTION, T_TCN, T_LSTM, T_TRANSFORMER]},
          {"id": "cls_tab", "name": "표 데이터 분류", "input": "tabular", "available": True, "task": "classification",
           "desc": "한 행(여러 측정값)을 보고 종류를 맞힘",
           "examples_text": "공정 조건으로 불량 판정, 검사 수치로 질환 여부 판별",
           "example_data": [["process_cls", "공정 조건 → 양품·불량 (제조)"]],
-          "templates": [T_MLP, T_DEEP_MLP]},
+          "templates": [T_MLP, T_DEEP_MLP, T_FT_TRANSFORMER]},
          {"id": "cls_img", "name": "이미지 분류", "input": "image", "available": True, "task": "classification",
           "desc": "흑백 그림 한 장을 보고 종류를 맞힘",
           "examples_text": "손글씨 숫자 읽기, 제품 사진으로 양품·불량 판정, 현미경 사진 분류",
           "example_data": [["surface", "금속 표면 정상·스크래치·얼룩·구멍 (제조, 32×32)"],
                            ["pneumonia", "흉부 X-ray 정상·폐렴 (의료, 28×28)"], ["digits", "손글씨 숫자 0–9 (8×8)"]],
-          "templates": [T_CNN2D, T_LENET, T_RESNET2D]},
+          "templates": [T_CNN2D, T_LENET, T_RESNET2D, T_HYBRID, T_VIT]},
      ]},
     {"id": "regression", "name": "회귀", "icon": "📈",
      "desc": "숫자 값(수율, 수명, 수치)을 예측합니다",
@@ -139,12 +178,12 @@ CATALOG = [
           "desc": "신호 한 구간을 보고 숫자 하나를 예측",
           "examples_text": "진동 신호로 남은 수명(RUL) 예측, 생체 신호로 수치 추정",
           "example_data": [["wear_rul", "진동 → 남은 수명 (제조)"]],
-          "templates": [T_CNN, T_TCN, T_LSTM]},
+          "templates": [T_CNN, T_TCN, T_LSTM, T_TRANSFORMER]},
          {"id": "reg_tab", "name": "표 데이터 회귀", "input": "tabular", "available": True, "task": "regression",
           "desc": "한 행(여러 측정값)을 보고 숫자 하나를 예측",
           "examples_text": "공정 조건으로 수율 예측, 검사 수치로 위험 점수 추정",
           "example_data": [["process_reg", "공정 조건 → 수율 (제조)"]],
-          "templates": [T_MLP]},
+          "templates": [T_MLP, T_FT_TRANSFORMER]},
          _soon("reg_multi", "여러 값 동시 예측", "tabular", "공정 조건으로 두께·강도·수율을 한 번에 예측",
                "숫자 여러 개를 한 모델로 예측"),
      ]},

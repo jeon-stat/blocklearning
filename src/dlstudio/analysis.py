@@ -40,3 +40,55 @@ def activations(model, x) -> dict:
         for h in hooks:
             h.remove()
     return {k: _thin(v[0].detach().cpu().numpy()) for k, v in seen.items()}
+
+
+ATTN_ROWS, ATTN_COLS = 64, 128      # 어텐션 지도 그림의 크기 상한 (질문 위치 × 본 위치)
+
+
+def attn_view(a: np.ndarray) -> dict:
+    """어텐션 가중치 (질문 T, 본 위치 S) → 화면용: 지도(줄여서)·위치마다 평균으로 받은 주의·첫 자리(CLS)가 본 곳."""
+    a = np.asarray(a, dtype=np.float64)
+    m = a
+    if m.shape[0] > ATTN_ROWS:
+        m = m[np.round(np.linspace(0, m.shape[0] - 1, ATTN_ROWS)).astype(int)]
+    if m.shape[1] > ATTN_COLS:
+        m = m[:, np.round(np.linspace(0, m.shape[1] - 1, ATTN_COLS)).astype(int)]
+    r = lambda v: np.round(v, 5).tolist()
+    return {"q": int(a.shape[0]), "k": int(a.shape[1]), "map": r(m), "mean": r(a.mean(0)), "first": r(a[0])}
+
+
+def attention(model, x) -> dict:
+    """샘플 하나를 넣어 어텐션 블록(MultiHeadAttention·CrossAttention·NonLocal·AttentionPool)마다 softmax 가중치
+    (head 평균) → {노드 id: attn_view}. 모듈 코드는 그대로 두고, 그 블록이 도는 동안만 torch.softmax의 결과를 받아 둠."""
+    import torch
+    from dlstudio import nn_extra as NX
+    kinds = (NX.MultiHeadAttention, NX.CrossAttention, NX.NonLocal, NX.AttentionPool)
+    mods = getattr(model, "block_modules", {}) or {}
+    cur, got = [None], {}
+    hooks = []
+    for k, m in mods.items():
+        for sub in m.modules():
+            if isinstance(sub, kinds):
+                hooks.append(sub.register_forward_pre_hook(lambda mod, i, k=k: cur.__setitem__(0, k)))
+                hooks.append(sub.register_forward_hook(lambda mod, i, o: cur.__setitem__(0, None)))
+    if not hooks:
+        return {}
+    real = torch.softmax
+
+    def soft(t, *a, **kw):
+        y = real(t, *a, **kw)
+        if cur[0] is not None:
+            w = y[0].detach().cpu().numpy()
+            got[cur[0]] = w.mean(0) if w.ndim == 3 else (w[None] if w.ndim == 1 else w)   # head 평균 · AttentionPool은 (1, S)
+        return y
+    try:
+        torch.softmax = soft
+        model.eval()
+        dtype = next(model.parameters()).dtype
+        with torch.no_grad():
+            model(torch.as_tensor(np.asarray(x)[None], dtype=dtype))
+    finally:
+        torch.softmax = real
+        for h in hooks:
+            h.remove()
+    return {k: attn_view(v) for k, v in got.items()}

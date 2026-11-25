@@ -47,21 +47,21 @@ python -m dlstudio          # 또는 dlstudio
 | ① 과제 | (고르지 않아도 됨: [과제는 나중에]로 ② 데이터부터 넣으면 데이터를 보고 분류·회귀와 시계열·표·이미지를 정해 과제·추천 모델을 고름, 시계열↔표는 한 번에 바꿀 수 있음) 하고 싶은 일부터 고름: 큰 틀(분류·회귀·객체 탐지·이상 탐지·예측·구간 분할) → 데이터 종류(시계열·표·이미지) → 대표 모델. 대표 모델마다 설명과 쓰는 때. 지금 쓸 수 있는 과제는 아래 표, 나머지는 "준비 중" |
 | ② 데이터 | CSV(한 행 = 샘플, 값 열 + 마지막 열 정답), 샘플마다 CSV 하나인 시계열 폴더(정답은 클래스별 하위 폴더 또는 `파일이름,정답` 표), 이미지 폴더(클래스별 하위 폴더, 흑백 8·16·28·32 크기로 맞춤, Pillow 필요) 또는 픽셀 CSV. 오류는 행·열 위치와 함께 쉬운 말로 |
 | ③ 모델 | 층을 선으로 잇는 그래프 편집기. 왼쪽 목록의 층(Keras 용어)을 끌어 선 위에 놓으면 끼워 넣고, 상자 아래 동그라미를 끌어 다른 상자에 놓으면 선을 이음(Add·Concat). 잔차·Repeat 묶음·갈래, 방향(위→아래·왼쪽→오른쪽)·줄바꿈, 되돌리기·복사·붙여넣기. 층 90여 개를 15개 범주로 (왼쪽 목록에서 범주를 누르면 펼침, 위 칸으로 찾기): 완전연결(Dense·GLU·SwiGLU) · 합성곱(Conv1D·Causal·Conv2D·Depthwise·Separable) · 줄이기·모으기(Avg·Max·GlobalAvg·GlobalMax·Adaptive·AttentionPool·First/LastTimestep) · 키우기(Upsample·PixelShuffle·ConvTranspose) · 순환(LSTM·GRU·SimpleRNN, 양방향·줄 그대로 내보내기, 어디에나) · 어텐션(SE·ECA·CBAM·Spatial·MultiHead·Causal·Cross·Linear·NonLocal) · Transformer 부품(PositionalEncoding sin·학습형, RoPE, PatchEmbedding, CLS token) · 정규화(BatchNorm·LayerNorm·RMSNorm·GroupNorm·InstanceNorm) · 활성화 15종(ReLU·GELU·SiLU·SELU·ReLU6·HardSwish·Softmax·PReLU 등) · 과적합 막기(Dropout·SpatialDropout·DropPath·GaussianNoise) · 합치기·나누기(Add·Concat·Multiply·Average·Maximum·Split) · 모양 바꾸기(Flatten·Reshape·Transpose·ToSequence·Crop·Pad) · 입력 변환(Embedding·Spectrogram·Mel·MFCC) · 증강(Flip·Rotation·Shift·Zoom·Scale·Stretch, 학습 때만) · **묶음** 14종(Conv–BN–ReLU, ResNet·Bottleneck·SE-ResNet, Inception, MobileNet, DenseNet, ConvNeXt, U-Net 한 단계, Transformer Encoder·Decoder, MLP-Mixer, ViT 입구, Residual MLP: 넣는 자리의 채널에 맞춰 만들어짐) · Repeat. 1D·2D 층은 들어오는 모양으로 가림 (그림도 ToSequence 뒤에는 어텐션·Conv1D, 시계열도 Spectrogram 뒤에는 Conv2D). 모든 층은 PyTorch·웹 엔진이 같은 값을 냄(시험으로 확인), PyTorch 코드로 내보내짐 (Keras 코드는 일부 층 빼고) 상자마다 지난 데이터 모양, 옆에 파라미터 수·크기. 안 되는 조립은 그 상자를 빨갛게 하고 이유·고칠 방법 표시 |
-| ④ 학습 | 이 PC에서 학습 (GPU 있으면 사용, Adam, 분류 교차 엔트로피·회귀 MSE·탐지 YOLO식 손실). 학습 곡선, 분류는 정확도·혼동 행렬·클래스별 재현율, 회귀는 R²·평균 오차(MAE)·"예측 vs 실제" 산점도, 탐지는 mAP@0.5·클래스별 AP·점수 50%에서 정밀도·재현율과 시험 그림 위 정답(점선)·찾은 상자(실선, 점수 슬라이더), 샘플 하나가 층을 지나는 모습. 회귀 정답은 정규화해 학습하고 출력층에서 되돌려, 모델은 원래 단위로 냄. **학습 기록**: 학습할 때마다 모델·설정·성적이 남고(최근 20번, 프로젝트에 저장), [이 모델로]로 그때 모델로 돌아감. 혼동 행렬 칸을 누르면 그 칸(틀린 샘플 등)의 샘플들을 봄 |
+| ④ 학습 | 이 PC에서 학습 (GPU 있으면 사용, Adam, 분류 교차 엔트로피·회귀 MSE·탐지 YOLO식 손실). 학습 곡선, 분류는 정확도·혼동 행렬·클래스별 재현율, 회귀는 R²·평균 오차(MAE)·"예측 vs 실제" 산점도, 탐지는 mAP@0.5·클래스별 AP·점수 50%에서 정밀도·재현율과 시험 그림 위 정답(점선)·찾은 상자(실선, 점수 슬라이더), 샘플 하나가 층을 지나는 모습(어텐션 블록이 있으면 **어텐션 열지도**: 그 샘플에서 어디를 봤는지를 그림·신호·표 위에 빨갛게 겹치고, 질문 위치 × 본 위치 지도도). 회귀 정답은 정규화해 학습하고 출력층에서 되돌려, 모델은 원래 단위로 냄. **학습 기록**: 학습할 때마다 모델·설정·성적이 남고(최근 20번, 프로젝트에 저장), [이 모델로]로 그때 모델로 돌아감. 혼동 행렬 칸을 누르면 그 칸(틀린 샘플 등)의 샘플들을 봄 |
 | ⑤ 예측 | 학습한 모델로 새 데이터를 예측(추론): 학습 때와 같은 모양의 CSV(정답 열은 있어도 없어도 됨), 그림 폴더, 시계열 폴더, 표 데이터는 값 직접 넣기. 같은 정규화를 해서 예측하고, 정답이 있으면 맞았는지 표시. 결과는 CSV로 내려받기 |
 
 웹 버전은 처음 열면 **내 프로젝트** 첫 화면에서 프로젝트를 고르거나 새로 시작합니다. ③ 모델에서 블록을 고르고 [미리보기]를 누르면 샘플 하나가 그 층을 지난 값과 모양을 봅니다 (누를 때만).
 
-지금 쓸 수 있는 과제와 대표 모델 (모두 ReLU, 예시 데이터에서 검사·학습까지 시험으로 확인):
+지금 쓸 수 있는 과제와 대표 모델 (CNN·RNN 계열은 ReLU, Transformer 계열은 GELU·LayerNorm, 예시 데이터에서 검사·학습까지 시험으로 확인):
 
 | 과제 | 예시 데이터 | 대표 모델 |
 |---|---|---|
-| 분류 · 시계열 | 심전도 정상·이상 (의료, 합성), 설비 진동 정상·결함 (제조, 합성) | 1D CNN, ResNet1D, InceptionTime, TCN, LSTM |
-| 분류 · 표 | 공정 조건 → 양품·불량 (제조, 합성) | MLP, 깊은 MLP |
-| 회귀 · 시계열 | 진동 → 남은 수명 (제조, 합성) | 1D CNN, TCN, LSTM |
-| 회귀 · 표 | 공정 조건 → 수율 (제조, 합성) | MLP |
+| 분류 · 시계열 | 심전도 정상·이상 (의료, 합성), 설비 진동 정상·결함 (제조, 합성) | 1D CNN, ResNet1D, InceptionTime, TCN, LSTM, Transformer |
+| 분류 · 표 | 공정 조건 → 양품·불량 (제조, 합성) | MLP, 깊은 MLP, FT-Transformer식 |
+| 회귀 · 시계열 | 진동 → 남은 수명 (제조, 합성) | 1D CNN, TCN, LSTM, Transformer |
+| 회귀 · 표 | 공정 조건 → 수율 (제조, 합성) | MLP, FT-Transformer식 |
 | 객체 탐지 · 이미지 | 부품 위치 찾기 — 원형·사각 64×64 (제조, 합성) | 작은 탐지 모델, 깊은 탐지 모델 |
-| 분류 · 이미지 | 금속 표면 결함 32×32 (합성) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/) 1,200장, CC BY 4.0, 진단용 아님) / 손글씨 숫자 8×8 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet |
+| 분류 · 이미지 | 금속 표면 결함 32×32 (합성) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/) 1,200장, CC BY 4.0, 진단용 아님) / 손글씨 숫자 8×8 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet, CNN + Transformer, ViT |
 
 이미지 예시 데이터의 출처·라이선스는 `src/dlstudio/data/*.SOURCE.txt`에 있습니다.
 

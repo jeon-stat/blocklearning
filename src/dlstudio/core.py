@@ -332,7 +332,7 @@ class Studio:
         return {"id": self.jobs.start("train", run)}
 
     def api_activations(self, b: dict) -> dict:
-        from dlstudio.analysis import activations
+        from dlstudio.analysis import activations, attention
         import torch
         d, m = self.need_data(), self.need_model()
         i = int(b.get("sample_index", 0))
@@ -349,7 +349,7 @@ class Studio:
             pred = d.classes[int(out.argmax())] if d.task == "classification" else float(out[0])
         order = check_graph(self.model_graph, d.length, d.n_out, image=d.image).order
         return {"index": i, "label": label, "prediction": pred, "input": np.round(d.raw(d.X_test[i]), 5).tolist(),
-                "values": activations(m, x), "order": order}
+                "values": activations(m, x), "attention": attention(m, x), "order": order}
 
     # ------------------------------------------------------------ 학습 기록
     def data_key(self) -> str:
