@@ -184,8 +184,14 @@ function localSetup() {
     const sel = $("device");
     if (!sel) return;
     const auto = sel.querySelector('option[value="auto"]'), gpu = sel.querySelector('option[value="cuda"]');
-    if (auto) auto.textContent = d.gpu ? `자동 (GPU: ${d.name})` : "자동 (CPU, GPU 없음)";
+    const gs = d.gpus || [], many = gs.length > 1;
+    const mem = (g) => (g.used_gb === null || g.used_gb === undefined ? "" : ` · ${g.used_gb}/${g.total_gb}GB 사용 중`);
+    if (auto) auto.textContent = d.gpu ? `자동 (GPU${many ? " " + d.auto : ""}: ${d.name})` : "자동 (CPU, GPU 없음)";
     if (gpu) gpu.disabled = !d.gpu;
+    if (gpu && many) {                                    // GPU가 여럿 (공용 서버): 번호마다 고르게
+      for (const g of gs) sel.add(new Option(`GPU ${g.index}: ${g.name}${mem(g)}`, `cuda:${g.index}`));
+      gpu.remove();
+    }
   }).catch(() => {});
 }
 

@@ -678,7 +678,7 @@ def test_upload_saves_inside_upload_dir(server, tmp_path):
 
 def test_device_info(server):
     code, d = _call(server, "/api/device")
-    assert code == 200 and set(d) == {"gpu", "name", "count", "remote"} and isinstance(d["gpu"], bool)
+    assert code == 200 and set(d) == {"gpu", "name", "count", "gpus", "auto", "remote"} and isinstance(d["gpu"], bool)
 
 
 def test_cli_guide_for_ssh_and_vscode():

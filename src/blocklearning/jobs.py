@@ -162,10 +162,20 @@ def confusion(pred: np.ndarray, y: np.ndarray, k: int) -> tuple:
 
 
 def _device(name: str):
+    """화면의 '장치' → torch 장치 이름 (None = CPU). 자동: GPU가 여럿이면 메모리를 가장 적게 쓰는 GPU."""
     import torch
+    if name in ("cpu", "", None):
+        return None
     if name == "auto":
-        return "cuda" if torch.cuda.is_available() else None
-    return None if name in ("cpu", "", None) else name
+        if not torch.cuda.is_available():
+            return None
+        from blocklearning.devices import gpus, least_used
+        return f"cuda:{least_used(gpus())}"
+    if name.startswith("cuda:"):
+        n = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if not name[5:].isdigit() or int(name[5:]) >= n:
+            raise ValueError(f"GPU {name[5:]}번이 없음 (이 컴퓨터의 GPU {n}개). 학습 화면의 '장치'에서 다시 고르세요")
+    return name
 
 
 def _fold_target_scale(net, mu, sd) -> None:
@@ -335,6 +345,8 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     C = getattr(data.length, "channels", 1)
     Xtr, Xte = to_model_input(kind, data.X_train, image=img, channels=C), to_model_input(kind, data.X_test, image=img, channels=C)
     dev = _device(settings.device)
+    if dev and dev.startswith("cuda:"):
+        torch.cuda.set_device(dev)             # 이 학습 스레드의 기본 GPU도 고른 GPU로 (0번 GPU에 메모리를 잡지 않게)
     Xte_t = torch.as_tensor(Xte, dtype=torch.float32, device=dev)
     done = []
     if data.task == "detection":
