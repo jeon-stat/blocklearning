@@ -1009,6 +1009,7 @@ async function pollJob(id, onTick) {
   }
 }
 function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성적 (0~100% 또는 R² 0~1), 오른쪽 축 = loss (가장 큰 값 기준)
+  const loss = progress.map((p) => p.loss), vloss = progress.map((p) => p.val_loss), hasVal = vloss.some((v) => v !== undefined && v !== null);
   const W = 560, H = 220, L = 46, R = 46, T = 30, B = 26, pw = W - L - R, ph = H - T - B;
   const n = progress.length, map = metricName === "map50", auc = metricName === "auc", recon = metricName === "recon";
   const acc = metricName !== "r2" && metricName !== "mean" && !auc && !recon;
@@ -1019,7 +1020,6 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
     s += `<line x1="${L}" y1="${yv(f)}" x2="${L + pw}" y2="${yv(f)}" stroke="#e3e6eb"/>` +
       `<text x="${L - 6}" y="${yv(f) + 4}" font-size="11" text-anchor="end" fill="#4f46e5">${acc ? f * 100 + "%" : recon ? Number((f * mmax).toPrecision(2)) : f}</text>`;
   }
-  const loss = progress.map((p) => p.loss), vloss = progress.map((p) => p.val_loss), hasVal = vloss.some((v) => v !== undefined && v !== null);
   const lmax = Math.max(0, ...loss, ...(hasVal ? vloss.filter((v) => v !== undefined && v !== null) : [])) || 1;
   s += `<text x="${L + pw + 6}" y="${yv(1) + 4}" font-size="11" fill="#f97316">${Number(lmax.toPrecision(2))}</text>` +
     `<text x="${L + pw + 6}" y="${yv(0) + 4}" font-size="11" fill="#f97316">0</text>`;
@@ -1041,10 +1041,16 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
       : `<text x="${L}" y="${H - 8}" font-size="11" fill="#6b7280">epoch 1</text>` +
         `<text x="${L + pw}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6b7280">${n}</text>`;
   }
-  s += `<line x1="${L}" y1="12" x2="${L + 18}" y2="12" stroke="#4f46e5" stroke-width="2"/>` +
-    `<text x="${L + 24}" y="16" font-size="12" fill="#4f46e5">시험 ${map ? "mAP@0.5 (왼쪽 축, 높을수록 좋음)" : auc ? "AUC (왼쪽 축, 1에 가까울수록 좋음)" : recon ? "복원 오차 (왼쪽 축, 낮을수록 좋음)" : acc ? "정확도 (왼쪽 축, 높을수록 좋음)" : metricName === "mean" ? "평균 (왼쪽 축, 1에 가까울수록 좋음)" : "R² (왼쪽 축, 1에 가까울수록 좋음)"}</text>` +
-    `<line x1="${L + 300}" y1="12" x2="${L + 318}" y2="12" stroke="#f97316" stroke-width="2"/>` +
-    `<text x="${L + 324}" y="16" font-size="12" fill="#f97316">loss (오른쪽 축, 낮을수록 좋음)</text>`;
+  const legend = [[`시험 ${map ? "mAP@0.5" : auc ? "AUC" : recon ? "복원 오차" : acc ? "정확도" : metricName === "mean" ? "평균" : "R²"}`, "#4f46e5", ""],
+    ["loss", "#f97316", ""]];
+  if (hasVal) legend.push(["검증 loss", "#f97316", "4 3"], ["가장 좋았던 epoch", "#16a34a", "v"]);
+  let lx = L;
+  for (const [text, color, dash] of legend) {                // 범례 한 줄: 선 모양 + 이름
+    s += dash === "v" ? `<line x1="${lx + 9}" y1="5" x2="${lx + 9}" y2="19" stroke="${color}" stroke-width="1.2" stroke-dasharray="3 3"/>`
+      : `<line x1="${lx}" y1="12" x2="${lx + 18}" y2="12" stroke="${color}" stroke-width="2"${dash ? ` stroke-dasharray="${dash}"` : ""}/>`;
+    s += `<text x="${lx + 24}" y="16" font-size="12" fill="${color}">${text}</text>`;
+    lx += 24 + [...text].reduce((w, c) => w + (c.charCodeAt(0) > 255 ? 12 : 7), 0) + 18;
+  }
   $("curve").innerHTML = s;
 }
 $("btn-train").onclick = async () => {
