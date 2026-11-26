@@ -411,26 +411,25 @@ function applySelection(sel) {                           // 저장된 선택(id)
 
 // ------------------------------------------------------------ ② 데이터
 const GUIDE = {
-  timeseries: { classification: "한 행 = 신호 한 구간 (시점마다 값이 한 열씩), 마지막 열 = 정답 클래스 이름 (예: 정상, 이상).",
-    regression: "한 행 = 신호 한 구간 (시점마다 값이 한 열씩), 마지막 열 = 맞힐 숫자 (예: 남은 수명)." },
-  tabular: { classification: "한 행 = 샘플 하나, 열 = 측정 항목 (온도, 압력 …), 마지막 열 = 정답 클래스 이름 (예: 양품, 불량).",
-    regression: "한 행 = 샘플 하나, 열 = 측정 항목 (온도, 압력 …), 마지막 열 = 맞힐 숫자 (예: 수율)." },
-  image: { classification: "폴더 안에 클래스마다 하위 폴더를 두고 그림(png·jpg·bmp)을 넣으세요. 예: 사진/양품/*.png, 사진/불량/*.png. 흑백으로 바꾸고 고른 크기로 맞춥니다." },
+  timeseries: { classification: "한 행 = 신호 한 구간, 열 = 시점마다의 값과 정답(클래스 이름).",
+    regression: "한 행 = 신호 한 구간, 열 = 시점마다의 값과 정답(숫자)." },
+  tabular: { classification: "한 행 = 샘플 하나, 열 = 측정 항목과 정답(클래스 이름).",
+    regression: "한 행 = 샘플 하나, 열 = 측정 항목과 정답(숫자)." },
+  image: { classification: "클래스마다 하위 폴더에 그림(png·jpg·bmp). 예: 사진/양품, 사진/불량." },
 };
-GUIDE.timeseries.forecast = "한 행 = 한 시점 (시간 순서대로), 열 = 측정 항목 (예: 시각, 온도, 전력). 맞힐 값 열의 지난 값들로 다음 값들을 예측합니다. 불러온 뒤 맞힐 열·입력 길이·예측 길이를 바꿀 수 있습니다.";
-GUIDE.timeseries.anomaly = "한 행 = 신호 한 구간 (시점마다 값이 한 열씩), 마지막 열 = 상태 (예: 정상, 결함). 정상만 학습하고 나머지는 이상으로 봅니다. 정상만 있어도 됩니다.";
-GUIDE.tabular.multi = "한 행 = 샘플 하나, 열 = 측정 항목과 정답들. 불러온 뒤 역할 표에서 정답 열 이름을 눌러 '정답'으로 바꾸면 (둘 이상) 정답마다 분류·숫자를 스스로 정합니다.";
-GUIDE.timeseries.segmentation = "한 행 = 한 시점 (시간 순서대로), 열 = 측정값들과 그 시점의 상태 (마지막 열). 같은 길이의 창으로 잘라 시점마다 상태를 맞힙니다. 불러온 뒤 역할 표에서 상태 열·창 길이를 바꿀 수 있습니다.";
-GUIDE.tabular.anomaly = "한 행 = 샘플 하나, 열 = 측정 항목, 마지막 열 = 상태 (예: 정상, 불량). 정상만 학습하고 나머지는 이상으로 봅니다. 정상만 있어도 됩니다.";
+GUIDE.timeseries.forecast = "한 행 = 한 시점 (시간 순서대로), 열 = 측정 항목.";
+GUIDE.timeseries.anomaly = "한 행 = 신호 한 구간, 열 = 시점마다의 값과 상태(정상·결함). 정상만 학습합니다.";
+GUIDE.tabular.multi = "한 행 = 샘플 하나, 열 = 측정 항목과 정답 여러 개.";
+GUIDE.timeseries.segmentation = "한 행 = 한 시점 (시간 순서대로), 열 = 측정값들과 그 시점의 상태.";
+GUIDE.tabular.anomaly = "한 행 = 샘플 하나, 열 = 측정 항목과 상태(정상·불량). 정상만 학습합니다.";
 function renderDataGuide() {
   const sub = st.sub;
   $("data-task-name").textContent = sub ? `${st.fam.name} · ${sub.name}` : "";
   const img = sub && sub.input === "image";
   $("data-guide").textContent = !sub || st.autoTask
-    ? "과제를 고르지 않아도 됩니다. CSV·그림 폴더·예시 데이터를 넣으면 분류인지 회귀인지, 시계열·표·이미지 중 무엇인지 보고 과제와 추천 모델을 정해 드립니다. CSV는 한 행 = 샘플 하나, 마지막 열 = 정답."
-    : img ? `이미지 폴더: ${GUIDE.image.classification} 픽셀 CSV(한 행 = 픽셀 값들 + 마지막 열 정답)도 됩니다. 처음이면 예시 데이터로 시작해 보세요.`
-    : sub.task === "segmentation" ? `CSV 파일: ${GUIDE.timeseries.segmentation} 처음이면 예시 데이터로 시작해 보세요.`
-    : `CSV 파일: ${GUIDE[sub.input][sub.task]} 첫 줄이 열 이름이면 그대로 씁니다. 처음이면 예시 데이터로 시작해 보세요.`;
+    ? "데이터를 넣으면 과제와 추천 모델을 정합니다."
+    : img ? `이미지 폴더: ${GUIDE.image.classification} 픽셀 CSV도 됩니다.`
+    : `CSV: ${GUIDE[sub.input][sub.task]}`;
   $("mine-title").hidden = $("mine-grid").hidden = false;
   const any = !sub || st.autoTask;                           // 과제 없이: 넣는 방법을 다 보임
   $("image-row").hidden = !img && !any;
@@ -444,8 +443,7 @@ function renderDataGuide() {
   renderLabelJobs();
   $("csv-format-body").innerHTML = csvFormat(any ? null : sub);
   if (sub && !st.autoTask) $("task").value = sub.task;
-  $("normalize-text").textContent = img ? "정규화 (픽셀 전체 평균 0, 표준편차 1)"
-    : inputKind() === "tabular" ? "정규화 (열마다 평균 0, 표준편차 1)" : "정규화 (시점별 평균 0, 표준편차 1)";
+  $("normalize-text").textContent = "정규화";
 }
 async function renderLabelJobs() {                      // 웹: 라벨링 페이지에서 만든 작업 (이 브라우저 보관함)
   if (!WEB || !window.DLStore || !DLStore.labels) return;
@@ -520,15 +518,13 @@ function renderExamples() {                             // 예시 카드: 이름
 function csvFormat(sub) {                                // CSV 모양 예시 (작은 표)
   if (sub && sub.task === "forecast") {
     const rows = [["시각", "온도", "전력"], ["2026-03-01 00:00", "21.4", "310.2"], ["2026-03-01 01:00", "21.1", "298.7"], ["…", "…", "…"]];
-    return `<p>한 행 = 한 시점 (시간 순서대로), 열 = 측정 항목. <b>맞힐 값 열</b>은 불러온 뒤 고릅니다 (처음엔 마지막 숫자 열).</p>` +
-      `<table class="tab"><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>` +
-      `<p class="muted">날짜·시각 열이 있으면 요일·시각을 함께 봅니다. 빈 칸은 앞뒤 값으로 메웁니다. 시험은 뒤쪽 ${Math.round((Number($("test-ratio").value) || 0.2) * 100)}% 구간.</p>`;
+    return `<table class="tab"><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>` +
+      `<p class="muted">날짜·시각 열이 있으면 요일·시각도 봅니다. 빈 칸은 앞뒤 값으로 메웁니다.</p>`;
   }
   if (sub && sub.task === "segmentation") {
     const rows = [["시각", "전류", "압력", "상태"], ["0.00", "0.46", "6.69", "대기"], ["0.01", "0.56", "6.68", "대기"], ["0.02", "1.83", "6.52", "동작"], ["…", "…", "…", "…"]];
-    return `<p>한 행 = 한 시점 (시간 순서대로), <b>마지막 열 = 그 시점의 상태</b>. 값 열이 여럿이면 채널이 됩니다.</p>` +
-      `<table class="tab"><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>` +
-      `<p class="muted">시각 같은 글자 열은 있어도 됩니다 (쓰지 않음). 빈 칸은 앞뒤 값으로 메웁니다.</p>`;
+    return `<table class="tab"><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>` +
+      `<p class="muted">값 열이 여럿이면 채널이 됩니다. 빈 칸은 앞뒤 값으로 메웁니다.</p>`;
   }
   const kind = sub ? sub.input : "timeseries", reg = sub && sub.task === "regression";
   const ex = {
@@ -539,10 +535,7 @@ function csvFormat(sub) {                                // CSV 모양 예시 (�
   }[kind] || [];
   const table = `<table class="tab"><tr>${ex[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>` +
     ex.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("") + `</table>`;
-  const what = { timeseries: "한 행 = 신호 한 구간, 열 = 시점마다의 값", tabular: "한 행 = 샘플 하나, 열 = 측정 항목",
-    image: "한 행 = 그림 하나, 열 = 픽셀 값 (28×28이면 784열). 그림 파일 폴더도 됩니다" }[kind];
-  return `<p>${esc(what)}, 정답 열(${reg ? "맞힐 숫자" : "정답 이름"}) 하나 이상. 어느 열이 정답인지는 파일을 고른 뒤 정합니다 (처음엔 마지막 열).</p>${table}` +
-    `<p class="muted">첫 줄(열 이름)은 있어도 없어도 됩니다. 엑셀에서는 [다른 이름으로 저장 → CSV UTF-8].</p>`;
+  return table;
 }
 $("example-btns").onclick = (e) => {
   const b = e.target.closest("[data-ex]");
@@ -744,7 +737,7 @@ function renderFcBox(s) {                               // 예측 데이터: 맞
   $("fc-cal-box").hidden = !fc.has_times;
   $("fc-cal").checked = fc.calendar.length > 0;
   $("fc-time-col").textContent = fc.time_column || "";
-  $("fc-note").textContent = `시험은 뒤쪽 구간 (시간 순서 그대로 나눠 미래를 미리 보지 않음). 학습 창 ${s.n_train}개 · 시험 창 ${s.n_test}개`;
+  $("fc-note").textContent = "";
 }
 $("btn-fc-reload").onclick = () => loadData({ forecast_reload: { column: $("fc-column").value, L: Number($("fc-L").value) || 0,
   H: Number($("fc-H").value) || 0, stride: Number($("fc-stride").value) || 0, calendar: $("fc-cal").checked } });
@@ -907,8 +900,7 @@ function renderConfusion(el, cm, recall, caption, pickable = false, classNames =
     h += `<tr><th>${esc(names[i])}</th>${row.map((v, j) => `<td class="${i === j ? "diag" : ""}"${pickable && v ? ` data-cell="${i},${j}" title="이 칸의 샘플 보기"` : ""}>${v}</td>`).join("")}` +
       `<td>${recall[i] === null ? "-" : pct(recall[i])}</td></tr>`;
   });
-  $(el).innerHTML = h + `</table><div class="cm-cap">${esc(caption)} · 재현율 = 실제 그 클래스 중 맞힌 비율 (결함·이상을 놓치지 않는지)` +
-    (pickable ? ` · <b>칸을 누르면 그 샘플들을 봅니다</b> (대각선 밖 = 틀린 샘플)` : "") + `</div>`;
+  $(el).innerHTML = h + `</table><div class="cm-cap">${esc(caption)}</div>`;
 }
 $("train-confusion").onclick = async (e) => {            // 혼동 행렬 칸 → 그 칸의 시험 샘플들
   const td = e.target.closest("[data-cell]");
@@ -922,7 +914,7 @@ $("train-confusion").onclick = async (e) => {            // 혼동 행렬 칸 �
     $("cm-pick").innerHTML = `<div class="cm-pick-head"><b>정답 '${esc(names[i])}' → 예측 '${esc(names[j])}'</b> ${i === j ? "(맞힌 샘플)" : "(틀린 샘플)"} ${r.indices.length}개` +
       (r.indices.length > r.items.length ? ` · 처음 ${r.items.length}개` : "") + ` <button class="x" data-close="1" aria-label="닫기">×</button></div>` +
       `<div class="cm-items">${r.items.map((it) => `<button data-idx="${it.index}" title="시험 샘플 ${it.index} 따라가 보기">${pic(it.input)}<span>#${it.index}</span></button>`).join("")}</div>` +
-      `<div class="muted">누르면 아래 '샘플 하나 따라가 보기'에서 그 샘플이 모델을 지나는 모습을 봅니다</div>`;
+      "";
   } catch (err) { showError(err); }
 };
 $("cm-pick").onclick = (e) => {
@@ -971,7 +963,7 @@ document.addEventListener("click", (e) => {                // 보기 설정: 바
 document.addEventListener("keydown", (e) => { const d = document.querySelector(".viewopt[open]"); if (e.key === "Escape" && d) d.open = false; });
 $("btn-autolayout").onclick = () => st.ed && st.ed.autoLayout();
 function wrapText() {                                    // 세로(위→아래)는 열바꿈, 가로는 줄바꿈
-  $("auto-wrap-text").textContent = $("flow-dir").value === "h" ? "자동 줄바꿈 (판을 넘으면 아래 줄로)" : "자동 열바꿈 (판을 넘으면 오른쪽 열로)";
+  $("auto-wrap-text").textContent = $("flow-dir").value === "h" ? "자동 줄바꿈" : "자동 열바꿈";
 }
 $("auto-wrap").onchange = () => {                        // 자동 줄바꿈: 판 폭(세로면 높이)을 넘으면 다음 줄로
   try { localStorage.setItem("dlstudio-auto-wrap", $("auto-wrap").checked ? "1" : "0"); } catch (e) { /* 저장 안 돼도 됨 */ }
@@ -1092,7 +1084,7 @@ $("btn-train").onclick = async () => {
       $("train-status").textContent = r.stopped ? `멈춤 (${r.epochs_done} epoch)` : "끝남";
       loadRuns();
       showMessage(`${r.stopped ? `학습 멈춤 (${r.epochs_done} epoch)` : "학습 끝남"}: 시험 ${metricText(r.metric_name, r.test_metric)}`,
-        "아래 결과와 '샘플 하나 따라가 보기'를 보세요", "", true);
+        "", "", true);
     } else if (j.state === "cancelled") $("train-status").textContent = "멈춤";
     else { $("train-status").textContent = "실패"; showMessage("학습 실패", "학습률을 낮추거나 블록을 바꿔 보세요", j.error); }
   } catch (e) { $("train-status").textContent = ""; showError(e); }
@@ -1110,11 +1102,11 @@ function trainBusy(on, frac = null) {                         // 학습 중: 도
 $("btn-train-stop").onclick = () => st.trainJob && api(`/api/jobs/${st.trainJob}/cancel`, {}).catch(showError);
 function renderSegResult(r) {                             // 구간 분할: 시점 정확도·혼동 행렬, 시험 창의 정답·예측 띠
   const names = st.summary.classes, a = r.test_metric;
-  const v = a >= 0.9 ? ["good", `시험 시점의 ${pct(a)}를 맞혔습니다.`, "아래 창에서 경계가 어긋나는 곳을 보세요. ⑤ 예측에서 새 데이터에 써 볼 수 있습니다."]
+  const v = a >= 0.9 ? ["good", `시험 시점의 ${pct(a)}를 맞혔습니다.`, ""]
     : a >= 0.7 ? ["warn", `시험 시점의 ${pct(a)}를 맞혔습니다. 짧은 상태를 놓치는 곳이 있습니다.`, "Epochs를 늘리거나 다른 대표 모델(U-Net식)을 써 보세요."]
     : ["bad", `시험 시점의 ${pct(a)}만 맞혔습니다.`, "Epochs를 늘리거나, 필터를 더 넓게 보는 모델(TCN)을 써 보세요."];
   $("train-result").innerHTML = kv([["Epochs", epochsText(r)], ["시험 시점 정확도", `<b>${pct(a)}</b>`], ["학습 시점 정확도", pct(r.train_metric)]]) +
-    `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>`;
+    `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b>${v[2] ? `<div>다음: ${esc(v[2])}</div>` : ""}</div>`;
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", r.confusion, r.recall, "시점마다 센 혼동 행렬");
   $("train-scatter").innerHTML = "";
@@ -1163,10 +1155,10 @@ function renderTrainResult(r) {
   const base = isAcc ? baselineOf(r) : null;
   const rows = [["Epochs", epochsText(r)], [`시험 ${isAcc ? "정확도" : "R²"}`, `<b>${f(r.test_metric)}</b>`]];
   if (has(r.train_metric)) rows.push([`학습 ${isAcc ? "정확도" : "R²"}`, f(r.train_metric)]);
-  if (has(base)) rows.push(["찍기 기준", `${pct(base)} <span class="muted">(가장 많은 클래스만 답할 때)</span>`]);
+  if (has(base)) rows.push(["찍기 기준", pct(base)]);
   if (!isAcc) rows.push(["시험 평균 오차 MAE", m(r.mae)], ["찍기 기준", `R² 0 <span class="muted">(늘 평균값만 답할 때)</span>`]);
   const v = verdict(r, base);
-  $("train-result").innerHTML = kv(rows) + (v ? `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>` : "");
+  $("train-result").innerHTML = kv(rows) + (v ? `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b>${v[2] ? `<div>다음: ${esc(v[2])}</div>` : ""}</div>` : "");
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", r.confusion, r.recall, "시험 데이터", Array.isArray(r.pred));
   renderScatter("train-scatter", r.scatter, r.mae, "시험 데이터");
@@ -1179,26 +1171,26 @@ function fcVerdict(r) {
   if (tr !== null && tr !== undefined && tr - t > 0.2) return ["warn", `학습 구간은 R² ${tr.toFixed(2)}인데 시험 구간은 ${t.toFixed(2)}입니다. 학습 구간을 외운 것일 수 있습니다 (과적합).`,
     "층·채널을 줄이거나 Dropout을 넣거나, 데이터(기간)를 더 모아 보세요."];
   if (better >= 0.3) return ["good", `단순 예측(${r.naive_name})보다 오차가 ${Math.round(better * 100)}% 작습니다.`,
-    "아래 그래프에서 몇 칸 뒤부터 오차가 커지는지 보고, ⑤ 예측에서 최근 데이터로 다음 값을 예측해 보세요."];
+    ""];
   return ["warn", `단순 예측(${r.naive_name})보다 오차가 ${Math.round(better * 100)}% 작습니다. 나아졌지만 더 좋아질 수 있습니다.`,
-    "Epochs를 늘리거나 다른 대표 모델을 써 보고, 입력 길이(지난 몇 개를 볼지)를 바꿔 보세요."];
+    "Epochs를 늘리거나 다른 대표 모델을 써 보고, 입력 길이를 바꿔 보세요."];
 }
 function renderFcResult(r) {
   const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(4)));
   const better = r.naive_mae > 0 ? 1 - r.mae / r.naive_mae : 0;
-  const rows = [["Epochs", epochsText(r)], ["시험 평균 오차 MAE", `<b>${m(r.mae)}</b> <span class="muted">(원래 단위)</span>`], ["시험 RMSE", m(r.rmse)],
-    ["단순 예측 MAE", `${m(r.naive_mae)} <span class="muted">(${esc(r.naive_name)})</span>`],
+  const rows = [["Epochs", epochsText(r)], ["시험 평균 오차 MAE", `<b>${m(r.mae)}</b>`], ["시험 RMSE", m(r.rmse)],
+    ["단순 예측 MAE", `${m(r.naive_mae)} <span class="muted">${esc(r.naive_name)}</span>`],
     ["단순 예측보다", better >= 0 ? `오차 ${Math.round(better * 100)}% 작음` : `오차 ${Math.round(-better * 100)}% 큼`],
     ["시험 R²", r.test_metric.toFixed(3)]];
   if (r.train_metric !== null && r.train_metric !== undefined) rows.push(["학습 R²", r.train_metric.toFixed(3)]);
   const v = fcVerdict(r);
-  $("train-result").innerHTML = kv(rows) + `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>`;
+  $("train-result").innerHTML = kv(rows) + `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b>${v[2] ? `<div>다음: ${esc(v[2])}</div>` : ""}</div>`;
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", null);
   const H = r.mae_by_step.length;
   $("train-scatter").innerHTML = `<h3>몇 칸 뒤까지 맞히나 (시험 구간)</h3>` +
     svgSeries([{ v: r.naive_by_step, color: FC_COLORS.naive, dash: "4 3" }, { v: r.mae_by_step, color: FC_COLORS.pred, width: 2 }], 300, 120) +
-    `<p class="muted">가로 = 1칸 뒤 … ${H}칸 뒤, 세로 = 평균 오차 · <span style="color:${FC_COLORS.pred}">━</span> 모델 · <span style="color:${FC_COLORS.naive}">┅</span> 단순 예측</p>`;
+    `<p class="muted"><span style="color:${FC_COLORS.pred}">━</span> 모델 · <span style="color:${FC_COLORS.naive}">┅</span> 단순 예측</p>`;
   $("det-box").hidden = false;
   $("det-box").innerHTML = `<div class="row det-head"><h3>시험 구간에서 예측한 모습</h3></div>` +
     `<p class="muted fc-legend"><span style="color:${FC_COLORS.hist}">━</span> 모델이 본 지난 값 · <span style="color:${FC_COLORS.y}">━</span> 실제 · <span style="color:${FC_COLORS.pred}">━</span> 예측</p>` +
@@ -1226,7 +1218,7 @@ function aeVerdict(r) {
   if (a < 0.6) return ["bad", `AUC ${a.toFixed(2)} — 이상과 정상의 점수가 거의 섞여 있습니다.`,
     "Epochs를 늘리거나, 다른 대표 모델(Conv 오토인코더)을 써 보거나, 가운데 Dense를 더 작게 해 보세요."];
   if (a >= 0.9) return ["good", `AUC ${a.toFixed(2)} — 이상 샘플의 점수가 대부분 정상보다 높습니다.`,
-    "아래 분포에서 기준값을 옮겨 놓치는 이상과 잘못 잡는 정상 사이를 맞추고, [이 기준값을 예측에 쓰기]를 누르세요."];
+    ""];
   return ["warn", `AUC ${a.toFixed(2)} — 이상을 어느 정도 가려내지만 섞이는 것이 있습니다.`,
     "Epochs를 늘리거나 다른 대표 모델을 써 보고, 아래 분포에서 기준값을 조정해 보세요."];
 }
@@ -1252,11 +1244,11 @@ function renderAeResult(r) {
   const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(3)));
   const both = r.metric_name === "auc";
   const rows = [["Epochs", epochsText(r)]];
-  if (both) rows.push(["시험 AUC", `<b>${r.auc.toFixed(3)}</b> <span class="muted">(이상 하나·정상 하나를 뽑을 때 이상 점수가 더 클 확률, 0.5 = 찍기)</span>`]);
+  if (both) rows.push(["시험 AUC", `<b>${r.auc.toFixed(3)}</b>`]);
   else rows.push(["시험 정상의 평균 이상 점수", `<b>${m(r.test_metric)}</b>`]);
   rows.push(["기준값 (처음)", `${m(r.threshold)} <span class="muted">(학습 정상의 95%가 이 아래)</span>`]);
   const v = aeVerdict(r);
-  $("train-result").innerHTML = kv(rows) + `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>`;
+  $("train-result").innerHTML = kv(rows) + `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b>${v[2] ? `<div>다음: ${esc(v[2])}</div>` : ""}</div>`;
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", null);
   $("train-scatter").innerHTML = "";
@@ -1270,8 +1262,8 @@ function renderAeResult(r) {
     `<label class="muted det-th">기준값 <input id="ae-th" type="range" min="0" max="1000" step="1" value="${Math.round(Math.sqrt(r.threshold / smax) * 1000)}"> <b id="ae-th-v"></b></label>` +
     `<button id="btn-ae-th">이 기준값을 예측에 쓰기</button></div>` +
     `<div id="ae-hist"></div><div id="ae-at" class="kv ae-at"></div>` +
-    `<p class="muted"><span style="color:#16a34a">■</span> 정상 · <span style="color:#e11d48">■</span> 이상 — 점수 = ${dist ? "정상 그림들의 특징 분포에서 떨어진 정도" : "되살린 값과 입력의 차이 (제곱 평균)"}. 기준값보다 크면 이상으로 판정</p>` +
-    `<h3>점수가 높은 시험 샘플 (마지막 둘은 ${dist ? "가장 정상에 가까운 것" : "가장 잘 되살린 것"})</h3><div class="ae-gallery">${r.ae_samples.map((p) => {
+    `<p class="muted"><span style="color:#16a34a">■</span> 정상 · <span style="color:#e11d48">■</span> 이상</p>` +
+    `<h3>점수가 높은 시험 샘플</h3><div class="ae-gallery">${r.ae_samples.map((p) => {
       const tag = `${p.label === 1 ? "정답 이상" : "정답 정상"} · 점수 ${m(p.score)}`;
       const pic = im
         ? [p.x].concat(p.recon ? [p.recon] : []).map((v) => `<img src="${grayURL(v, im[0], im[1])}" width="96" height="${Math.round((96 * im[0]) / im[1])}" class="ae-img" alt="">`).join("")
@@ -1309,7 +1301,7 @@ function detVerdict(r) {                               // 탐지 결과를 쉬�
     return ["warn", `학습 그림은 ${pct(tr)}인데 시험 그림은 ${pct(t)}입니다. 학습 그림을 외운 것일 수 있습니다 (과적합).`,
       "상자를 그린 그림을 더 모으거나, Epochs를 줄이거나, 채널을 줄여 보세요."];
   if (t >= 0.7) return ["good", `시험 그림에서 mAP@0.5 ${pct(t)} — 사물의 위치와 종류를 잘 찾습니다.`,
-    "아래 시험 그림에서 놓친 것(점선만 있는 상자)과 잘못 찾은 것을 보고, ⑤ 예측에서 새 그림에 써 보세요."];
+    ""];
   return ["warn", `시험 그림에서 mAP@0.5 ${pct(t)}입니다. 찾긴 하지만 더 좋아질 수 있습니다.`,
     "Epochs를 늘리거나 '깊은 탐지 모델'로 바꿔 보고, 아래 그림에서 어떤 사물을 놓치는지 보세요."];
 }
@@ -1321,8 +1313,8 @@ function renderDetResult(r) {
   if (pr.precision !== undefined) rows.push(["점수 50% 이상만 볼 때",
     `찾은 것 중 맞음 ${pct(pr.precision)} · 정답 중 찾음 ${pct(pr.recall)} <span class="muted">(잘못 찾음 ${pr.fp} · 놓침 ${pr.fn})</span>`]);
   const v = detVerdict(r);
-  $("train-result").innerHTML = kv(rows) + (v ? `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b><div>다음: ${esc(v[2])}</div></div>` : "") +
-    `<p class="muted det-help">mAP@0.5: 찾은 상자가 정답 상자와 절반 이상 겹치고 종류도 맞으면 맞힌 것으로 보고, 점수 높은 순으로 줄 세워 구한 정밀도·재현율 곡선의 넓이를 클래스마다 평균한 값 (1이면 완벽).</p>`;
+  $("train-result").innerHTML = kv(rows) + (v ? `<div class="verdict ${v[0]}"><b>${esc(v[1])}</b>${v[2] ? `<div>다음: ${esc(v[2])}</div>` : ""}</div>` : "") +
+    "";
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", null);
   st.detPred = r.det_pred || null;
@@ -1365,10 +1357,9 @@ function verdict(r, base) {                              // 결과를 쉬운 말
     return ["warn", `학습 데이터는 ${show(tr)}인데 시험 데이터는 ${show(t)}입니다. 학습 데이터를 외운 것일 수 있습니다 (과적합).`,
       "③ 모델에 Dropout 블록을 넣거나, 층·채널을 줄이거나, Epochs를 줄이거나, 데이터를 더 모아 보세요."];
   if (acc ? t >= 0.9 : t >= 0.8)
-    return ["good", acc ? `학습에 쓰지 않은 시험 데이터의 ${pct(t)}를 맞혔습니다.` : `시험 데이터에서 R² ${t.toFixed(2)}로 잘 맞힙니다 (1이면 완벽).`,
-      `${acc ? "혼동 행렬에서 어떤 클래스를 헷갈리는지" : "산점도에서 어디가 크게 틀리는지"} 보고, 위 [내보내기]로 학습한 모델을 받아 쓸 수 있습니다.`];
+    return ["good", acc ? `학습에 쓰지 않은 시험 데이터의 ${pct(t)}를 맞혔습니다.` : `시험 데이터에서 R² ${t.toFixed(2)}로 잘 맞힙니다.`, ""];
   return ["warn", acc ? `시험 데이터의 ${pct(t)}를 맞혔습니다 (찍기 기준 ${pct(base)}). 배우긴 했지만 더 좋아질 수 있습니다.`
-    : `시험 데이터에서 R² ${t.toFixed(2)}입니다 (1이면 완벽, 0이면 평균값만 답하는 수준).`,
+    : `시험 데이터에서 R² ${t.toFixed(2)}입니다.`,
     "Epochs를 늘리거나, 다른 대표 모델이나 블록을 바꿔 시험 성적이 오르는지 보세요."];
 }
 function valuePic(v, b, w = 600) {                     // 층 하나의 값 그림: (C,H,W)는 채널마다 작은 그림, (C,L)은 줄, 나머지는 막대
@@ -1462,8 +1453,7 @@ async function runPreview() {
     if (st.previewNode !== id) return;
     const shape = shapeOf(r.value) || [];
     $("preview-body").innerHTML = valuePic(r.value, f.node, 300) +
-      `<p class="muted">학습 샘플 하나(정답 ${esc(r.label)})가 이 층을 지난 값 · 모양 (${shape.join(", ")})</p>` +
-      `<p class="muted">${r.trained ? "학습한 모델의 값입니다." : "아직 학습 전이라 값은 무작위입니다. 값이 아니라 모양이 어떻게 바뀌는지 보세요."}</p>`;
+      `<p class="muted">정답 ${esc(r.label)} · 모양 (${shape.join(", ")})${r.trained ? "" : " · 학습 전"}</p>`;
   } catch (e) { $("preview-body").innerHTML = `<p class="err">${esc(e.message || e)}</p>`; }
 }
 $("preview-close").onclick = () => { $("preview-box").hidden = true; st.previewNode = null; };
@@ -1702,9 +1692,9 @@ function applyTrained(graph, results, settings) {        // 학습한 모델을 
 
 // ------------------------------------------------------------ ⑤ 새 데이터로 예측
 const PREDICT_FORMAT = {
-  csv: (s) => s.forecast ? `CSV: 한 행 = 한 시점인 긴 시계열 (학습 때처럼). '${s.forecast.column}' 열(없으면 마지막 숫자 열)의 끝 ${s.length}개로 그다음 ${s.forecast.horizon}개를 예측합니다.`
-    : s.anomaly ? `CSV: 한 행 = 샘플 하나, 값 열 ${s.length}개 — 학습 CSV와 같은 순서. 샘플마다 이상 점수와 판정 (기준값은 ④ 학습 결과에서). 상태 열이 더 있으면 맞았는지 표시합니다.`
-    : `CSV: 한 행 = 샘플 하나, 값 열 ${s.image ? s.image[0] * s.image[1] + "개(픽셀)" : s.length + "개"} — 학습 CSV와 같은 순서. 정답 열이 더 있으면 맞았는지 표시합니다.`,
+  csv: (s) => s.forecast ? `CSV: 한 행 = 한 시점. '${s.forecast.column}' 열의 끝 ${s.length}개로 다음 ${s.forecast.horizon}개를 예측합니다.${s.forecast.calendar.length ? " 날짜·시각 열이 있어야 합니다." : ""}`
+    : s.anomaly ? `CSV: 한 행 = 샘플 하나, 값 열 ${s.length}개. 상태 열이 있으면 맞았는지도 봅니다.`
+    : `CSV: 한 행 = 샘플 하나, 값 열 ${s.image ? s.image[0] * s.image[1] : s.length}개. 정답 열이 있으면 맞았는지도 봅니다.`,
   folder: (s) => s.task === "detection" ? `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백 ${s.image[0]}×${s.image[1]}로 맞추고 그림마다 사물을 찾아 상자로 표시합니다. CSV에는 상자마다 한 줄 (위치는 그림 크기에 대한 0–1 비율).`
     : `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백으로 바꾸고 ${s.image[0]}×${s.image[1]}로 맞춥니다. 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.`,
   series: () => "시계열 폴더: 샘플마다 CSV 하나 (학습 때와 같은 값 열·길이 맞추기). 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.",
@@ -1990,7 +1980,7 @@ $("code-save").onclick = async () => {
   drawCurve([], "accuracy");
   if (!st.catalog.length) {                                  // 첫 로딩: 빈 화면 대신 무엇을 기다리는지
     $("btn-quick").disabled = true;
-    $("families").innerHTML = `<p class="muted loading">과제 목록을 불러오는 중…${WEB ? " 처음 열 때는 계산 프로그램(Pyodide·TensorFlow.js)을 받느라 10~20초 걸립니다." : ""}</p>`;
+    $("families").innerHTML = `<p class="muted loading">과제 목록을 불러오는 중…${WEB ? " 처음엔 10~20초" : ""}</p>`;
   }
   try {
     const s = await api("/api/state");

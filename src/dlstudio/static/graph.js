@@ -1258,7 +1258,7 @@ function mount(els, opts) {
     }
     const ids = selIds();
     if (!ids.length) {
-      els.settings.innerHTML = `<p class="muted">왼쪽 목록의 층을 끌어서 선 위에 놓으세요. 상자를 누르면 여기서 설정을 바꿉니다.</p>` + KEYS;
+      els.settings.innerHTML = KEYS;
       return;
     }
     if (ids.length > 1) {

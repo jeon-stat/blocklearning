@@ -37,11 +37,13 @@ def test_all_layer_types_in_palette():
         assert f'type: "{t}"' in js, t
 
 
-def test_model_lead_explains_graph_editing():
+def test_graph_editing_help_is_folded():
+    """조작 설명은 단계 첫머리 줄글이 아니라 오른쪽 [조작 방법] (접힘) 안에만."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    lead = html[html.find('id="step-model"'):]
-    lead = lead[lead.find('<p class="lead">'):lead.find("</p>")]
-    assert "선 위" in lead and "동그라미" in lead and "파란 선" not in lead
+    model = html[html.find('id="step-model"'):html.find('id="step-train"')]
+    assert '<p class="lead">' not in model
+    js = (STATIC / "graph.js").read_text(encoding="utf-8")
+    assert '<details class="keys"><summary>조작 방법</summary>' in js and "동그라미" in js
 
 
 def test_graph_editor_has_ports_and_edge_picking():

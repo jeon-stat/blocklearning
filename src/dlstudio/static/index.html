@@ -35,21 +35,19 @@
   <!-- ① 과제 -->
   <section id="step-task" class="panel">
     <h2>① 무엇을 하고 싶나요?</h2>
-    <p class="lead">하고 싶은 일을 고르면, 그 일에 맞는 대표 모델을 준비해 드립니다. 모델은 ③ 단계에서 블록으로 고칠 수 있습니다.</p>
     <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.</p>
     <div class="quick">
-      <div><b>처음이세요?</b> 예시 데이터(심전도 정상·이상)와 추천 모델을 한 번에 준비합니다. [학습 시작]만 누르면 처음부터 끝까지 볼 수 있습니다.</div>
+      <div><b>처음이세요?</b> 심전도 예시와 추천 모델로 바로 시작합니다.</div>
       <button id="btn-quick" class="primary">예시로 바로 해 보기 →</button>
     </div>
-    <div class="skip-task"><span class="muted">무엇을 고를지 모르겠으면</span> <button id="btn-skip-task">과제는 나중에 — 데이터부터 넣기 →</button>
-      <span class="muted">(데이터를 보고 분류·회귀와 데이터 종류를 정해 드립니다)</span></div>
+    <div class="skip-task"><button id="btn-skip-task">과제는 나중에 — 데이터부터 넣기 →</button></div>
     <div id="families" class="tcards"></div>
     <div id="subtask-box" hidden>
       <h3>어떤 데이터인가요?</h3>
       <div id="subtasks" class="tcards"></div>
     </div>
     <div id="template-box" hidden>
-      <h3>대표 모델 고르기 <span class="muted">(잘 모르겠으면 첫 번째 추천 모델로)</span></h3>
+      <h3>대표 모델 고르기</h3>
       <div id="templates" class="tcards"></div>
       <div class="next"><button class="primary go" data-go="data">다음: 데이터 넣기 →</button></div>
     </div>
@@ -58,10 +56,10 @@
   <!-- ② 데이터 -->
   <section id="step-data" class="panel" hidden>
     <h2>② 데이터 넣기 <span id="data-task-name" class="tag"></span></h2>
-    <p class="lead" id="data-guide">한 행이 샘플 하나인 CSV를 고르거나 (값 열 + 마지막 열이 정답), 예시 데이터로 시작하세요.</p>
-    <div class="sec-title"><h3>예시 데이터로 시작</h3><span class="muted">처음이면 예시로 한 번 해 보세요</span></div>
+    <p class="lead" id="data-guide"></p>
+    <div class="sec-title"><h3>예시 데이터로 시작</h3></div>
     <div id="example-btns" class="ex-grid"></div>
-    <div class="sec-title" id="mine-title"><h3>내 데이터 넣기</h3><span class="muted">데이터는 이 PC 밖으로 나가지 않습니다</span></div>
+    <div class="sec-title" id="mine-title"><h3>내 데이터 넣기</h3></div>
     <div class="src-grid" id="mine-grid">
       <div class="src-card" id="csv-card">
         <div class="src-head"><b>CSV 파일</b><span>한 행 = 샘플 하나</span></div>
@@ -110,9 +108,9 @@
       <div class="grid4">
         <label>정답 열 번호 <input id="label-col" type="number" min="1" placeholder="마지막 열"></label>
         <label>과제 <select id="task"><option value="auto">자동</option><option value="classification">분류</option><option value="regression">회귀</option><option value="forecast" hidden>시계열 예측</option><option value="anomaly" hidden>이상 탐지</option><option value="segmentation" hidden>구간 분할</option><option value="multi" hidden>여러 정답</option></select></label>
-        <label id="image-width-box" hidden>이미지 너비 (픽셀 CSV, 비우면 정사각형) <input id="image-width" type="number" min="1"></label>
+        <label id="image-width-box" hidden>이미지 너비 <input id="image-width" type="number" min="1"></label>
         <label>시험 비율 <input id="test-ratio" type="number" min="0.05" max="0.5" step="0.05" value="0.2"></label>
-        <label class="check"><input id="normalize" type="checkbox" checked> <span id="normalize-text">정규화 (시점별 평균 0, 표준편차 1)</span></label>
+        <label class="check"><input id="normalize" type="checkbox" checked> <span id="normalize-text">정규화</span></label>
       </div>
     </details>
     <ul id="data-issues" class="issues"></ul>
@@ -120,7 +118,6 @@
       <div class="sec-title"><h3>불러온 데이터</h3></div>
       <div id="auto-task" class="auto-task" hidden></div>
       <div class="cards" id="data-cards"></div>
-      <p class="muted split-note">학습 샘플로 모델을 가르치고, 학습에 쓰지 않고 남겨 둔 <b>시험 샘플</b>로 처음 보는 데이터도 맞히는지 잽니다. 나누는 비율은 위 [더 보기]의 시험 비율.</p>
       <div class="box role-box" id="role-box" hidden>
         <div class="role-cols" id="role-cols"></div>
         <div class="row"><label id="role-ch-box">채널 수 <input id="role-channels" type="number" min="1" max="64" value="1"></label>
@@ -130,9 +127,9 @@
       <div class="box fc-box" id="fc-box" hidden>
         <div class="grid4">
           <label>맞힐 값 열 <select id="fc-column"></select></label>
-          <label>입력 길이 (지난 몇 개를 볼지) <input id="fc-L" type="number" min="2" max="4096"></label>
-          <label>예측 길이 (다음 몇 개를 맞힐지) <input id="fc-H" type="number" min="1" max="1024"></label>
-          <label>간격 (창을 몇 칸씩 옮길지) <input id="fc-stride" type="number" min="1" max="1000"></label>
+          <label>입력 길이 <input id="fc-L" type="number" min="2" max="4096"></label>
+          <label>예측 길이 <input id="fc-H" type="number" min="1" max="1024"></label>
+          <label>간격 <input id="fc-stride" type="number" min="1" max="1000"></label>
         </div>
         <label class="check" id="fc-cal-box" hidden><input id="fc-cal" type="checkbox" checked> 요일·시각도 넣기 (<span id="fc-time-col"></span> 열)</label>
         <div class="row"><button id="btn-fc-reload">이 설정으로 다시 만들기</button><span class="muted" id="fc-note"></span></div>
@@ -150,10 +147,8 @@
     <div class="empty-step" data-empty="model">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>먼저 데이터를 넣어 주세요</b>
-      <span>모델의 입력 모양은 데이터에 맞춰 정해집니다. 데이터를 넣으면 그 데이터에 맞는 추천 모델이 준비되고, 여기서 블록으로 고칠 수 있습니다.</span>
       <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
     </div>
-    <p class="lead">왼쪽 층을 끌어 <b>선 위</b>(끼워 넣기)나 빈 곳에 놓고, 상자 아래 <b>동그라미</b>를 끌어 선을 잇습니다. 상자 아래 숫자는 지난 데이터 모양입니다. 자세한 조작은 오른쪽 [조작 방법].</p>
     <div class="row toolbar">
       <span class="muted">대표 모델:</span>
       <span id="tpl-btns"></span>
@@ -169,7 +164,7 @@
         <summary>보기 설정</summary>
         <div class="viewopt-box">
           <label>방향 <select id="flow-dir"><option value="v">위→아래</option><option value="h">왼쪽→오른쪽</option></select></label>
-          <label><input id="auto-wrap" type="checkbox"> <span id="auto-wrap-text">자동 열바꿈 (판을 넘으면 오른쪽 열로)</span></label>
+          <label><input id="auto-wrap" type="checkbox"> <span id="auto-wrap-text">자동 열바꿈</span></label>
           <label>선 <select id="edge-style"><option value="ortho">꺾인선</option><option value="curve">곡선</option></select></label>
         </div>
       </details>
@@ -211,10 +206,8 @@
     <div class="empty-step" data-empty="train">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>학습할 데이터가 없습니다</b>
-      <span>② 데이터를 넣고 ③ 모델을 확인한 뒤 여기서 학습합니다. 처음이면 예시 데이터로 한 번 해 보세요.</span>
       <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
     </div>
-    <p class="lead">이 PC에서 학습합니다 (GPU가 있으면 GPU). 끝나면 학습한 모델을 파일로 내보내 다른 곳에서 쓸 수 있습니다.</p>
     <div id="train-guard" class="guard" hidden></div>
     <div class="row">
       <label>Epochs <input id="epochs" type="number" min="1" max="500" value="30"></label>
@@ -243,7 +236,7 @@
     </div>
     <div class="box" id="det-box" hidden></div>
     <div class="box" id="runs-box" hidden>
-      <h3>학습 기록 <span class="muted">— 학습할 때마다 자동으로 남습니다 (최근 20번). [이 모델로]를 누르면 그때 모델로 돌아갑니다</span></h3>
+      <h3>학습 기록</h3>
       <div id="runs" class="table-wrap"></div>
       <div id="runs-compare" class="table-wrap runs-compare" hidden></div>
     </div>
@@ -268,10 +261,8 @@
     <div class="empty-step" data-empty="predict">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>아직 학습한 모델이 없습니다</b>
-      <span>② 데이터를 넣고 ④에서 학습하면, 여기서 정답을 모르는 새 데이터를 예측할 수 있습니다.</span>
       <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
     </div>
-    <p class="lead">학습한 모델로 정답을 모르는 새 데이터를 예측합니다. 학습 때와 같은 모양의 데이터를 넣으세요. 정답이 함께 있으면 맞았는지도 보여 줍니다.</p>
     <div id="predict-guard" class="guard" hidden></div>
     <div id="predict-inputs">
       <div class="row" data-kind="example"><button id="btn-predict-example" class="primary">예시 새 데이터 10개로 예측</button></div>
@@ -280,7 +271,7 @@
       <div class="row" data-kind="series"><input id="predict-series" class="path" placeholder="C:\data\새 사이클 (샘플마다 CSV 하나)"><button id="btn-predict-series" class="primary">폴더로 예측</button></div>
       <details data-kind="rows" id="predict-manual" class="more"><summary>값을 직접 넣어 예측</summary>
         <div id="predict-form" class="grid4"></div>
-        <div class="row"><button id="btn-predict-rows" class="primary">이 값으로 예측</button><span class="muted">처음 값은 학습 데이터의 평균입니다</span></div>
+        <div class="row"><button id="btn-predict-rows" class="primary">이 값으로 예측</button></div>
       </details>
       <p class="muted" id="predict-format"></p>
     </div>

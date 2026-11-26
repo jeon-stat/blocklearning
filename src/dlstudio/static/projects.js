@@ -402,7 +402,7 @@ async function render() {
     where.innerHTML = `<p class="muted">구글 드라이브에 연결됨 (내 드라이브/DL studio/). 1시간이 지나면 다시 로그인을 묻습니다. <button id="proj-logout">로그아웃</button></p>`;
     $("proj-logout").onclick = () => { dv.signOut(); render(); };
   } else {
-    where.innerHTML = `<p class="muted">이 PC의 이 브라우저 안에 저장합니다 (로그인 없음). 브라우저의 사이트 데이터를 지우면 사라지니, 중요한 것은 [내려받기]나 구글 드라이브로 보관하세요.</p>`;
+    where.innerHTML = `<p class="muted">이 브라우저에 저장됩니다. 사이트 데이터를 지우면 사라지니 [내려받기]나 구글 드라이브로 보관하세요.</p>`;
   }
   list.innerHTML = `<p class="muted">불러오는 중…</p>`;
   try {
