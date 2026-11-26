@@ -8,6 +8,7 @@ import argparse
 import getpass
 import os
 import sys
+import threading
 import webbrowser
 from typing import Optional
 
@@ -50,6 +51,16 @@ def guide(url: str, port: int, env=None) -> str:
     return "\n".join(lines)
 
 
+def _gpu_check() -> None:
+    try:
+        from blocklearning.devices import cpu_torch_hint
+        hint = cpu_torch_hint()
+    except Exception:
+        return
+    if hint:
+        print("\n" + hint, flush=True)
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="blocklearning", description="BlockLearning: 블록으로 딥러닝 모델 만들기 (브라우저 화면)")
     ap.add_argument("--port", type=int, default=8765)
@@ -75,6 +86,7 @@ def main(argv: Optional[list] = None) -> int:
         return 0
     if not args.no_browser and not remote_kind():           # 서버에는 브라우저가 없음
         webbrowser.open(url)
+    threading.Thread(target=_gpu_check, daemon=True).start()   # torch를 불러오느라 몇 초 걸려 화면을 막지 않게
     try:
         server.serve_forever()
     except KeyboardInterrupt:

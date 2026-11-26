@@ -20,6 +20,18 @@ pip install blocklearning
 [pytorch.org](https://pytorch.org/get-started/locally/)에서 내 PC(운영체제·CUDA)에 맞는 `pip install torch ...` 명령을 골라 실행하면 됩니다.
 그냥 `pip install blocklearning`만 하면 (Windows에서는) CPU용 PyTorch가 깔려 CPU로 학습합니다.
 
+이미 설치했는데 학습 화면의 '장치'에 GPU가 없다고 나오면 (실행할 때 명령창에도 안내가 나옵니다), BlockLearning을 끄고 PyTorch만 GPU용으로 바꾸세요.
+GPU용 PyTorch로도 '장치'에서 CPU를 고르면 CPU로 학습합니다.
+
+```
+pip uninstall -y torch
+pip install torch --index-url https://download.pytorch.org/whl/cu126
+python -c "import torch; print(torch.cuda.is_available())"
+```
+
+마지막 줄이 `True`면 됩니다. `False`면 NVIDIA 드라이버를 업데이트하거나 pytorch.org에서 내 PC에 맞는 명령을 고르세요.
+NVIDIA 그래픽카드만 쓸 수 있습니다 (AMD·Intel 내장 그래픽, Mac은 CPU로 학습).
+
 ## 실행
 
 ```

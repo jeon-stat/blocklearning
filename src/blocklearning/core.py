@@ -788,12 +788,13 @@ class Studio:
 def device_info() -> dict:
     """학습에 쓸 장치 (화면의 '장치' 칸): NVIDIA GPU가 있으면 그 이름, 없으면 CPU.
     remote: SSH로 접속한 서버에서 실행 중 (저장한 파일을 브라우저로도 내려받게).
+    cpu_torch: NVIDIA GPU가 있는데 PyTorch가 CPU용이라 못 씀.
     gpus: 번호·이름·메모리(사용 중/전체 GB), auto: '자동'이 고를 GPU 번호 (메모리를 가장 적게 쓰는 것)."""
     from blocklearning.cli import remote_kind
-    from blocklearning.devices import gpus, least_used
+    from blocklearning.devices import cpu_torch_hint, gpus, least_used
     gs = gpus()
     return {"gpu": bool(gs), "name": gs[least_used(gs)]["name"] if gs else None, "count": len(gs), "gpus": gs,
-            "auto": least_used(gs) if gs else None, "remote": bool(remote_kind())}
+            "auto": least_used(gs) if gs else None, "remote": bool(remote_kind()), "cpu_torch": not gs and bool(cpu_torch_hint())}
 
 
 def _err(message: str, hint: str = "", detail: str = "", issues=None) -> dict:

@@ -46,6 +46,19 @@ def smi_used(text: str = None) -> dict:
     return d
 
 
+def cpu_torch_hint() -> str:
+    """NVIDIA GPU가 있는데 PyTorch가 CPU용이라 못 쓸 때 바꾸는 방법 (그 밖에는 "")."""
+    import torch
+    if torch.cuda.is_available() or not smi_used():
+        return ""
+    return "\n".join([
+        f"NVIDIA GPU가 있지만 지금 PyTorch({torch.__version__})는 CPU용이라 CPU로 학습합니다.",
+        "GPU로 학습하려면 BlockLearning을 끄고 GPU용 PyTorch로 바꾸세요 (GPU용으로도 CPU 학습은 됩니다):",
+        "  pip uninstall -y torch",
+        "  pip install torch --index-url https://download.pytorch.org/whl/cu126",
+        "  (드라이버가 오래돼 안 되면 https://pytorch.org/get-started/locally/ 에서 맞는 명령을 고르세요)"])
+
+
 def least_used(gs: list) -> int:
     """'자동'이 고를 GPU: 메모리를 가장 적게 쓰는 것 (같으면 번호가 작은 것). 사용량을 모르면 0번."""
     known = [g for g in gs if g.get("used_gb") is not None]
