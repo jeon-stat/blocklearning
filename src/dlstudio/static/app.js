@@ -125,11 +125,8 @@ function renderEmpty() {
   });
 }
 document.addEventListener("click", (e) => {               // 안내 화면의 단추
-  const b = e.target.closest(".empty-step [data-go], .empty-step [data-quick]");
-  if (!b) return;
-  if (b.dataset.go) return go(b.dataset.go);
-  go("task");
-  $("btn-quick").click();
+  const b = e.target.closest(".empty-step [data-go]");
+  if (b) go(b.dataset.go);
 });
 function hideMessage() { clearTimeout(msgTimer); $("message").hidden = true; }
 function showMessage(msg, hint = "", detail = "", ok = false) {
@@ -324,7 +321,6 @@ const FAMILY_ICON = {
 };
 const readyFirst = (xs, ok) => xs.filter(ok).concat(xs.filter((x) => !ok(x)));   // '준비 중'은 뒤로
 function renderTask() {
-  $("btn-quick").disabled = !st.catalog.length;
   $("families").innerHTML = readyFirst(st.catalog, (f) => f.subtasks.some((s) => s.available)).map((f) => {
     const ready = f.subtasks.some((s) => s.available);
     return `<button class="tcard${st.fam === f ? " sel" : ""}${ready ? "" : " soon"}" data-f="${f.id}">` +
@@ -370,20 +366,6 @@ $("templates").onclick = (e) => {
   if (!b) return;
   st.autoTask = false;
   chooseTemplate(st.fam, st.sub, st.sub.templates.find((x) => x.id === b.dataset.t));
-};
-$("btn-quick").onclick = async () => {                   // 예시 과제·데이터·추천 모델을 한 번에 → ④ 학습
-  const fam = st.catalog.find((f) => f.subtasks.some((s) => s.available && (s.example_data || []).some((e) => e[0] === "ecg")));
-  const sub = fam && fam.subtasks.find((s) => s.available && (s.example_data || []).some((e) => e[0] === "ecg"));
-  if (!sub) return showMessage("예시를 찾지 못함", "아래에서 과제를 직접 고르세요");
-  if (WEB && window.DLProjects && DLProjects.current() && st.summary) return DLProjects.startNew("quick");   // 연 프로젝트는 두고 새 프로젝트로
-  $("btn-quick").disabled = true;
-  try {
-    await chooseTemplate(fam, sub, sub.templates[0]);
-    if (!(await loadData(Object.assign(dataOptions(), { example: "ecg" })))) return;
-    go("model");                                            // 모델 판을 한 번 그려 두고 (검사도 시작)
-    go("train");
-    showMessage("예시 데이터와 추천 모델을 준비했습니다", "[학습 시작]을 누르세요. 데이터는 ②, 모델은 ③에서 볼 수 있습니다", "", true);
-  } finally { $("btn-quick").disabled = false; }
 };
 async function chooseTemplate(fam, sub, tpl) {
   try { await api("/api/task/select", { family: fam.id, subtask: sub.id, template: tpl.id }); } catch (e) { return showError(e); }
@@ -1979,7 +1961,6 @@ $("code-save").onclick = async () => {
   if (!WEB) go("task");                                      // 웹은 첫 화면 '내 프로젝트' (projects.js)
   drawCurve([], "accuracy");
   if (!st.catalog.length) {                                  // 첫 로딩: 빈 화면 대신 무엇을 기다리는지
-    $("btn-quick").disabled = true;
     $("families").innerHTML = `<p class="muted loading">과제 목록을 불러오는 중…${WEB ? " 처음엔 10~20초" : ""}</p>`;
   }
   try {

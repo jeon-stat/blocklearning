@@ -185,11 +185,8 @@ async function startFresh(then) {                        // 새 프로젝트: �
   status("");
   afterStart(then);
 }
-async function afterStart(then) {
+async function afterStart() {
   go("task");
-  if (then !== "quick") return;
-  for (let i = 0; i < 80 && !(st.catalog && st.catalog.length); i++) await new Promise((r) => setTimeout(r, 250));   // 과제 목록이 올 때까지
-  $("btn-quick").click();
 }
 async function importFile() {
   const path = await WEBB().pickProject();
@@ -229,78 +226,6 @@ const ICON = {
   pen: svgI('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
   trash: svgI('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
 };
-// 첫 화면 그림: 데이터 → 이어 붙인 블록(모델) → 결과. 점이 흘러감 (움직임을 줄이는 설정이면 멈춤)
-const HERO_ART = `<svg viewBox="0 0 360 260" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="ha-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef2ff"/><stop offset="1" stop-color="#f5f3ff"/></linearGradient>
-    <linearGradient id="ha-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f46e5"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
-    <pattern id="ha-dots" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1" fill="#c7d2fe" opacity=".55"/></pattern>
-    <filter id="ha-sh" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#312e81" flood-opacity=".10"/></filter>
-    <path id="ha-flow" d="M98 130 C118 130 118 58 140 58 L180 58 L180 202 L220 202 C236 202 236 130 252 130"/>
-  </defs>
-  <rect width="360" height="260" rx="18" fill="url(#ha-bg)"/>
-  <rect width="360" height="260" rx="18" fill="url(#ha-dots)"/>
-
-  <!-- 이어 주는 선 -->
-  <path d="M98 130 C118 130 118 58 140 58" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-dasharray="4 5"/>
-  <path d="M220 202 C236 202 236 130 252 130" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-dasharray="4 5"/>
-
-  <!-- 데이터: 그림 조각 + 신호 -->
-  <g filter="url(#ha-sh)">
-    <rect x="18" y="66" width="80" height="128" rx="14" fill="#fff"/>
-  </g>
-  <g transform="translate(31 80)">
-    <rect width="11" height="11" rx="2" fill="#c7d2fe"/><rect x="13" width="11" height="11" rx="2" fill="#818cf8"/><rect x="26" width="11" height="11" rx="2" fill="#e0e7ff"/><rect x="39" width="11" height="11" rx="2" fill="#a5b4fc"/>
-    <rect y="13" width="11" height="11" rx="2" fill="#818cf8"/><rect x="13" y="13" width="11" height="11" rx="2" fill="#4f46e5"/><rect x="26" y="13" width="11" height="11" rx="2" fill="#a5b4fc"/><rect x="39" y="13" width="11" height="11" rx="2" fill="#e0e7ff"/>
-    <rect y="26" width="11" height="11" rx="2" fill="#e0e7ff"/><rect x="13" y="26" width="11" height="11" rx="2" fill="#a5b4fc"/><rect x="26" y="26" width="11" height="11" rx="2" fill="#6366f1"/><rect x="39" y="26" width="11" height="11" rx="2" fill="#c7d2fe"/>
-  </g>
-  <path d="M30 152 q6 -14 12 0 t12 0 t12 0 t12 -2" fill="none" stroke="#14b8a6" stroke-width="2.4" stroke-linecap="round"/>
-  <path d="M30 174 q6 -9 12 0 t12 0 t12 0 t12 0" fill="none" stroke="#f59e0b" stroke-width="2.4" stroke-linecap="round" opacity=".85"/>
-
-  <!-- 흐르는 데이터 (블록 뒤로 지나감) -->
-  <g fill="#4f46e5">
-    <circle r="3.5" opacity=".9"><animateMotion dur="3.6s" repeatCount="indefinite" calcMode="linear"><mpath href="#ha-flow"/></animateMotion></circle>
-    <circle r="3" fill="#14b8a6" opacity=".9"><animateMotion dur="3.6s" begin="-1.2s" repeatCount="indefinite" calcMode="linear"><mpath href="#ha-flow"/></animateMotion></circle>
-    <circle r="3" fill="#f97316" opacity=".9"><animateMotion dur="3.6s" begin="-2.4s" repeatCount="indefinite" calcMode="linear"><mpath href="#ha-flow"/></animateMotion></circle>
-  </g>
-
-  <!-- 모델: 이어 붙인 블록 -->
-  <g filter="url(#ha-sh)">
-    <rect x="140" y="40" width="80" height="36" rx="10" fill="#fff"/>
-    <rect x="140" y="88" width="80" height="36" rx="10" fill="#fff"/>
-    <rect x="140" y="136" width="80" height="36" rx="10" fill="#fff"/>
-    <rect x="140" y="184" width="80" height="36" rx="10" fill="#fff"/>
-  </g>
-  <g>
-    <rect x="140" y="40" width="80" height="36" rx="10" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1.5"/>
-    <rect x="140" y="88" width="80" height="36" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
-    <rect x="140" y="136" width="80" height="36" rx="10" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5"/>
-    <rect x="140" y="184" width="80" height="36" rx="10" fill="#ffedd5" stroke="#f97316" stroke-width="1.5"/>
-    <g fill="#fff" opacity=".9">
-      <rect x="152" y="52" width="40" height="5" rx="2.5"/><rect x="152" y="61" width="26" height="5" rx="2.5"/>
-      <rect x="152" y="100" width="34" height="5" rx="2.5"/><rect x="152" y="109" width="44" height="5" rx="2.5"/>
-      <rect x="152" y="148" width="44" height="5" rx="2.5"/><rect x="152" y="157" width="22" height="5" rx="2.5"/>
-      <rect x="152" y="196" width="30" height="5" rx="2.5"/><rect x="152" y="205" width="40" height="5" rx="2.5"/>
-    </g>
-    <g stroke-width="2" fill="#fff">
-      <circle cx="180" cy="82" r="4" stroke="#3b82f6"/><circle cx="180" cy="130" r="4" stroke="#8b5cf6"/><circle cx="180" cy="178" r="4" stroke="#f97316"/>
-    </g>
-  </g>
-
-  <!-- 결과: 다 됨 + 오르는 곡선 -->
-  <g filter="url(#ha-sh)">
-    <rect x="252" y="66" width="90" height="128" rx="14" fill="#fff"/>
-  </g>
-  <circle cx="297" cy="112" r="26" fill="none" stroke="#eef2ff" stroke-width="7"/>
-  <circle cx="297" cy="112" r="26" fill="none" stroke="url(#ha-ring)" stroke-width="7" stroke-linecap="round"
-          stroke-dasharray="163.4" stroke-dashoffset="18" transform="rotate(-90 297 112)">
-    <animate attributeName="stroke-dashoffset" values="163.4;18;18" keyTimes="0;.45;1" dur="5s" repeatCount="indefinite"/>
-  </circle>
-  <path d="M286 112 l7 7 l13 -14" fill="none" stroke="#4f46e5" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M266 178 C278 176 284 166 294 162 S314 152 328 150" fill="none" stroke="#4f46e5" stroke-width="2.4" stroke-linecap="round"/>
-  <path d="M266 178 C278 176 284 166 294 162 S314 152 328 150 L328 182 L266 182 Z" fill="#4f46e5" opacity=".08"/>
-
-</svg>`;
 function ensureHome() {
   if ($("step-home")) return;
   const sec = document.createElement("section");
@@ -315,10 +240,9 @@ function ensureHome() {
         <p>데이터를 넣고, 블록으로 모델을 짜고, 바로 학습해 결과를 봅니다. 코드를 몰라도 되고, 데이터는 이 PC 밖으로 나가지 않습니다.</p>
         <div class="hero-cta">
           <button class="primary lg" id="home-new">＋ 새 프로젝트</button>
-          <button class="lg" id="home-quick">예시로 바로 해 보기 →</button>
         </div>
       </div>
-      <div class="hero-art" aria-hidden="true">${HERO_ART}</div>
+      <div class="hero-video"><video src="src/dlstudio/static/demo.webm" poster="src/dlstudio/static/demo.jpg" controls muted playsinline preload="none"></video></div>
     </div>
     <div class="features">
       <div class="feature"><span class="fi">${ICON.blocks}</span><b>블록으로 모델</b><span>CNN·RNN·ResNet을 끌어다 놓고 선으로 이어 만듭니다</span></div>
@@ -347,7 +271,6 @@ function ensureHome() {
   } catch (e) { /* 없음 */ }
   sec.querySelectorAll(".tab").forEach((b) => (b.onclick = () => { tab = b.dataset.kind; render(); }));
   $("home-new").onclick = () => startFresh("task");
-  $("home-quick").onclick = () => startFresh("quick");
   $("home-import").onclick = importFile;
   $("home-export").onclick = exportFile;
   $("home-list").onclick = async (e) => {
@@ -417,7 +340,7 @@ async function render() {
         <div class="pc-foot"><span class="pt">${esc(when(p.updated))} 저장</span>
           <span class="pa"><button data-a="rename" class="ghost icon" title="이름 바꾸기" aria-label="이름 바꾸기">${ICON.pen}</button><button data-a="remove" class="ghost danger icon" title="지우기" aria-label="지우기">${ICON.trash}</button></span></div></div>`;
     }).join("") : `<div class="empty"><span class="fi">${ICON.folder}</span><b>아직 프로젝트가 없습니다</b>
-      <span>[새 프로젝트]나 [예시로 바로 해 보기]로 시작하세요. 데이터를 넣으면 자동으로 저장됩니다.</span></div>`;
+      <span>데이터를 넣으면 자동으로 저장됩니다.</span></div>`;
   } catch (e) { list.innerHTML = `<p class="bad">${esc(e.message || e)}</p>`; }
 }
 // 프로젝트 카드 고르기: 처음 누르면 고르기만 (테두리), 같은 카드를 한 번 더 누르면 열기, 빈 곳을 누르면 고르기 풀기

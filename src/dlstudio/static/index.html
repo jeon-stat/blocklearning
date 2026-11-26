@@ -36,10 +36,6 @@
   <section id="step-task" class="panel">
     <h2>① 무엇을 하고 싶나요?</h2>
     <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.</p>
-    <div class="quick">
-      <div><b>처음이세요?</b> 심전도 예시와 추천 모델로 바로 시작합니다.</div>
-      <button id="btn-quick" class="primary">예시로 바로 해 보기 →</button>
-    </div>
     <div class="skip-task"><button id="btn-skip-task">과제는 나중에 — 데이터부터 넣기 →</button></div>
     <div id="families" class="tcards"></div>
     <div id="subtask-box" hidden>
@@ -147,7 +143,7 @@
     <div class="empty-step" data-empty="model">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>먼저 데이터를 넣어 주세요</b>
-      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button></div>
     </div>
     <div class="row toolbar">
       <span class="muted">대표 모델:</span>
@@ -206,7 +202,7 @@
     <div class="empty-step" data-empty="train">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>학습할 데이터가 없습니다</b>
-      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button></div>
     </div>
     <div id="train-guard" class="guard" hidden></div>
     <div class="row">
@@ -260,7 +256,7 @@
     <div class="empty-step" data-empty="predict">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>아직 학습한 모델이 없습니다</b>
-      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button><button data-quick="1">예시로 바로 해 보기</button></div>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button></div>
     </div>
     <div id="predict-guard" class="guard" hidden></div>
     <div id="predict-inputs">
