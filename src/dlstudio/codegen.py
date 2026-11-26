@@ -192,6 +192,9 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
         lines.append("출력: (샘플 수, 1) 예측값")
     elif info.get("task") == "forecast":
         lines.append(f"출력: (샘플 수, {plan.n_out}) 다음 {plan.n_out}개 값 (원래 단위). 입력 = 바로 앞의 값들 (신호 전체의 평균·표준편차로 정규화)")
+        if info.get("calendar"):
+            lines.append("입력 채널: 값, " + ", ".join(info["calendar"]) + " — 그 시점의 하루 중 시각 a = 2π·(초/86400)의 sin·cos, "
+                         "요일 b = 2π·((월요일 0 … 일요일 6) + 초/86400)/7의 sin·cos (정규화하지 않음)")
     elif info.get("task") == "multi" and info.get("heads"):
         lines.append(f"출력: (샘플 수, {plan.n_out}) 정답마다의 머리를 이어 붙인 것 — " + "; ".join(
             f"{h['name']} [{h['start']}:{h['start'] + h['size']}] " +

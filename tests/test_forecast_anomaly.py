@@ -42,8 +42,15 @@ def test_forecast_example_and_summary():
     json.dumps(s, ensure_ascii=False)
     assert s["task"] == "forecast" and s["forecast"]["horizon"] == 24 and len(s["preview"][0]["future"]) == 24
     assert d.label_text("test", 0).startswith("다음 24개")
-    assert np.allclose(d.std, d.std[0]) and abs(d.X_train.mean()) < 0.2     # 정규화: 신호 전체에 하나
-    assert np.allclose(forecast.naive(d, d.X_test), d.raw(d.X_test)[:, -24:])   # 단순 예측 = 지난 24개 되풀이
+    L = int(d.length)
+    assert L == 168 and d.length.channels == 5 and d.X_train.shape[1] == 5 * L      # 값 + 시각·요일 sin·cos
+    assert np.allclose(d.std[:L], d.std[0]) and abs(d.X_train[:, :L].mean()) < 0.2   # 정규화: 값 채널은 신호 전체에 하나
+    assert np.allclose(d.mean[L:], 0) and np.allclose(d.std[L:], 1) and np.abs(d.X_train[:, L:]).max() <= 1 + 1e-9
+    assert np.allclose(forecast.naive(d, d.X_test), d.raw(d.X_test)[:, L - 24:L])    # 단순 예측 = 지난 24개 되풀이
+    assert s["forecast"]["calendar"] == ["시각 sin", "시각 cos", "요일 sin", "요일 cos"] and len(s["preview"][0]["values"]) == L
+    plain = load_example("steel_power", calendar=False)
+    assert plain.length == 168 and plain.X_train.shape[1] == 168 and np.allclose(plain.X_train, d.X_train[:, :L])
+    assert plain.summary()["forecast"]["has_times"] and not plain.summary()["forecast"]["calendar"]
     r = forecast.result(d.y_test + 1.0, d)
     assert abs(r["mae"] - 1) < 1e-9 and len(r["mae_by_step"]) == 24 and len(r["fc_samples"]) == 6
     assert forecast.metric(d.y_test, d.y_test) == 1.0
@@ -67,6 +74,46 @@ def test_forecast_csv_loader_and_reload(tmp_path):
     r = s.api_data_load({"example": "steel_power"})
     r = s.api_data_load({"forecast_reload": {"L": 48, "H": 12}})            # 예시도 길이만 바꿔 다시
     assert r["summary"]["length"] == 48 and r["summary"]["forecast"]["horizon"] == 12 and r["summary"]["example"] == "steel_power"
+    r = s.api_data_load({"forecast_reload": {"calendar": False}})           # 요일·시각 끄기 (프로젝트를 다시 열 때도)
+    assert r["summary"]["forecast"]["calendar"] == [] and r["summary"]["length"] == 48 and "channels" not in r["summary"]
+    assert s.load_source(s.data.source)["forecast"]["calendar"] == []
+
+
+def test_calendar_channels_and_time_column():
+    t = np.array(["2018-01-01T00", "2018-01-01T06", "2018-01-02T00"], dtype="datetime64[s]")   # 2018-01-01 = 월요일
+    c, names = forecast.calendar(t)
+    assert names == ["시각 sin", "시각 cos", "요일 sin", "요일 cos"]
+    assert np.allclose(c[:2, 0], [0, 1]) and np.allclose(c[:2, 1], [1, 0], atol=1e-12)        # 0시 · 6시
+    assert np.allclose(c[2:, 0], [0, 1]) and np.allclose(c[2:, 2], [np.sin(2 * np.pi / 7), np.cos(2 * np.pi / 7)])
+    days = np.array(["2018-01-01", "2018-01-02"], dtype="datetime64[s]")
+    assert forecast.calendar(days)[1] == ["요일 sin", "요일 cos"]                              # 하루 간격: 시각은 늘 같아 뺌
+    assert forecast.calendar(np.array(["2018-01-01", "2018-01-08"], dtype="datetime64[s]"))[0] is None
+    assert str(forecast.parse_times(["13/01/2018 00:15", "13/01/2018 00:30"])[0]) == "2018-01-13T00:15:00"
+    assert str(forecast.parse_times(["01/02/2018 00:00", "02/02/2018 00:00"])[1]) == "2018-02-02T00:00:00"   # 늘어나는 쪽 (일/월)
+    assert forecast.parse_times(["2018-01-01", "어제"]) is None and forecast.parse_times(["2018-01-02", "2018-01-01"]) is None
+
+
+def test_forecast_csv_with_time_column_predicts_with_calendar(tmp_path):
+    from dlstudio.core import Studio
+    from dlstudio.predict import read_new
+    t0 = np.datetime64("2026-03-02T00:00")
+    v = [100 + 50 * ((i // 24) % 7 < 5) + 10 * np.sin(i / 24 * 2 * np.pi) for i in range(24 * 40)]
+    rows = ["시각,전력"] + [f"{str(t0 + np.timedelta64(i, 'h')).replace('T', ' ')},{x:.3f}" for i, x in enumerate(v)]
+    f = tmp_path / "power.csv"
+    f.write_text("\n".join(rows), encoding="utf-8")
+    s = Studio()
+    r = s.api_data_load({"path": str(f), "task": "forecast", "L": 48, "H": 12})
+    fc = r["summary"]["forecast"]
+    assert fc["time_column"] == "시각" and len(fc["calendar"]) == 4 and r["summary"]["channels"] == 5
+    d = s.data
+    got = read_new(d, {"path": str(f)})                                     # 끝 48개 + 그 시각의 시각·요일 채널
+    assert got["X"].shape == (1, 5 * 48) and np.allclose(got["X"][0, :48] * d.std[0] + d.mean[0], v[-48:], atol=1e-3)
+    assert np.allclose(got["X"][0, 48:], forecast.calendar(np.datetime64("2026-03-02T00:00", "s")
+                                                             + np.arange(24 * 40 - 48, 24 * 40) * np.timedelta64(3600, "s"))[0].ravel(), atol=1e-6)
+    g = tmp_path / "no_time.csv"
+    g.write_text("\n".join(["전력"] + [f"{x:.3f}" for x in v]), encoding="utf-8")
+    with pytest.raises(Exception, match="시각 열"):
+        read_new(d, {"path": str(g)})
 
 
 # ---------------------------------------------------------------- 이상 탐지
@@ -193,7 +240,7 @@ def test_engine_trains_and_python_builds_same_result(tmp_path, kind, tid):
     net.load_state_dict({k: torch.tensor(v["data"]).reshape(v["shape"]).to(net.state_dict()[k].dtype)
                          for k, v in o["state"].items()})
     with torch.no_grad():
-        out = net(torch.as_tensor(to_model_input(net.kind, d.X_test), dtype=torch.float32)).numpy()
+        out = net(torch.as_tensor(to_model_input(net.kind, d.X_test, channels=getattr(d.length, "channels", 1)), dtype=torch.float32)).numpy()
     assert np.allclose(out.ravel(), o["out"], rtol=1e-4, atol=1e-3 * max(1.0, float(np.abs(out).max())))
     full = task_result(d, np.asarray(o["out"]).reshape(len(d.X_test), -1), np.asarray(o["outTr"]).reshape(len(d.X_train), -1))
     json.dumps(full)

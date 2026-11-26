@@ -87,6 +87,8 @@ class Studio:
             if src.get("task") != "forecast":
                 raise UserError("지금 데이터는 시계열 예측 데이터가 아님", "② 데이터에서 시계열 예측 데이터를 불러오세요")
             src.update({k: b["forecast_reload"].get(k) for k in ("column", "L", "H", "stride") if b["forecast_reload"].get(k)})
+            if "calendar" in b["forecast_reload"]:
+                src["calendar"] = bool(b["forecast_reload"]["calendar"])
             return {"summary": self.load_source(src), "source": self.data.source}
         if b.get("roles_reload"):                           # ② 역할 표: 지금 CSV를 열 역할·채널 수만 바꿔 다시
             src = dict(self.need_data().source or {})
@@ -115,14 +117,14 @@ class Studio:
             path = _path(b.get("path"))
             if not os.path.isfile(path):
                 raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
-            d = load_forecast_csv(path, b.get("column"), b.get("L"), b.get("H"), b.get("stride"), **opts)
+            d = load_forecast_csv(path, b.get("column"), b.get("L"), b.get("H"), b.get("stride"), calendar=b.get("calendar", True), **opts)
             self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
             return {"summary": d.summary(), "source": d.source}
         if b.get("example"):
             kind = b["example"] if isinstance(b["example"], str) else "ecg"
             if kind not in EXAMPLE_KINDS and kind not in ALIASES:
                 raise UserError(f"예시 데이터 종류를 모름: {kind}", ", ".join(EXAMPLE_KINDS))
-            d = load_example(kind, **opts, **{k: b[k] for k in ("L", "H", "stride") if b.get(k)})
+            d = load_example(kind, **opts, **{k: b[k] for k in ("L", "H", "stride") if b.get(k)}, calendar=b.get("calendar", True))
         elif b.get("series_folder"):
             lf = _path(b.get("label_file")) or None
             col = b.get("column", "")
@@ -618,10 +620,11 @@ class Studio:
         src = dict(source)
         load = {k: src[k] for k in ("normalize", "test_ratio", "seed", "normal") if k in src}
         if src.get("task") == "forecast" and not src.get("example"):
-            return self.api_data_load(dict(load, task="forecast", path=src.get("path"),
+            return self.api_data_load(dict(load, task="forecast", path=src.get("path"), calendar=src.get("calendar", True),
                                            **{k: src.get(k) for k in ("column", "L", "H", "stride")}))["summary"]
         if src.get("example"):
-            return self.api_data_load(dict(load, example=src["example"], **{k: src[k] for k in ("L", "H", "stride") if src.get(k)}))["summary"]
+            return self.api_data_load(dict(load, example=src["example"], calendar=src.get("calendar", True),
+                                           **{k: src[k] for k in ("L", "H", "stride") if src.get(k)}))["summary"]
         if src.get("folder") and src.get("det_file"):
             return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 64), det_file=src["det_file"]))["summary"]
         if src.get("folder"):
@@ -657,6 +660,8 @@ class Studio:
         trained = (self.model is not None or self.web) and self.model_graph is not None and _same_model(graph, self.model_graph)
         heads = d.n_out.heads if d.task == "multi" else None
         info = {"task": d.task, "classes": list(d.classes) if d.task in ("classification", "detection") else []}
+        if d.task == "forecast" and (d.extra or {}).get("calendar"):
+            info["calendar"] = list(d.extra["calendar"])
         if heads:
             info["heads"] = heads
         settings = b.get("settings") or self.train_settings or {}

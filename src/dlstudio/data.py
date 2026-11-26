@@ -201,11 +201,14 @@ class Dataset:
 
     def _fc_summary(self) -> dict:
         e, y = self.extra, np.concatenate([self.y_train, self.y_test])
-        raw = self.raw(self.X_train)
+        from dlstudio.forecast import history
+        raw = history(self, self.X_train)
         picks = sorted({int(round(i)) for i in np.linspace(0, len(raw) - 1, 6)})
         return dict(self._base_summary(), class_counts={}, feature_means=None, features=[],
                     target_range=[float(y.min()), float(y.max())],
-                    forecast={k: e[k] for k in ("horizon", "stride", "column", "columns", "n_points")},
+                    forecast={**{k: e[k] for k in ("horizon", "stride", "column", "columns", "n_points")},
+                              "has_times": bool(e.get("has_times")), "calendar": list(e.get("calendar") or []),
+                              "time_column": e.get("time_column")},
                     preview=[{"label": f"→ 다음 {e['horizon']}개", "values": [round(float(v), 5) for v in raw[i]],
                               "future": [round(float(v), 5) for v in self.y_train[i]]} for i in picks])
 
@@ -1026,7 +1029,14 @@ EXAMPLES = {
     "pneumonia": ("pneumonia28", lambda z: (_float(z["X"]) / 255.0, z["y"].astype(np.int64)), ["정상", "폐렴"], None, (28, 28)),
     "digits": ("digits32", lambda z: (_float(z["X"]), z["y"].astype(np.int64)), [str(i) for i in range(10)], None, (32, 32)),
 }
-FC_EXAMPLES = {"steel_power": ("steel_power", "전력 사용량 (kWh)", 96, 24, 1)}   # 종류 → (파일, 열 이름, 입력·예측 길이, 간격)
+FC_EXAMPLES = {"steel_power": ("steel_power", "전력 사용량 (kWh)", 168, 24, 1, "2018-01-01T00", 3600)}
+# 종류 → (파일, 열 이름, 입력·예측 길이, 간격, 첫 시각, 시점 간격 (초)): series_new는 series 바로 뒤에 이어짐
+
+
+def _fc_times(kind: str, start: int, n: int) -> np.ndarray:
+    """예시 예측 데이터의 시각: 첫 시각부터 start번째 점부터 n개."""
+    t0, step = FC_EXAMPLES[kind][5:7]
+    return np.datetime64(t0, "s") + (start + np.arange(n)) * np.timedelta64(step, "s")
 AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic", "steelblast_ae": "steelblast",
                "pneumonia_ae": "pneumonia"}         # 이상 탐지: 분류 예시를 정상만 학습으로
 DET_EXAMPLES = {"pcb_det": ("pcb_det", 64)}                                    # 탐지: 종류 → (파일, 그림 크기)
@@ -1063,9 +1073,12 @@ def example_new(d) -> dict:
     if kind not in EXAMPLE_KINDS:
         raise DataError([Issue(None, None, "예시 데이터로 학습한 모델이 아님", "내 데이터는 CSV·폴더로 예측하세요")])
     if kind in FC_EXAMPLES:
-        from dlstudio.forecast import windows
-        H = int(d.extra["horizon"])
-        X, Y = windows(_npz(FC_EXAMPLES[kind][0])["series_new"], int(d.length), H, H)
+        from dlstudio.forecast import calendar, window_channels
+        H, L, z = int(d.extra["horizon"]), int(d.length), _npz(FC_EXAMPLES[kind][0])
+        ext = np.concatenate([z["series"], z["series_new"]])    # 맞힐 값은 series_new의 끝 10번 (입력은 그 앞, series 끝까지 가도 됨)
+        s0 = max(len(z["series"]), len(ext) - 10 * H, L)
+        cal = calendar(_fc_times(kind, 0, len(ext)))[0] if d.extra.get("calendar") else None
+        X, Y = window_channels(ext[s0 - L:], None if cal is None else cal[:, s0 - L:], L, H, H)
         if not len(X):
             raise DataError([Issue(None, None, f"예시 새 데이터가 입력 길이 {d.length}보다 짧음", "② 데이터에서 입력 길이를 줄이세요")])
         return {"names": [f"새 데이터 {i + 1}" for i in range(len(X))], "X": X, "labels": None, "truth": Y}
@@ -1103,16 +1116,18 @@ def _det_arrays(z: dict) -> tuple:
 
 
 def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 0.2, seed: int = 0,
-                 L=None, H=None, stride=None) -> Dataset:
+                 L=None, H=None, stride=None, calendar: bool = True) -> Dataset:
     """예시 데이터 (모두 공개된 실제 데이터, 출처는 dlstudio/data/*.SOURCE.txt). 예전 합성 예시 이름은 ALIASES로 바꿔 읽음."""
     kind = ALIASES.get(kind, kind)
     if kind not in EXAMPLE_KINDS:
         raise ValueError(f"예시 데이터 종류는 {', '.join(EXAMPLE_KINDS)} 중 하나: {kind}")
     if kind in FC_EXAMPLES:
         from dlstudio.forecast import make_forecast_dataset
-        f, col, L0, H0, s0 = FC_EXAMPLES[kind]
-        return make_forecast_dataset(_npz(f)["series"], int(L or L0), int(H or H0), int(stride or s0), test_ratio=test_ratio,
-                                     normalize=normalize, source={"example": kind}, column=col)
+        f, col, L0, H0, s0 = FC_EXAMPLES[kind][:5]
+        v = _npz(f)["series"]
+        return make_forecast_dataset(v, int(L or L0), int(H or H0), int(stride or s0), test_ratio=test_ratio,
+                                     normalize=normalize, source={"example": kind}, column=col, times=_fc_times(kind, 0, len(v)),
+                                     use_calendar=calendar, time_column="시각")
     if kind in SEG_EXAMPLES:
         from dlstudio.segment import make_segment_dataset
         f, chans = SEG_EXAMPLES[kind]

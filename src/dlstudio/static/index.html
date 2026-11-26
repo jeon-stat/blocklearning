@@ -134,6 +134,7 @@
           <label>예측 길이 (다음 몇 개를 맞힐지) <input id="fc-H" type="number" min="1" max="1024"></label>
           <label>간격 (창을 몇 칸씩 옮길지) <input id="fc-stride" type="number" min="1" max="1000"></label>
         </div>
+        <label class="check" id="fc-cal-box" hidden><input id="fc-cal" type="checkbox" checked> 요일·시각도 넣기 (<span id="fc-time-col"></span> 열)</label>
         <div class="row"><button id="btn-fc-reload">이 설정으로 다시 만들기</button><span class="muted" id="fc-note"></span></div>
       </div>
       <h3>샘플 미리보기</h3>

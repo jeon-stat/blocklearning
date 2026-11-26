@@ -86,7 +86,15 @@ def _read_forecast(d, path: str) -> tuple:
     L = int(d.length)
     if len(v) < L:
         raise _err(f"값이 {len(v)}개 (모델은 지난 {L}개를 봄)", f"'{col}' 열에 값이 {L}개 이상 있는 CSV를 고르세요")
-    return [f"'{col}' 끝 다음"], v[-L:][None], None
+    x = v[-L:]
+    if d.extra.get("calendar"):                             # 시각·요일 채널로 학습한 모델: 이 CSV에도 시각 열이 있어야 함
+        from dlstudio.forecast import calendar, find_times
+        tcol, t = find_times(names, rows, nums)
+        cal, cn = calendar(t[-L:]) if t is not None else (None, [])
+        if cal is None or cn != list(d.extra["calendar"]):
+            raise _err("시각 열이 없거나 간격이 학습 때와 다름", "학습 때처럼 날짜·시각 열이 있는 CSV를 고르세요 (예: 2018-01-01 00:00)")
+        x = np.concatenate([x, cal.ravel()])
+    return [f"'{col}' 끝 다음"], x[None], None
 
 
 def _read_csv(d, path: str) -> tuple:
@@ -198,7 +206,8 @@ def _table_det(d, names: list, out: np.ndarray, X, truth=None) -> dict:
 def _table_fc_many(d, names, out: np.ndarray, X, truth) -> dict:
     """예측 (예시 새 데이터): 창마다 다음 H개와 실제 값, 평균 오차."""
     truth = np.asarray(truth, dtype=np.float64)
-    hist = d.raw(np.asarray(X, dtype=np.float64))
+    from dlstudio.forecast import history
+    hist = history(d, X)
     err = np.abs(out - truth)
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -216,7 +225,8 @@ def _table_fc_many(d, names, out: np.ndarray, X, truth) -> dict:
 def _table_fc(d, out: np.ndarray, X) -> dict:
     """예측: 다음 H개 (칸마다 한 줄) + 그림용 지난 값."""
     pred = out[0]
-    hist = d.raw(np.asarray(X[0], dtype=np.float64))
+    from dlstudio.forecast import history
+    hist = history(d, X[0])
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["몇 칸 뒤", "예측"])

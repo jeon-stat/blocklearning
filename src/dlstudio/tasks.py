@@ -300,7 +300,7 @@ CATALOG = [
          {"id": "fc_ts", "name": "시계열 예측", "input": "timeseries", "available": True, "task": "forecast",
           "desc": "긴 신호 하나의 지난 구간을 보고 다음 몇 시점의 값을 예측. 시험은 신호의 뒤쪽 구간 (미래를 미리 보지 않게)",
           "examples_text": "다음 날 공장 전력 사용량, 다음 1시간 설비 온도, 다음 주 생산량",
-          "example_data": [["steel_power", "철강 공장 전력 사용량 — 지난 4일로 다음 하루 (제조, 1시간마다)"]],
+          "example_data": [["steel_power", "철강 공장 전력 사용량 — 지난 일주일로 다음 하루 (제조, 1시간마다)"]],
           "templates": [T_FC_LINEAR, T_FC_MLP, T_FC_CNN, T_LSTM, T_TRANSFORMER]},
      ]},
     {"id": "segmentation", "name": "구간 분할", "icon": "✂️",

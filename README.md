@@ -65,7 +65,7 @@ python -m dlstudio          # 또는 dlstudio
 | 이상 탐지 · 시계열 | 베어링 진동 — 정상만 학습해 결함 찾기 (오타와대, CC BY 4.0) | Dense 오토인코더, Conv 오토인코더 |
 | 이상 탐지 · 표 | 유압 시스템 — 정상만 학습해 냉각기·밸브·펌프 고장 찾기 (UCI, CC BY 4.0) | 오토인코더 |
 | 이상 탐지 · 이미지 | 강판 표면 — 양호만 학습해 불량 찾기 (SteelBlastQC) / 흉부 X-ray — 정상만 학습해 폐렴 찾기 (PneumoniaMNIST) | 사전학습 특징 + 정상과의 거리 |
-| 예측 · 시계열 | 철강 공장 전력 사용량 1시간마다 — 지난 4일로 다음 하루 ([UCI, 광양 철강 공장](https://archive.ics.uci.edu/dataset/851), CC BY 4.0) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
+| 예측 · 시계열 | 철강 공장 전력 사용량 1시간마다 — 지난 일주일과 요일·시각으로 다음 하루 ([UCI, 광양 철강 공장](https://archive.ics.uci.edu/dataset/851), CC BY 4.0) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
 | 분류 · 이미지 | 강판 표면 양호·불량 64×64 ([SteelBlastQC](https://doi.org/10.34894/EKZNN0), CC BY 4.0) / 흉부 X-ray 정상·폐렴 28×28 ([PneumoniaMNIST](https://medmnist.com/), CC BY 4.0, 진단용 아님) / 손글씨 숫자 32×32 ([UCI](https://archive.ics.uci.edu/dataset/80), CC BY 4.0) | 작은 CNN, LeNet식, 작은 ResNet, 전이 학습 (MobileNetV3), CNN + Transformer, ViT |
 | 구간 분할 · 시계열 | 출하 검사 기계 전류 100Hz — 시점마다 공정 단계 5묶음 / 같은 기계 전류 + 공압 압력 두 채널 ([Mendeley ypzswhhzh9](https://doi.org/10.17632/ypzswhhzh9.3), CC BY 4.0) | TCN (팽창 합성곱), U-Net식, 양방향 GRU |
 | 여러 정답 · 표 | 유압 시스템 — 냉각기·펌프 상태(분류)와 밸브 %·축압기 압력(숫자)을 한 번에 (UCI, CC BY 4.0) | MLP (몸통 함께 쓰기), 깊은 MLP (몸통 함께 쓰기) |

@@ -64,8 +64,9 @@ IDS = [c[0] for c in CASES]
 
 
 def _model_input(net, L, image, n=3, seed=0):
-    X = np.random.default_rng(seed).normal(size=(n, image[0] * image[1] if image else L))
-    return torch.as_tensor(to_model_input(net.kind, X, image=image), dtype=torch.float32)
+    C = getattr(L, "channels", 1)
+    X = np.random.default_rng(seed).normal(size=(n, image[0] * image[1] if image else int(L) * C))
+    return torch.as_tensor(to_model_input(net.kind, X, image=image, channels=C), dtype=torch.float32)
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)

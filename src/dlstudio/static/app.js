@@ -522,7 +522,7 @@ function csvFormat(sub) {                                // CSV 모양 예시 (�
     const rows = [["시각", "온도", "전력"], ["2026-03-01 00:00", "21.4", "310.2"], ["2026-03-01 01:00", "21.1", "298.7"], ["…", "…", "…"]];
     return `<p>한 행 = 한 시점 (시간 순서대로), 열 = 측정 항목. <b>맞힐 값 열</b>은 불러온 뒤 고릅니다 (처음엔 마지막 숫자 열).</p>` +
       `<table class="tab"><tr>${rows[0].map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>` +
-      `<p class="muted">시각 같은 글자 열은 있어도 됩니다 (쓰지 않음). 빈 칸은 앞뒤 값으로 메웁니다. 시험은 뒤쪽 ${Math.round((Number($("test-ratio").value) || 0.2) * 100)}% 구간.</p>`;
+      `<p class="muted">날짜·시각 열이 있으면 요일·시각을 함께 봅니다. 빈 칸은 앞뒤 값으로 메웁니다. 시험은 뒤쪽 ${Math.round((Number($("test-ratio").value) || 0.2) * 100)}% 구간.</p>`;
   }
   if (sub && sub.task === "segmentation") {
     const rows = [["시각", "전류", "압력", "상태"], ["0.00", "0.46", "6.69", "대기"], ["0.01", "0.56", "6.68", "대기"], ["0.02", "1.83", "6.52", "동작"], ["…", "…", "…", "…"]];
@@ -612,7 +612,8 @@ function onData(s) {
   renderRoleBox(s);
   if (det) cards.push(["상자", `${s.detection.n_boxes}개`], ["격자", `${s.detection.grid}×${s.detection.grid}칸`]);
   if (s.dropped_rows) cards.push(["빈 칸이 있어 뺀 행", s.dropped_rows]);
-  if (s.channels > 1) cards.push(["채널", (s.channel_names || []).length ? s.channel_names.map(esc).join(" · ") : `${s.channels}개`]);
+  if (fc && fc.calendar.length) cards.push(["함께 보는 값", fc.calendar.some((c) => c.startsWith("시각")) ? "요일 · 시각" : "요일"]);
+  else if (s.channels > 1) cards.push(["채널", (s.channel_names || []).length ? s.channel_names.map(esc).join(" · ") : `${s.channels}개`]);
   if (multi) for (const t of s.targets) cards.push([`정답 '${esc(t.name)}'`, t.kind === "class" ? `${t.classes.length}클래스`
     : `${Number(t.range[0].toPrecision(3))} ~ ${Number(t.range[1].toPrecision(3))}`]);
   if (s.target_range) cards.push(["정답 범위", `${Number(s.target_range[0].toPrecision(3))} ~ ${Number(s.target_range[1].toPrecision(3))}`]);
@@ -740,10 +741,13 @@ function renderFcBox(s) {                               // 예측 데이터: 맞
   $("fc-column").innerHTML = fc.columns.map((c) => `<option${c === fc.column ? " selected" : ""}>${esc(c)}</option>`).join("");
   $("fc-column").disabled = fc.columns.length < 2;
   $("fc-L").value = s.length; $("fc-H").value = fc.horizon; $("fc-stride").value = fc.stride;
+  $("fc-cal-box").hidden = !fc.has_times;
+  $("fc-cal").checked = fc.calendar.length > 0;
+  $("fc-time-col").textContent = fc.time_column || "";
   $("fc-note").textContent = `시험은 뒤쪽 구간 (시간 순서 그대로 나눠 미래를 미리 보지 않음). 학습 창 ${s.n_train}개 · 시험 창 ${s.n_test}개`;
 }
 $("btn-fc-reload").onclick = () => loadData({ forecast_reload: { column: $("fc-column").value, L: Number($("fc-L").value) || 0,
-  H: Number($("fc-H").value) || 0, stride: Number($("fc-stride").value) || 0 } });
+  H: Number($("fc-H").value) || 0, stride: Number($("fc-stride").value) || 0, calendar: $("fc-cal").checked } });
 $("btn-csv").onclick = () => {
   if (!pathVal("csv-path")) return showMessage("CSV 파일 경로를 넣으세요", "예: C:\\data\\ecg.csv");
   const o = Object.assign(dataOptions(), { path: pathVal("csv-path") });

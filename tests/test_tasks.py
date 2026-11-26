@@ -54,7 +54,7 @@ def test_every_template_checks_and_converts_on_its_example(fam, sub, t):
     c = check_graph(g, d.length, d.n_out, image=d.image)
     assert c.ok, (t["id"], c.issues)
     m = build_graph_model(g, d.length, d.n_out, image=d.image).eval()
-    Xi = to_model_input(c.kind, d.X_train[:16], image=d.image)
+    Xi = to_model_input(c.kind, d.X_train[:16], image=d.image, channels=getattr(d.length, "channels", 1))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         he = _Run(m)
