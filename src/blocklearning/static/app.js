@@ -2035,7 +2035,7 @@ $("code-save").onclick = async () => {
   try {
     const r = await api("/api/code/save", { graph: st.graph, framework: codeFw, settings: trainSettings(), path });
     fetchBack(r.files);
-    showMessage(`저장했음: ${r.files.join(", ")}`, r.files.length > 1 ? "가중치 파일(.pt)을 코드와 같은 폴더에 두세요" : "", "", true);
+    showMessage(`저장했음: ${r.files.join(", ")}`, r.files.length > 1 ? "가중치 파일(.npz)을 코드와 같은 폴더에 두세요" : "", "", true);
   } catch (e) { showError(e); }
 };
 
