@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>BlockLearning 사용 설명서</title>
+<meta name="description" content="BlockLearning 설치부터 사용까지: 웹에서 바로 쓰기, 내 PC에 설치, GPU로 학습, GPU 서버에서 쓰기, 단계별 사용법, 문제 해결">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css" integrity="sha384-uR1wgObmx89ZQ4VVXHdzjbDJZ1PvBK01K+E3GebmaBKdZ87qRJvBWPoPbzWeEd5T" crossorigin="anonymous">
+<style>
+  :root {
+    --bg: #f7f8fb; --card: #ffffff; --text: #1b2130; --muted: #5f6b7d; --line: #e4e7ee;
+    --accent: #4f46e5; --accent-2: #7c3aed; --accent-soft: #eef0ff; --code-bg: #141824; --code-text: #e7eaf3;
+    --tip-bg: #ecfdf5; --tip-line: #10b981; --warn-bg: #fff7ed; --warn-line: #f59e0b; --shadow: 0 1px 2px rgba(20,24,40,.05), 0 8px 24px rgba(20,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218; --card: #171b24; --text: #e7eaf1; --muted: #9aa4b5; --line: #2a303c;
+      --accent: #8b8cff; --accent-2: #b28cff; --accent-soft: #23264a; --code-bg: #0b0e14; --code-text: #e7eaf3;
+      --tip-bg: #10241d; --tip-line: #34d399; --warn-bg: #2a1f0f; --warn-line: #fbbf24; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.75 "Pretendard Variable", Pretendard, "Malgun Gothic", system-ui, sans-serif; word-break: keep-all; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .9em; background: var(--accent-soft); padding: 1px 6px; border-radius: 6px; word-break: break-all; }
+
+  .hero { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #fff; padding: 56px 16px 64px; }
+  .hero-in { max-width: 1120px; margin: 0 auto; }
+  .hero .eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .02em; background: rgba(255,255,255,.16); padding: 4px 12px; border-radius: 999px; }
+  .hero h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.25; margin: 16px 0 12px; letter-spacing: -.02em; }
+  .hero p { font-size: 18px; margin: 0; opacity: .92; max-width: 640px; }
+  .hero .cta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 28px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 11px 20px; border-radius: 12px; font-weight: 600; text-decoration: none; font-size: 15px; }
+  .btn.white { background: #fff; color: #4338ca; }
+  .btn.ghost { background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.35); }
+
+  .layout { max-width: 1120px; margin: 0 auto; padding: 0 16px 80px; display: grid; grid-template-columns: 1fr; gap: 32px; }
+  @media (min-width: 1000px) { .layout { grid-template-columns: 220px minmax(0, 1fr); } }
+  nav.toc { display: none; }
+  @media (min-width: 1000px) {
+    nav.toc { display: block; position: sticky; top: 24px; align-self: start; margin-top: 32px; font-size: 14px; }
+    nav.toc b { display: block; font-size: 12px; color: var(--muted); letter-spacing: .06em; margin: 0 0 8px 12px; }
+    nav.toc a { display: block; color: var(--muted); text-decoration: none; padding: 6px 12px; border-radius: 8px; border-left: 2px solid transparent; }
+    nav.toc a:hover { color: var(--text); background: var(--card); }
+    nav.toc a.on { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  }
+  .toc-inline { margin-top: -28px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 20px; box-shadow: var(--shadow); }
+  .toc-inline ol { margin: 6px 0 0; padding-left: 20px; columns: 2; column-gap: 24px; font-size: 15px; }
+  @media (min-width: 1000px) { .toc-inline { display: none; } }
+  @media (max-width: 520px) { .toc-inline ol { columns: 1; } }
+
+  main { min-width: 0; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 28px 28px 24px; margin-top: 32px; box-shadow: var(--shadow); }
+  @media (max-width: 600px) { section { padding: 22px 18px 18px; border-radius: 16px; } }
+  h2 { font-size: 24px; margin: 0 0 6px; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+  h2 .num { flex: none; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 16px; display: inline-flex; align-items: center; justify-content: center; }
+  h3 { font-size: 18px; margin: 28px 0 6px; }
+  .lead { color: var(--muted); margin: 0 0 12px; }
+  p, li { margin: 6px 0; }
+  ul, ol { padding-left: 22px; }
+
+  .steps { list-style: none; padding: 0; margin: 16px 0 0; counter-reset: s; }
+  .steps > li { position: relative; padding: 0 0 18px 48px; margin: 0; counter-increment: s; }
+  .steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .steps > li::after { content: ""; position: absolute; left: 15px; top: 36px; bottom: 4px; width: 2px; background: var(--line); }
+  .steps > li:last-child::after { display: none; }
+  .steps > li > b:first-child { display: block; font-size: 17px; margin-bottom: 2px; }
+
+  pre { position: relative; background: var(--code-bg); color: var(--code-text); border-radius: 12px; padding: 14px 16px; margin: 10px 0; overflow-x: auto; font: 14px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace; }
+  pre code { background: none; padding: 0; font-size: inherit; color: inherit; word-break: normal; white-space: pre; }
+  pre .copy { position: absolute; top: 8px; right: 8px; font: 600 12px/1 inherit; font-family: "Pretendard Variable", Pretendard, system-ui, sans-serif; color: #c9cee0; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+  pre .copy:hover { background: rgba(255,255,255,.16); }
+  pre.has-copy { padding-right: 76px; }
+
+  .callout { border-left: 4px solid var(--tip-line); background: var(--tip-bg); border-radius: 0 12px 12px 0; padding: 12px 16px; margin: 14px 0; }
+  .callout.warn { border-left-color: var(--warn-line); background: var(--warn-bg); }
+  .callout b:first-child { display: block; }
+
+  .compare { width: 100%; border-collapse: separate; border-spacing: 0; margin: 14px 0; font-size: 15px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .compare th, .compare td { padding: 11px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+  .compare tr:last-child td, .compare tr:last-child th { border-bottom: 0; }
+  .compare thead th { background: var(--accent-soft); color: var(--accent); font-size: 14px; }
+  .compare tbody th { color: var(--muted); font-weight: 600; white-space: nowrap; width: 1%; }
+  .table-wrap { overflow-x: auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 14px 0; }
+  .card { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: var(--bg); }
+  .card b { display: block; margin-bottom: 2px; }
+  .card span { color: var(--muted); font-size: 14px; }
+
+  figure { margin: 16px 0 8px; }
+  figure img { width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+  figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; text-align: center; }
+
+  details { border: 1px solid var(--line); border-radius: 12px; padding: 0 16px; margin: 10px 0; background: var(--bg); }
+  details summary { cursor: pointer; font-weight: 600; padding: 13px 0; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: "＋"; color: var(--accent); margin-right: 8px; }
+  details[open] summary::before { content: "－"; }
+  details > *:last-child { margin-bottom: 14px; }
+
+  kbd { font: 600 13px ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 1px 6px; background: var(--card); }
+  .ui { font-weight: 600; color: var(--accent); }
+  footer { max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-in">
+    <span class="eyebrow">사용 설명서</span>
+    <h1>BlockLearning<br>설치부터 학습까지</h1>
+    <p>블록을 이어 딥러닝 모델을 만들고, 학습하고, 결과를 보는 도구입니다. 코드를 몰라도 이 설명서만 따라 하면 됩니다.</p>
+    <div class="cta">
+      <a class="btn white" href="https://jeon-stat.github.io/blocklearning/">웹에서 바로 시작</a>
+      <a class="btn ghost" href="#install">내 PC에 설치하기</a>
+      <a class="btn ghost" href="https://github.com/jeon-stat/blocklearning">GitHub</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="목차">
+    <b>목차</b>
+    <a href="#what">무엇을 할 수 있나</a>
+    <a href="#choose">웹과 설치형 고르기</a>
+    <a href="#web">웹에서 바로 쓰기</a>
+    <a href="#install">내 PC에 설치하기</a>
+    <a href="#gpu">GPU로 학습하기</a>
+    <a href="#server">GPU 서버에서 쓰기</a>
+    <a href="#use">사용 순서</a>
+    <a href="#save">저장과 내보내기</a>
+    <a href="#label">라벨링</a>
+    <a href="#faq">문제 해결</a>
+  </nav>
+
+  <main>
+    <div class="toc-inline">
+      <b>목차</b>
+      <ol>
+        <li><a href="#what">무엇을 할 수 있나</a></li>
+        <li><a href="#choose">웹과 설치형 고르기</a></li>
+        <li><a href="#web">웹에서 바로 쓰기</a></li>
+        <li><a href="#install">내 PC에 설치하기</a></li>
+        <li><a href="#gpu">GPU로 학습하기</a></li>
+        <li><a href="#server">GPU 서버에서 쓰기</a></li>
+        <li><a href="#use">사용 순서</a></li>
+        <li><a href="#save">저장과 내보내기</a></li>
+        <li><a href="#label">라벨링</a></li>
+        <li><a href="#faq">문제 해결</a></li>
+      </ol>
+    </div>
+
+    <!-- 1 -->
+    <section id="what">
+      <h2><span class="num">1</span>무엇을 할 수 있나</h2>
+      <p class="lead">데이터를 넣고, 블록으로 모델을 짜고, 바로 학습해 결과를 봅니다.</p>
+      <div class="cards">
+        <div class="card"><b>분류·회귀</b><span>신호·표·흑백 이미지를 보고 종류를 맞히거나 숫자를 예측</span></div>
+        <div class="card"><b>이상 탐지</b><span>정상 데이터만으로 학습해 평소와 다른 것을 찾기</span></div>
+        <div class="card"><b>객체 탐지·구간 분할</b><span>그림 속 사물 위치 찾기, 긴 신호의 시점마다 상태 표시</span></div>
+        <div class="card"><b>시계열 예측</b><span>지금까지의 흐름으로 앞으로의 값 예측</span></div>
+      </div>
+      <p>순서는 늘 같습니다: <span class="ui">① 과제</span> → <span class="ui">② 데이터</span> → <span class="ui">③ 모델</span> → <span class="ui">④ 학습</span> → <span class="ui">⑤ 예측</span>. 학습한 모델은 PyTorch 코드나 파일로 내보내 다른 곳에서 쓸 수 있습니다.</p>
+      <div class="callout warn"><b>교육·실험용 도구입니다</b>학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.</div>
+    </section>
+
+    <!-- 2 -->
+    <section id="choose">
+      <h2><span class="num">2</span>웹과 설치형 고르기</h2>
+      <p class="lead">화면과 쓰는 법은 같습니다. 어디서 계산하느냐가 다릅니다.</p>
+      <div class="table-wrap">
+      <table class="compare">
+        <thead><tr><th></th><th>웹 버전</th><th>설치형 (내 PC·서버)</th></tr></thead>
+        <tbody>
+          <tr><th>시작</th><td>주소만 열면 끝</td><td>Python과 명령 두 줄 (처음 한 번)</td></tr>
+          <tr><th>학습</th><td>브라우저 안에서 (그래픽카드를 WebGL로 빌려 씀)</td><td>PyTorch로, NVIDIA GPU가 있으면 GPU로</td></tr>
+          <tr><th>잘 맞는 일</th><td>처음 써 보기, 예시·작은 데이터</td><td>큰 데이터·큰 모델, 빠른 학습, GPU 서버</td></tr>
+          <tr><th>자동 저장</th><td>이 브라우저 또는 내 구글 드라이브</td><td>그 컴퓨터의 <code>BlockLearning/projects</code> 폴더</td></tr>
+          <tr><th>데이터</th><td>브라우저 밖으로 나가지 않음</td><td>그 컴퓨터 밖으로 나가지 않음</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout"><b>어느 쪽부터?</b>처음이면 웹 버전으로 예시 데이터를 한 번 돌려 보세요. 내 데이터가 크거나 GPU로 빨리 학습하고 싶어지면 설치형을 쓰면 됩니다.</div>
+    </section>
+
+    <!-- 3 -->
+    <section id="web">
+      <h2><span class="num">3</span>웹에서 바로 쓰기</h2>
+      <ol class="steps">
+        <li><b>주소 열기</b>Chrome이나 Edge 같은 최신 브라우저에서 <a href="https://jeon-stat.github.io/blocklearning/">jeon-stat.github.io/blocklearning</a> 을 엽니다.</li>
+        <li><b>잠시 기다리기</b>처음 열 때는 계산 프로그램을 받느라 10~20초 걸립니다. 두 번째부터는 빨라집니다.</li>
+        <li><b>새 프로젝트 누르기</b>첫 화면 <span class="ui">＋ 새 프로젝트</span>를 누르고 <a href="#use">사용 순서</a>대로 진행합니다.</li>
+      </ol>
+      <div class="callout warn"><b>저장 위치</b>프로젝트는 이 브라우저 안에 자동 저장됩니다. 브라우저의 사이트 데이터를 지우면 함께 사라지니, 중요한 것은 첫 화면의 <span class="ui">지금 프로젝트 내려받기</span>로 파일을 받아 두거나 <span class="ui">구글 드라이브</span> 탭에서 로그인해 드라이브에 저장하세요.</div>
+    </section>
+
+    <!-- 4 -->
+    <section id="install">
+      <h2><span class="num">4</span>내 PC에 설치하기</h2>
+      <p class="lead">처음 한 번만 하면 됩니다. Windows 기준이고, Mac은 같은 명령을 '터미널'에서 실행합니다 (<code>python</code> 대신 <code>python3</code>).</p>
+      <ol class="steps">
+        <li><b>명령창 열기</b>
+          <ul>
+            <li><b>주피터(Anaconda)를 쓰고 있다면:</b> 윈도우 키 → <code>Anaconda Prompt</code> 입력 → 엽니다. Python이 이미 들어 있어 2단계로 넘어갑니다.</li>
+            <li><b>아니라면:</b> 윈도우 키 → <code>powershell</code> 입력 → 엽니다.</li>
+          </ul>
+        </li>
+        <li><b>Python 확인</b>아래 명령을 붙여 넣고 <kbd>Enter</kbd>. <code>Python 3.10</code> 이상이 나오면 됩니다.
+<pre><code>python --version</code></pre>
+          <details><summary>아무것도 안 나오거나 Microsoft Store가 열리면</summary>
+            <p>Python이 없는 것입니다. <a href="https://www.python.org/downloads/">python.org/downloads</a> 에서 받은 설치 파일을 실행하고, 첫 화면 아래의 <b>"Add python.exe to PATH"를 꼭 체크</b>한 뒤 <span class="ui">Install Now</span>를 누릅니다. 설치가 끝나면 명령창을 닫았다가 새로 열고 다시 확인합니다.</p>
+          </details>
+        </li>
+        <li><b>NVIDIA 그래픽카드가 있으면: GPU용 PyTorch 먼저</b>그래픽카드가 없거나 잘 모르면 건너뛰어도 됩니다 (CPU로 학습). 자세한 것은 <a href="#gpu">GPU로 학습하기</a>.
+<pre><code>pip install torch --index-url https://download.pytorch.org/whl/cu126</code></pre>
+        </li>
+        <li><b>BlockLearning 설치</b>PyTorch까지 받느라 몇 분 걸릴 수 있습니다.
+<pre><code>pip install blocklearning</code></pre>
+        </li>
+        <li><b>실행</b>브라우저가 저절로 열리고 첫 화면 '내 프로젝트'가 나옵니다.
+<pre><code>python -m blocklearning</code></pre>
+          쓰는 동안 명령창은 닫지 마세요. 끝낼 때는 명령창에서 <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+        </li>
+      </ol>
+      <div class="callout"><b>다음부터는</b>명령창을 열고 <code>python -m blocklearning</code> 한 줄만 실행하면 됩니다. 새 버전으로 올릴 때는 <code>pip install -U blocklearning</code> (만든 프로젝트는 그대로 남습니다).</div>
+      <details><summary>주피터 노트북 셀에서 실행하고 싶다면</summary>
+        <p>첫 셀에서 설치하고,</p>
+<pre><code>%pip install -U blocklearning</code></pre>
+        <p>다음 셀에서 실행하면 브라우저 새 탭에 열립니다. 쓰는 동안 셀은 계속 실행 중(<code>[*]</code>)으로 남고, 끝낼 때는 주피터의 ■(중지) 버튼을 누릅니다.</p>
+<pre><code>import sys
+!{sys.executable} -m blocklearning</code></pre>
+      </details>
+      <details><summary>주소의 token(접속 열쇠)은 무엇인가요?</summary>
+        <p>실행할 때마다 새로 만들어지는 열쇠라, 따로 할 일은 없습니다. 브라우저가 열쇠가 든 주소(<code>http://127.0.0.1:8765/?token=…</code>)로 열리면 그 브라우저만 들어올 수 있습니다. 이 주소를 남에게 보여 주지 마세요. 다시 실행하면 열쇠가 바뀌니 명령창에 새로 나온 주소로 엽니다.</p>
+      </details>
+    </section>
+
+    <!-- 5 -->
+    <section id="gpu">
+      <h2><span class="num">5</span>GPU로 학습하기</h2>
+      <p class="lead">설치형은 NVIDIA 그래픽카드가 있으면 GPU로 학습합니다. 그러려면 <b>GPU용 PyTorch</b>가 깔려 있어야 합니다.</p>
+      <h3>내 PC에 쓸 수 있는 GPU가 있나</h3>
+<pre><code>nvidia-smi</code></pre>
+      <p>그래픽카드 이름이 표로 나오면 NVIDIA GPU가 있는 것입니다. '인식할 수 없는 명령'이 나오면 NVIDIA 그래픽카드가 아니거나 드라이버가 없는 것으로, 이때는 CPU로 학습합니다 (AMD·Intel 내장 그래픽, Mac도 CPU).</p>
+      <h3>PyTorch가 GPU를 쓰는지 확인</h3>
+<pre><code>python -c "import torch; print(torch.__version__, torch.cuda.is_available())"</code></pre>
+      <p>끝이 <code>True</code>면 준비된 것입니다. <code>+cpu False</code>처럼 나오면 CPU용 PyTorch가 깔린 것입니다. Windows에서 <code>pip install blocklearning</code>만 하면 이렇게 됩니다.</p>
+      <h3>CPU용을 GPU용으로 바꾸기</h3>
+      <p>BlockLearning을 끄고 (<kbd>Ctrl</kbd>+<kbd>C</kbd>) 아래 두 줄을 차례로 실행한 뒤, 위 확인 명령을 다시 실행합니다. 2~3GB라 몇 분 걸립니다.</p>
+<pre><code>pip uninstall -y torch</code></pre>
+<pre><code>pip install torch --index-url https://download.pytorch.org/whl/cu126</code></pre>
+      <p>그래도 <code>False</code>면 <a href="https://www.nvidia.com/Download/index.aspx">NVIDIA 드라이버</a>를 업데이트하거나, <a href="https://pytorch.org/get-started/locally/">pytorch.org</a>에서 내 PC에 맞는 명령을 고르세요.</p>
+      <div class="callout"><b>GPU용 PyTorch로도 CPU 학습은 됩니다</b>GPU용에는 CPU 계산도 다 들어 있어, 하나만 깔면 둘 다 쓸 수 있습니다. 차이는 설치 크기뿐입니다.</div>
+      <h3>학습 화면에서 장치 고르기</h3>
+      <p><span class="ui">④ 학습</span>의 <span class="ui">장치</span> 칸에서 고릅니다.</p>
+      <ul>
+        <li><b>자동</b> (처음 값): GPU가 있으면 GPU, 없으면 CPU. GPU가 여럿이면 학습을 시작할 때 가장 덜 쓰는 GPU를 고릅니다.</li>
+        <li><b>CPU</b>: GPU가 있어도 CPU로만.</li>
+        <li><b>GPU</b> / <b>GPU 0, GPU 1, …</b>: GPU가 여럿이면 번호마다 지금 쓰이는 메모리가 함께 보여, 남이 쓰는 GPU를 피해 고를 수 있습니다.</li>
+      </ul>
+      <p>웹 버전에는 이 칸이 없습니다. 브라우저가 그래픽카드를 알아서 씁니다.</p>
+    </section>
+
+    <!-- 6 -->
+    <section id="server">
+      <h2><span class="num">6</span>GPU 서버에서 쓰기</h2>
+      <p class="lead">주피터를 서버에서 쓰는 것과 같은 방식입니다. 서버에 들어가 실행하면, 화면은 내 PC 브라우저에서 보고 계산은 서버 GPU가 합니다.</p>
+      <ol class="steps">
+        <li><b>서버에 접속</b>평소처럼 내 PC 명령창에서 SSH로 접속합니다.
+<pre><code>ssh 사용자@서버주소</code></pre></li>
+        <li><b>설치 (처음 한 번)</b>서버에 GPU용 PyTorch가 이미 있으면 그대로 씁니다.
+<pre><code>pip install -U blocklearning</code></pre></li>
+        <li><b>서버에서 실행</b>서버에는 브라우저가 없어서, 대신 명령창에 내 PC에서 할 일이 나옵니다.
+<pre><code>python -m blocklearning</code></pre></li>
+        <li><b>내 PC에서 포트 잇기</b>내 PC에서 명령창을 하나 더 열고, 안내에 나온 명령을 그대로 실행합니다. 쓰는 동안 이 창은 켜 둡니다.
+<pre><code>ssh -L 8765:127.0.0.1:8765 사용자@서버주소</code></pre></li>
+        <li><b>내 PC 브라우저로 열기</b>안내에 나온 주소 <code>http://127.0.0.1:8765/?token=…</code> 를 내 PC 브라우저에 붙여 넣습니다.</li>
+      </ol>
+      <div class="callout"><b>VS Code로 접속했다면</b>VS Code의 Remote-SSH 터미널에서 실행하면 4단계 없이, 안내된 주소를 <kbd>Ctrl</kbd>+클릭하면 됩니다.</div>
+      <h3>알아 둘 것</h3>
+      <ul>
+        <li><b>접속이 끊겨도 계속 돌게:</b> 서버에서 <code>tmux new -s bl</code> 안에서 실행하고 <kbd>Ctrl</kbd>+<kbd>B</kbd>, <kbd>D</kbd>로 빠져나옵니다. 다시 볼 때는 <code>tmux attach -t bl</code>.</li>
+        <li><b>데이터:</b> 화면의 <span class="ui">파일 고르기</span>·<span class="ui">폴더 고르기</span>로 내 PC 파일을 고르면 서버로 올라갑니다. 서버에 이미 있는 데이터는 경로를 넣으면 됩니다.</li>
+        <li><b>저장:</b> 프로젝트는 서버의 <code>~/BlockLearning/projects</code>에 저장되고, 첫 화면의 <span class="ui">지금 프로젝트 내려받기</span>로 내 PC에 받을 수 있습니다. 내보낸 모델·코드도 브라우저로 함께 내려받아집니다.</li>
+        <li><b>여럿이 같은 서버를 쓸 때:</b> 각자 자기 계정으로 실행하면 접속 열쇠가 따로라 서로의 화면에 들어갈 수 없습니다. 포트가 이미 쓰이고 있으면 다음 번호(8766, …)를 쓰고, 안내도 그 번호로 나옵니다.</li>
+        <li><b>GPU 예약은 없습니다:</b> 두 사람이 같은 GPU를 고르면 함께 쓰게 됩니다. '장치' 칸의 메모리 표시를 보고 비어 있는 GPU를 고르세요.</li>
+      </ul>
+    </section>
+
+    <!-- 7 -->
+    <section id="use">
+      <h2><span class="num">7</span>사용 순서</h2>
+      <p class="lead">웹과 설치형 모두 같습니다. 왼쪽 단계 줄을 눌러 언제든 앞뒤로 오갈 수 있습니다.</p>
+
+      <h3>첫 화면: 내 프로젝트</h3>
+      <figure><img src="docs/guide/home.webp" alt="첫 화면 내 프로젝트" width="800" height="562" loading="lazy"><figcaption>만든 프로젝트가 카드로 모입니다</figcaption></figure>
+      <ul>
+        <li><span class="ui">＋ 새 프로젝트</span>로 시작합니다. 데이터와 모델이 생기면 저절로 저장되고 카드가 생깁니다.</li>
+        <li>카드를 한 번 누르면 고르고, 한 번 더 누르면 엽니다. 연필·휴지통 단추로 이름 바꾸기·지우기.</li>
+        <li><span class="ui">파일 가져오기</span>: 다른 PC나 웹에서 받은 <code>.blocklearning</code> 파일을 엽니다.</li>
+        <li><span class="ui">▶ 사용 영상</span>: 처음부터 끝까지 한 번 해 보는 짧은 영상.</li>
+      </ul>
+
+      <h3>① 과제: 무엇을 할지 고르기</h3>
+      <figure><img src="docs/guide/task.webp" alt="과제 고르기 화면" width="800" height="500" loading="lazy"><figcaption>큰 틀 → 데이터 종류 → 대표 모델 순서로 고릅니다</figcaption></figure>
+      <ul>
+        <li>분류·회귀·이상 탐지 같은 큰 틀을 고르고, 데이터 종류(시계열·표·이미지)를 고르면 대표 모델이 나옵니다. 모델마다 언제 쓰면 좋은지 적혀 있고, <b>추천</b> 표시가 무난한 첫 선택입니다.</li>
+        <li>잘 모르겠으면 <span class="ui">과제는 나중에 — 데이터부터 넣기</span>를 누르세요. 데이터를 보고 알맞은 과제와 모델을 골라 줍니다.</li>
+      </ul>
+
+      <h3>② 데이터 넣기</h3>
+      <figure><img src="docs/guide/data.webp" alt="데이터 넣기 화면" width="800" height="500" loading="lazy"><figcaption>예시 데이터로 바로 시작하거나 내 파일을 고릅니다</figcaption></figure>
+      <ul>
+        <li><b>예시 데이터로 시작:</b> 누르기만 하면 됩니다. 모두 공개된 실제 데이터(베어링 진동, 심전도, 강판, X-ray 등)입니다.</li>
+        <li><b>CSV 파일:</b> <span class="ui">CSV 파일 고르기</span>로 고르거나 화면에 끌어다 놓습니다. 한 행이 샘플 하나, 마지막 열이 정답입니다.
+<pre><code>t1,   t2,   t3,   …,  t140, 정답
+0.12, 0.15, 0.11, …,  0.09, 정상
+0.31, 0.29, 0.40, …,  0.22, 이상</code></pre>
+          고르면 열마다 역할(입력·정답·안 씀)을 짐작해 보여 주고, 열 이름을 눌러 바꾼 뒤 <span class="ui">불러오기</span>를 누릅니다.</li>
+        <li><b>시계열 폴더:</b> 샘플(사이클·환자)마다 CSV가 하나씩 있는 폴더. 정답은 클래스별 하위 폴더나 <code>파일이름,정답</code> 표로 줍니다.</li>
+        <li><b>이미지 폴더:</b> 클래스별 하위 폴더에 그림을 나눠 담은 폴더 (흑백으로 맞춰 씀).</li>
+      </ul>
+      <figure><img src="docs/guide/data-loaded.webp" alt="불러온 데이터 요약" width="800" height="500" loading="lazy"><figcaption>불러오면 샘플 수·클래스·미리보기가 나옵니다</figcaption></figure>
+      <p>문제가 있으면 몇 번째 행·열이 왜 안 되는지 쉬운 말로 알려 줍니다.</p>
+
+      <h3>③ 모델 만들기</h3>
+      <figure><img src="docs/guide/model.webp" alt="모델 만들기 화면" width="800" height="562" loading="lazy"><figcaption>왼쪽 목록의 블록을 끌어 가운데 그림에 이어 붙입니다</figcaption></figure>
+      <ul>
+        <li><b>대표 모델</b> 단추(1D CNN, ResNet1D, LSTM, Transformer 등)를 누르면 바로 쓸 수 있는 모델이 채워집니다. 처음에는 이대로 학습해 보세요.</li>
+        <li><b>블록 넣기:</b> 왼쪽 목록에서 블록을 끌어 선 위에 놓으면 그 자리에 끼워집니다. 위 칸에서 이름으로 찾을 수 있습니다.</li>
+        <li><b>선 잇기:</b> 상자 아래 동그라미를 끌어 다른 상자에 놓으면 갈래·합치기(잔차 연결 등)를 만들 수 있습니다.</li>
+        <li><b>설정:</b> 상자를 누르면 오른쪽 '설정'에서 필터 수·크기 등을 바꿉니다. 블록마다 지나는 데이터 모양과 파라미터 수가 보입니다.</li>
+        <li><b>문제 표시:</b> 맞지 않는 조립은 상자가 빨갛게 되고, 오른쪽 '문제'에 이유와 고칠 방법이 나옵니다.</li>
+        <li><span class="ui">코드로 보기</span>: 지금 모델을 PyTorch·TensorFlow 코드로 봅니다. 되돌리기·다시 하기·자동 정렬도 위에 있습니다.</li>
+      </ul>
+
+      <h3>④ 학습</h3>
+      <figure><img src="docs/guide/train.webp" alt="학습 화면" width="800" height="562" loading="lazy"><figcaption>학습 곡선과 결과, 학습할 때마다 쌓이는 학습 기록</figcaption></figure>
+      <ul>
+        <li><b>Epochs</b>(데이터를 몇 번 돌려 볼지), <b>Learning rate</b>, <b>Batch size</b>를 정하고 <span class="ui">학습 시작</span>. 처음 값 그대로도 괜찮습니다. 설치형은 여기서 <a href="#gpu">장치</a>를 고릅니다.</li>
+        <li>학습하는 동안 곡선이 그려지고, <span class="ui">멈추기</span>로 거기까지 학습한 결과를 남길 수 있습니다.</li>
+        <li><b>결과 읽기:</b> 처음 보는 시험 데이터에서의 성적(정확도·R² 등)을 '찍기 기준'과 비교해 쉬운 말로 알려 주고, 다음에 해 볼 일을 제안합니다. 혼동 행렬 칸을 누르면 그 칸의 샘플(틀린 것 등)을 봅니다.</li>
+        <li><b>학습 기록:</b> 학습할 때마다 모델·설정·성적이 남습니다 (★ 최고 표시). <span class="ui">이 모델로</span>를 누르면 그때 모델로 돌아가고, 바로 저장됩니다. 두 줄의 '비교'를 체크하면 무엇이 달랐는지 나란히 봅니다.</li>
+        <li><span class="ui">더 보기</span>에는 가장 좋았던 epoch 남기기, 조기 종료, 손실 함수 조립이 있습니다.</li>
+      </ul>
+
+      <h3>⑤ 새 데이터로 예측</h3>
+      <figure><img src="docs/guide/predict.webp" alt="예측 화면" width="800" height="562" loading="lazy"><figcaption>학습한 모델로 새 데이터를 예측합니다</figcaption></figure>
+      <ul>
+        <li>예시 데이터면 <span class="ui">예시 새 데이터 10개로 예측</span>으로 학습에 쓰지 않은 데이터를 바로 예측하고 정답과 비교합니다.</li>
+        <li>내 데이터는 학습 때와 같은 모양의 CSV(정답 열은 없어도 됨)·폴더를 고릅니다. 같은 정규화를 해서 예측하고, 정답이 있으면 맞았는지 표시합니다.</li>
+        <li><span class="ui">결과 CSV 내려받기</span>로 예측 결과를 받습니다.</li>
+      </ul>
+    </section>
+
+    <!-- 8 -->
+    <section id="save">
+      <h2><span class="num">8</span>저장과 내보내기</h2>
+      <h3>자동 저장</h3>
+      <p>따로 저장 단추를 누르지 않아도, 데이터·모델·학습 결과가 바뀌면 1~2초 뒤 저절로 저장됩니다. 왼쪽 위 프로젝트 이름 아래의 '자동 저장됨 (시각)'으로 확인합니다.</p>
+      <ul>
+        <li><b>웹:</b> 이 브라우저 안, 또는 구글 드라이브(내 드라이브/BlockLearning/프로젝트 이름).</li>
+        <li><b>설치형:</b> 실행한 컴퓨터의 <code>BlockLearning/projects</code> 폴더 (Windows는 <code>C:\Users\사용자이름\BlockLearning\projects</code>). 저장 폴더는 첫 화면에도 나옵니다.</li>
+      </ul>
+      <h3>프로젝트 파일 옮기기</h3>
+      <p>첫 화면의 <span class="ui">지금 프로젝트 내려받기</span>로 <code>.blocklearning</code> 파일을 받고, 다른 PC의 BlockLearning에서 <span class="ui">파일 가져오기</span>로 엽니다. 학습 기록까지 그대로 옮겨집니다.</p>
+      <ul>
+        <li><b>웹 버전:</b> 내 데이터 사본까지 파일 안에 들어 있어, 다른 PC의 웹 버전에서 그대로 열립니다.</li>
+        <li><b>설치형:</b> 데이터는 파일 위치(경로)로만 기억합니다. 다른 컴퓨터에서 열려면 같은 데이터가 같은 위치에 있어야 합니다 (예시 데이터는 상관없음).</li>
+      </ul>
+      <h3>학습한 모델 내보내기</h3>
+      <ul>
+        <li><b>코드로:</b> <span class="ui">코드로 보기</span> → <span class="ui">파일로 저장 (.py)</span>. PyTorch 코드와 학습한 가중치(<code>_weights.npz</code>)를 받아 같은 폴더에 두면, 파이썬에서 학습한 모델 그대로 불러 씁니다.</li>
+        <li><b>모델 파일로 (설치형):</b> <span class="ui">학습한 모델 내보내기 (.pt)</span>. BlockLearning 없이 PyTorch만 있으면 <code>torch.jit.load</code>로 읽어 예측합니다.</li>
+      </ul>
+    </section>
+
+    <!-- 9 -->
+    <section id="label">
+      <h2><span class="num">9</span>라벨링</h2>
+      <p class="lead">정답이 없는 데이터에 정답을 붙이는 곳입니다. 원래 데이터 파일은 바꾸지 않습니다.</p>
+      <ol class="steps">
+        <li><b>라벨링 열기</b>왼쪽 아래 <span class="ui">라벨링 ↗</span>을 누르면 새 탭에 열립니다.</li>
+        <li><b>데이터 고르고 정답 붙이기</b>시계열 폴더·이미지 폴더·CSV를 고르고, 하나씩 보면서 클래스·숫자·구간·도형(상자·다각형 등)을 붙입니다. 숫자 키 <kbd>1</kbd>–<kbd>9</kbd>로 클래스, <kbd>Enter</kbd>로 확인, <kbd>←</kbd>/<kbd>→</kbd>로 이동.</li>
+        <li><b>학습에 쓰기</b><span class="ui">학습 데이터로 쓰기</span>를 누르거나, ② 데이터의 <span class="ui">라벨링한 데이터</span>에서 골라 불러옵니다.</li>
+      </ol>
+      <p>정답을 10개쯤 붙이면 <b>딥러닝 제안</b>으로 나머지에 정답을 미리 채워 줘서, 확인만 하며 빠르게 붙일 수 있습니다.</p>
+    </section>
+
+    <!-- 10 -->
+    <section id="faq">
+      <h2><span class="num">10</span>문제 해결</h2>
+      <details><summary>'python'(또는 'pip')을 찾을 수 없다고 나와요</summary>
+        <p>Python을 설치할 때 "Add python.exe to PATH"를 체크하지 않은 경우입니다. 설치 파일을 다시 실행해 Modify에서 체크하거나, <code>python</code> 대신 <code>py</code>를 써 보세요 (<code>py -m pip install blocklearning</code>, <code>py -m blocklearning</code>). Anaconda가 있다면 Anaconda Prompt에서 실행하면 됩니다.</p>
+      </details>
+      <details><summary>GPU가 있는데 '자동 (CPU, GPU 없음)'으로 나와요</summary>
+        <p>대부분 CPU용 PyTorch가 깔린 경우입니다. <a href="#gpu">GPU로 학습하기</a>의 'CPU용을 GPU용으로 바꾸기'를 따라 하세요.</p>
+      </details>
+      <details><summary>'접속 열쇠가 필요합니다' 화면이 나와요</summary>
+        <p>열쇠 없는 주소로 열었거나, BlockLearning을 다시 실행해 열쇠가 바뀐 경우입니다. 명령창에 마지막으로 나온 <code>…/?token=…</code> 주소로 다시 여세요.</p>
+      </details>
+      <details><summary>실행 파일이 회사 보안 정책으로 막혀요</summary>
+        <p><code>blocklearning</code> 대신 <code>python -m blocklearning</code>으로 실행하세요. 이 설명서의 명령은 모두 이 방식입니다.</p>
+      </details>
+      <details><summary>첫 화면 '내 프로젝트'가 안 보여요 (설치형)</summary>
+        <p>예전 버전일 수 있습니다. <code>pip show blocklearning</code>으로 버전을 보고, 0.1.2보다 낮으면 BlockLearning을 끄고 <code>pip install -U blocklearning</code> 후 다시 실행하세요.</p>
+      </details>
+      <details><summary>웹 버전이 처음에 오래 걸려요</summary>
+        <p>처음 한 번은 계산 프로그램(Pyodide·TensorFlow.js)을 받느라 10~20초 걸립니다. 그다음부터는 받아 둔 것을 써서 빨라집니다.</p>
+      </details>
+      <details><summary>학습이 느려요</summary>
+        <p>Epochs를 줄이거나 더 작은 대표 모델(1D CNN 등)로 먼저 해 보세요. 데이터가 크다면 설치형에서 GPU로 학습하는 것이 가장 빠릅니다.</p>
+      </details>
+      <details><summary>내 데이터가 어딘가로 올라가나요?</summary>
+        <p>아니요. 웹 버전은 브라우저 안에서, 설치형은 실행한 컴퓨터 안에서만 계산합니다. 구글 드라이브 저장을 직접 고른 경우에만 내 드라이브에 저장됩니다.</p>
+      </details>
+      <p>그 밖의 문제는 <a href="https://github.com/jeon-stat/blocklearning/issues">GitHub Issues</a>에 남겨 주세요.</p>
+    </section>
+  </main>
+</div>
+
+<footer>
+  BlockLearning · MIT License · <a href="https://github.com/jeon-stat/blocklearning">GitHub</a> · <a href="https://pypi.org/project/blocklearning/">PyPI</a> · <a href="privacy.html">개인정보처리방침</a>
+</footer>
+<script src="docs/guide/guide.js"></script>
+</body>
+</html>

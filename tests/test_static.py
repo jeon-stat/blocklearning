@@ -258,6 +258,19 @@ def test_web_storage_and_security():
     assert (root / "privacy.html").exists() and "drive.file" in (root / "privacy.html").read_text(encoding="utf-8")
 
 
+def test_guide_page():
+    """사용 설명서(guide.html): 그림·스크립트가 저장소에 있고, 인라인 스크립트 없이 CSP, README·첫 화면에서 이어짐."""
+    root = STATIC.parent.parent.parent
+    html = (root / "guide.html").read_text(encoding="utf-8")
+    assert "Content-Security-Policy" in html and "<script>" not in html
+    for src in re.findall(r'(?:src|href)="(docs/[^"]+)"', html):
+        assert (root / src).exists(), src
+    for sec in ("install", "gpu", "server", "use", "faq"):
+        assert f'id="{sec}"' in html, sec
+    assert "guide.html" in (root / "README.md").read_text(encoding="utf-8")
+    assert "guide.html" in (STATIC / "projects.js").read_text(encoding="utf-8")
+
+
 def test_web_training_runs_in_worker():
     """웹 학습은 학습 일꾼(train-worker.js)에서: 화면 스레드가 버벅이지 않게. TF.js는 일꾼도 내용 해시(SRI)를 확인하고 받음."""
     web = (STATIC / "web.js").read_text(encoding="utf-8")

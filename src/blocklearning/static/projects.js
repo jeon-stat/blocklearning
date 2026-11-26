@@ -11,6 +11,7 @@ const WEBB = () => window.DLS_WEB || window.DLS_PC;
 const KEY = "dlstudio-current";                       // 마지막으로 연 프로젝트 {kind, id, name} (첫 화면의 '이어서 하기')
 const START = "dlstudio-start";                       // 새로 고친 뒤 할 일 (새 프로젝트 → task, 예시로 → quick)
 const SAVE_DELAY = 1500;
+const GUIDE_URL = "https://jeon-stat.github.io/blocklearning/guide.html";   // 사용 설명서 (설치형은 웹 주소로)
 
 let cur = null, dirty = false, dataDirty = false, timer = null, saving = null, tab = "local", quietUntil = 0;
 
@@ -323,6 +324,7 @@ function ensureHome() {
         <div class="hero-cta">
           <button class="primary lg" id="home-new">＋ 새 프로젝트</button>
           <button class="lg" id="home-video">▶ 사용 영상</button>
+          <button class="lg" id="home-guide">사용 설명서 ↗</button>
         </div>
       </div>
       <div class="hero-art" aria-hidden="true">${HERO_ART}</div>
@@ -356,6 +358,7 @@ function ensureHome() {
   sec.querySelectorAll(".tab").forEach((b) => (b.onclick = () => { tab = b.dataset.kind; render(); }));
   $("home-new").onclick = () => startFresh("task");
   $("home-video").onclick = openVideo;
+  $("home-guide").onclick = () => window.open(PC() ? GUIDE_URL : "guide.html", "_blank", "noopener");
   $("home-import").onclick = importFile;
   $("home-export").onclick = exportFile;
   $("home-list").onclick = async (e) => {
