@@ -100,6 +100,7 @@ main { padding: 16px 20px 40px; }
 @keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(340%); } }
 @media (prefers-reduced-motion: reduce) { .status.busy::before, .train-bar.indet > i { animation-duration: 3s; } }
 .more { margin: 8px 0; }
+.train-opts { margin: 12px 0; }
 .more summary { cursor: pointer; color: var(--muted); }
 .grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 16px; margin: 10px 0; align-items: end; }
 .grid4 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }

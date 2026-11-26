@@ -1352,7 +1352,7 @@ function verdict(r, base) {                              // 결과를 쉬운 말
   if (acc ? base !== null && t <= base + 0.02 : t < 0.1)
     return ["bad", acc ? `찍기 기준(${pct(base)})과 비슷합니다. 모델이 아직 거의 배우지 못했습니다.`
       : `R²가 ${t.toFixed(2)}로, 늘 평균값만 답하는 것(R² 0)과 비슷하거나 못합니다.`,
-      "Epochs를 늘리거나, [더 보기]에서 Learning rate를 바꿔 보거나(0.01 또는 0.0001), 다른 대표 모델을 써 보세요."];
+      "Epochs를 늘리거나, Learning rate를 바꿔 보거나(0.01 또는 0.0001), 다른 대표 모델을 써 보세요."];
   if (gap > (acc ? 0.1 : 0.2))
     return ["warn", `학습 데이터는 ${show(tr)}인데 시험 데이터는 ${show(t)}입니다. 학습 데이터를 외운 것일 수 있습니다 (과적합).`,
       "③ 모델에 Dropout 블록을 넣거나, 층·채널을 줄이거나, Epochs를 줄이거나, 데이터를 더 모아 보세요."];
