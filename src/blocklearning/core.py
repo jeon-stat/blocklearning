@@ -51,6 +51,13 @@ class Studio:
         self.run_weights: dict = {}             # 기록 번호 → 가중치 {이름: 배열} (GraphNet 이름)
         self.current_run: Optional[int] = None  # 지금 학습된 모델이 몇 번 기록인지
         self.pending = None                     # 웹 예측: 엔진에 넘길 값을 잠시 둠
+        self.outputs: set = set()               # 저장·내보내기로 쓴 파일 (설치형: 이것만 브라우저로 내려받을 수 있음)
+
+    def wrote(self, *paths) -> list:
+        """저장·내보내기로 쓴 파일을 기억하고 전체 경로로 돌려줌."""
+        full = [str(Path(p).resolve()) for p in paths]
+        self.outputs.update(full)
+        return full
 
     # ------------------------------------------------------------ API
     def api_task_select(self, b: dict) -> dict:
@@ -589,7 +596,7 @@ class Studio:
         save_project(b["path"], graph, d.source, self.train_settings,
                      None if self.model is None else self.strip_frozen(graph, self.model.state_dict()), self.results, self.selection,
                      runs=self.runs, run_weights=self.run_weights, current_run=self.current_run)
-        return {"ok": True}
+        return {"ok": True, "files": self.wrote(b["path"])}
 
     def api_project_open(self, b: dict) -> dict:
         from blocklearning.project import open_project
@@ -643,7 +650,8 @@ class Studio:
         from blocklearning.project import export_torch
         b = dict(b, path=_path(b.get("path")))
         m = self.need_model()                            # torch만으로 읽는 TorchScript (.pt)
-        return {"ok": True, "info": export_torch(m, self.data, b["path"])}
+        info = export_torch(m, self.data, b["path"])
+        return {"ok": True, "info": info, "files": self.wrote(b["path"])}
 
     def _code(self, b: dict, weights_file: Optional[str] = None) -> tuple:
         """요청의 그래프 → (코드, 학습한 모델과 같은 그래프인지, framework)."""
@@ -708,7 +716,7 @@ class Studio:
             codegen.save_npz(codegen.torch_state_dict(self.model, graph, d.length, d.n_out, d.image), str(weights), data=d)
             files.append(str(weights))
         path.write_text(code, encoding="utf-8")
-        return {"files": files, "trained": trained}
+        return {"files": self.wrote(*files), "trained": trained}
 
     def api_state(self) -> dict:
         """화면을 새로 고쳐도 이어서 쓰도록 지금 상태 (데이터 요약, 블록, 학습 여부·결과)."""
@@ -769,11 +777,15 @@ class Studio:
 
 
 def device_info() -> dict:
-    """학습에 쓸 장치 (화면의 '장치' 칸): NVIDIA GPU가 있으면 그 이름, 없으면 CPU."""
+    """학습에 쓸 장치 (화면의 '장치' 칸): NVIDIA GPU가 있으면 그 이름, 없으면 CPU.
+    remote: SSH로 접속한 서버에서 실행 중 (저장한 파일을 브라우저로도 내려받게)."""
     import torch
+    from blocklearning.cli import remote_kind
     if torch.cuda.is_available():
-        return {"gpu": True, "name": torch.cuda.get_device_name(0), "count": torch.cuda.device_count()}
-    return {"gpu": False, "name": None, "count": 0}
+        d = {"gpu": True, "name": torch.cuda.get_device_name(0), "count": torch.cuda.device_count()}
+    else:
+        d = {"gpu": False, "name": None, "count": 0}
+    return dict(d, remote=bool(remote_kind()))
 
 
 def _err(message: str, hint: str = "", detail: str = "", issues=None) -> dict:

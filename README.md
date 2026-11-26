@@ -45,6 +45,7 @@ NVIDIA GPU로 학습하려면 [pytorch.org](https://pytorch.org/get-started/loca
 애플리케이션 제어 정책이 실행 파일(`blocklearning.exe`)을 막는 PC에서는 `python -m blocklearning`을 쓰세요.
 학습 화면의 '장치' 칸에 학습에 쓸 GPU 이름(없으면 CPU)이 나옵니다. 데이터는 경로를 넣거나 [파일 고르기]·[폴더 고르기]로 브라우저에서 고릅니다
 (고른 파일은 BlockLearning을 실행한 컴퓨터의 `~/.blocklearning/uploads/`에 복사됨. 다 쓴 뒤 지워도 됨).
+SSH로 접속한 서버에서 실행하면 저장·내보낸 파일(프로젝트, `.pt`, 코드)이 서버에 저장되고 브라우저로도 내려받아집니다.
 
 ### GPU 서버에서 쓰기
 

@@ -15,7 +15,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from blocklearning.core import Studio, UserError, _clean, _jsonable, _path  # noqa: F401  (UserError는 예전 import 자리)
 from blocklearning.data import DataError
@@ -110,6 +110,8 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if path == "/api/label/file":
                 return self._label_file(parse_qs(url.query).get("name", [""])[0])
+            if path == "/api/download":
+                return self._download(parse_qs(url.query).get("path", [""])[0])
             code, obj = self.server.call("GET", path)
             return self._json(code, obj)
         if path in ("/", "/index.html"):
@@ -136,6 +138,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(404, "없는 그림")
         ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
         self._send(200, f.read_bytes(), ctype)
+
+    def _download(self, path: str) -> None:
+        """저장·내보내기로 쓴 파일을 브라우저로 (서버에서 실행할 때 내 PC로 받기). 그 밖의 파일은 주지 않음."""
+        try:
+            p = str(Path(path).resolve()) if path else ""
+        except (OSError, ValueError):
+            p = ""
+        if p not in self.server.outputs or not Path(p).is_file():
+            return self._error(404, "없는 파일")
+        name = Path(p).name
+        plain = name if re.fullmatch(r"[A-Za-z0-9._ -]+", name) else "download" + re.sub(r"[^A-Za-z0-9.]", "", Path(name).suffix)
+        disp = f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
+        self._send(200, Path(p).read_bytes(), "application/octet-stream", {"Content-Disposition": disp})
 
     def _file(self, rel: str) -> None:
         root = self.server.static_dir

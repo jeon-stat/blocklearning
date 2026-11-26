@@ -142,6 +142,18 @@ async function pickUpload(opts, btn) {                   // 고르고 올리기 
   try { return await uploadFiles(files, (i, n) => { if (btn && n > 1) btn.textContent = `올리는 중 ${i}/${n}`; }); }
   finally { if (btn) btn.textContent = label; }
 }
+let REMOTE = false;                                      // SSH로 접속한 서버에서 실행: 저장한 파일을 내 PC로도 받음
+function fetchBack(files) {
+  if (!REMOTE) return;
+  for (const f of files || []) {
+    const a = document.createElement("a");
+    a.href = `/api/download?path=${encodeURIComponent(f)}`;
+    a.download = f.split(/[\\/]/).pop();
+    document.body.append(a);
+    a.click();
+    a.remove();
+  }
+}
 function localSetup() {
   const picks = [                                         // [경로 칸, 고르기 설정, 고른 뒤 누를 단추]
     ["csv-path", { accept: ".csv,.tsv,.txt" }, "btn-csv"], ["folder-path", { dir: true }, "btn-folder"],
@@ -168,6 +180,7 @@ function localSetup() {
     el.after(b);
   }
   api("/api/device").then((d) => {                       // 학습 장치: GPU 이름 또는 CPU
+    REMOTE = !!d.remote;
     const sel = $("device");
     if (!sel) return;
     const auto = sel.querySelector('option[value="auto"]'), gpu = sel.querySelector('option[value="cuda"]');
@@ -1937,7 +1950,7 @@ $("btn-next").onclick = () => { $("sample-index").value = Number($("sample-index
 $("btn-save").onclick = async () => {
   const path = prompt("저장할 프로젝트 파일 경로 (.blocklearning)", "blocklearning-project.blocklearning");
   if (!path) return;
-  try { await api("/api/project/save", { path }); showMessage(`저장했음: ${path}`, "", "", true); } catch (e) { showError(e); }
+  try { fetchBack((await api("/api/project/save", { path })).files); showMessage(`저장했음: ${path}`, "", "", true); } catch (e) { showError(e); }
 };
 function applyOpened(r) {                                // 연 프로젝트를 화면에 (과제·데이터·모델·학습 결과)
   applySelection(r.selection);
@@ -1975,7 +1988,7 @@ $("btn-export").onclick = async () => {                // torch만 있으면 읽
   const path = prompt("내보낼 모델 파일 경로 (.pt)", "model.pt");
   if (!path) return;
   try {
-    await api("/api/project/export", { path });
+    fetchBack((await api("/api/project/export", { path })).files);
     showMessage(`내보냈음: ${path}`, "파이썬에서 torch.jit.load로 읽고, 학습 CSV와 같은 열 순서의 원래 값(정답 열 빼고)을 넣으면 예측합니다",
       `import torch\nm = torch.jit.load("${path.replace(/\\/g, "/")}")\nscores = m(torch.tensor(rows, dtype=torch.float32))   # rows: (샘플 수, 특징 수)\n# 과제·클래스 이름: torch.jit.load(경로, _extra_files={"studio.json": ""})`, true);
   } catch (e) { showError(e); }
@@ -2021,6 +2034,7 @@ $("code-save").onclick = async () => {
   if (!path) return;
   try {
     const r = await api("/api/code/save", { graph: st.graph, framework: codeFw, settings: trainSettings(), path });
+    fetchBack(r.files);
     showMessage(`저장했음: ${r.files.join(", ")}`, r.files.length > 1 ? "가중치 파일(.pt)을 코드와 같은 폴더에 두세요" : "", "", true);
   } catch (e) { showError(e); }
 };

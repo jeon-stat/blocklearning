@@ -92,6 +92,14 @@ def test_flow_example_to_trained(server, tmp_path):
     assert code == 200 and o["graph"] == from_blocks(CNN) and o["trained"] is True
     code, x = _call(server, "/api/project/export", {"path": str(tmp_path / "m.pt")})
     assert code == 200 and (tmp_path / "m.pt").exists() and x["info"]["task"] == "classification"
+    assert x["files"] == [str((tmp_path / "m.pt").resolve())]
+    from urllib.parse import quote
+    dl = lambda p, **k: _raw(server, "/api/download?path=" + quote(str(p)), method="GET", **k)
+    status, body = dl(tmp_path / "p.blocklearning")                   # 서버에서 저장한 파일을 내 PC 브라우저로
+    assert status == 200 and body == (tmp_path / "p.blocklearning").read_bytes()
+    assert dl(tmp_path / "m.pt")[0] == 200
+    assert dl(Path(__file__))[0] == 404                                 # 저장하지 않은 파일은 못 받음
+    assert dl(tmp_path / "p.blocklearning", token=False)[0] == 403
 
 
 def test_bad_input_returns_400(server):
@@ -670,7 +678,7 @@ def test_upload_saves_inside_upload_dir(server, tmp_path):
 
 def test_device_info(server):
     code, d = _call(server, "/api/device")
-    assert code == 200 and set(d) == {"gpu", "name", "count"} and isinstance(d["gpu"], bool)
+    assert code == 200 and set(d) == {"gpu", "name", "count", "remote"} and isinstance(d["gpu"], bool)
 
 
 def test_cli_guide_for_ssh_and_vscode():
