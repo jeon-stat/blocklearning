@@ -234,7 +234,7 @@ def test_web_version_files():
         assert f'"{f}"' in web, f
     src = STATIC.parent
     listed = set(re.findall(r'"(\w+\.py)"', web))
-    assert {p.name for p in src.glob("*.py")} - {"server.py", "cli.py", "__main__.py", "devices.py"} <= listed   # 웹에서 쓰는 모듈은 모두 불러옴
+    assert {p.name for p in src.glob("*.py")} - {"server.py", "cli.py", "__main__.py", "devices.py", "myprojects.py"} <= listed   # 웹에서 쓰는 모듈은 모두 불러옴
     assert "window.DLS_WEB" in (STATIC / "app.js").read_text(encoding="utf-8")
 
 
@@ -295,7 +295,7 @@ def test_web_label_page_and_python_files():
     assert '"labels.js"' in boot and '"label.js"' in boot
     web = (STATIC / "web.js").read_text(encoding="utf-8")
     listed = set(re.findall(r'"(\w+\.py)"', web[web.index("PY_FILES"):web.index("];", web.index("PY_FILES"))]))
-    have = {p.name for p in STATIC.parent.glob("*.py")} - {"__main__.py", "cli.py", "server.py", "devices.py"}
+    have = {p.name for p in STATIC.parent.glob("*.py")} - {"__main__.py", "cli.py", "server.py", "devices.py", "myprojects.py"}
     assert listed == have, (have - listed, listed - have)
 
 

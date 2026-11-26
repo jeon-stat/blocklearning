@@ -106,6 +106,7 @@ async function api(path, body) {
   const r = await fetch(path, opt);
   const j = await r.json().catch(() => ({ error: { message: `응답을 읽을 수 없음 (${r.status})` } }));
   if (!r.ok) throw j.error || { message: `오류 ${r.status}` };
+  if (window.DLS_PC) window.DLS_PC.after(path, body, j);   // 설치형 '내 프로젝트' 자동 저장 (pc.js)
   return j;
 }
 
@@ -2045,9 +2046,9 @@ $("code-save").onclick = async () => {
   } catch (e) { showError(e); }
 };
 
-// 화면을 새로 고쳐도 서버에 남은 상태(데이터, 블록, 학습된 모델)를 이어서 씀
-(async () => {
-  if (!WEB) { go("task"); localSetup(); }                   // 웹은 첫 화면 '내 프로젝트' (projects.js)
+// 화면을 새로 고쳐도 서버에 남은 상태(데이터, 블록, 학습된 모델)를 이어서 씀. 첫 화면은 '내 프로젝트' (projects.js)
+window.DLS_LOADED = (async () => {
+  if (!WEB) localSetup();
   drawCurve([], "accuracy");
   if (!st.catalog.length) {                                  // 첫 로딩: 빈 화면 대신 무엇을 기다리는지
     $("families").innerHTML = `<p class="muted loading">과제 목록을 불러오는 중…${WEB ? " 처음엔 10~20초" : ""}</p>`;

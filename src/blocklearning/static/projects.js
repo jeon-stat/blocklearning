@@ -1,11 +1,13 @@
-// BlockLearning 웹 버전: 첫 화면 "내 프로젝트"와 자동 저장.
+// BlockLearning 첫 화면 "내 프로젝트"와 자동 저장 (웹 버전, 설치형 모두).
 // 처음 열면 첫 화면에서 프로젝트를 고르거나 새로 시작한다. 작업이 바뀌면(데이터·모델·과제·학습) 잠시 뒤 지금 프로젝트에
 // 저장하고, 프로젝트가 없으면 처음 바뀔 때 데이터·과제 이름으로 만든다.
-// 저장 위치: 이 브라우저(로그인 없음) 또는 구글 드라이브(로그인 시, 내 드라이브/BlockLearning/<프로젝트>/). store.js 참고.
+// 저장 위치: 웹은 이 브라우저(로그인 없음) 또는 구글 드라이브(로그인 시, 내 드라이브/BlockLearning/<프로젝트>/), store.js 참고.
+// 설치형은 실행한 컴퓨터의 프로젝트 폴더 (pc.js가 같은 모양으로 줌).
 (function () {
 "use strict";
-const S = () => window.DLStore;
-const WEBB = () => window.DLS_WEB;
+const PC = () => !window.DLS_WEB;
+const S = () => window.DLStore || window.DLS_PC.store;
+const WEBB = () => window.DLS_WEB || window.DLS_PC;
 const KEY = "dlstudio-current";                       // 마지막으로 연 프로젝트 {kind, id, name} (첫 화면의 '이어서 하기')
 const START = "dlstudio-start";                       // 새로 고친 뒤 할 일 (새 프로젝트 → task, 예시로 → quick)
 const SAVE_DELAY = 1500;
@@ -178,6 +180,9 @@ async function startFresh(then) {                        // 새 프로젝트: �
   if (WEBB().hasData()) {
     try { sessionStorage.setItem(START, then); } catch (e) { /* 없음 */ }
     forget();
+    if (PC()) {
+      try { await WEBB().reset(); } catch (e) { return showError(e); }   // 서버에 남은 작업을 비움
+    }
     location.reload();
     return;
   }
@@ -205,7 +210,12 @@ async function importFile() {
     showMessage(`가져왔음: '${name}' (${store(kind).label}에 저장)`, "", "", true);
   } catch (e) { showError(e.message !== undefined ? e : { message: String(e) }); }
 }
-function exportFile() {
+function canExport() { return PC() ? REMOTE && !!cur : WEBB().hasData(); }   // 설치형: 서버에서 실행할 때 내 PC로 받기
+async function exportFile() {
+  if (PC()) {
+    try { await saveNow(); if (cur) await WEBB().exportFile(cur.id); } catch (e) { showError(e); }
+    return;
+  }
   try {
     const rec = WEBB().recordBytes(cur ? cur.name : "", { withData: true });
     if (!rec) return showMessage("내보낼 것이 없음", "프로젝트를 열거나 데이터와 모델을 먼저 만드세요");
@@ -307,7 +317,7 @@ function ensureHome() {
   sec.innerHTML = `
     <div class="hero">
       <div class="hero-text">
-        <div class="eyebrow">설치 없이 · 브라우저 안에서 · 무료</div>
+        <div class="eyebrow">${PC() ? "내 컴퓨터에서 · PyTorch로 · 무료" : "설치 없이 · 브라우저 안에서 · 무료"}</div>
         <h1>블록을 이어 붙여<br>딥러닝 모델을 만드세요</h1>
         <p>데이터를 넣고, 블록으로 모델을 짜고, 바로 학습해 결과를 봅니다. 코드를 몰라도 되고, 데이터는 이 PC 밖으로 나가지 않습니다.</p>
         <div class="hero-cta">
@@ -319,14 +329,15 @@ function ensureHome() {
     </div>
     <div class="features">
       <div class="feature"><span class="fi">${ICON.blocks}</span><b>블록으로 모델</b><span>CNN·RNN·ResNet을 끌어다 놓고 선으로 이어 만듭니다</span></div>
-      <div class="feature"><span class="fi">${ICON.chip}</span><b>브라우저에서 학습</b><span>설치·서버 없이 이 브라우저 안에서 바로 학습합니다</span></div>
+      <div class="feature"><span class="fi">${ICON.chip}</span>${PC() ? "<b>내 GPU로 학습</b><span>PyTorch로 이 컴퓨터의 GPU(없으면 CPU)에서 학습합니다</span>"
+        : "<b>브라우저에서 학습</b><span>설치·서버 없이 이 브라우저 안에서 바로 학습합니다</span>"}</div>
       <div class="feature"><span class="fi">${ICON.chart}</span><b>결과를 쉬운 말로</b><span>정확도·틀린 샘플·학습 기록을 보고 다음 할 일을 알려 줍니다</span></div>
       <div class="feature"><span class="fi">${ICON.code}</span><b>PyTorch 코드로</b><span>만든 모델을 PyTorch·TensorFlow 코드와 가중치로 받습니다</span></div>
     </div>
     <div class="home-projects">
       <div class="sec-head">
         <h2>내 프로젝트</h2>
-        <div class="tabs home-tabs"><button class="tab" data-kind="local">이 브라우저</button><button class="tab" data-kind="drive">구글 드라이브</button></div>
+        ${PC() ? "" : '<div class="tabs home-tabs"><button class="tab" data-kind="local">이 브라우저</button><button class="tab" data-kind="drive">구글 드라이브</button></div>'}
         <span class="grow"></span>
         <button id="home-import">파일 가져오기</button>
         <button id="home-export" hidden>지금 프로젝트 내려받기</button>
@@ -334,7 +345,7 @@ function ensureHome() {
       <div id="home-where" class="proj-where"></div>
       <div id="home-list" class="proj-cards"></div>
     </div>
-    <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요. <a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a></p>`;
+    <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.${PC() ? "" : ' <a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>'}</p>`;
   document.querySelector("main").prepend(sec);
   try {                                                    // 움직임을 줄이는 설정이면 그림을 멈춤
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -363,7 +374,8 @@ function ensureHome() {
         return render();
       }
       if (b.dataset.a === "remove") {
-        const where = kind === "drive" ? "구글 드라이브 휴지통으로 옮깁니다 (드라이브에서 되살릴 수 있음)" : "이 브라우저에서 지웁니다. 되살릴 수 없습니다";
+        const where = kind === "drive" ? "구글 드라이브 휴지통으로 옮깁니다 (드라이브에서 되살릴 수 있음)"
+          : `${PC() ? "이 컴퓨터" : "이 브라우저"}에서 지웁니다. 되살릴 수 없습니다`;
         if (!confirm(`'${item.name}'을(를) 지울까요? ${where}.`)) return;
         await store(kind).remove(item.id);
         const last = recall();
@@ -383,7 +395,7 @@ function openVideo() {
     d.className = "dialog";
     d.innerHTML = `<div class="dialog-box video-box" role="dialog" aria-label="사용 영상">
       <div class="dialog-head"><b>사용 영상</b><button class="x" aria-label="닫기">×</button></div>
-      <video src="src/blocklearning/static/demo.webm" poster="src/blocklearning/static/demo.jpg" controls muted playsinline></video></div>`;
+      <video src="${PC() ? "/static/" : "src/blocklearning/static/"}demo.webm" poster="${PC() ? "/static/" : "src/blocklearning/static/"}demo.jpg" controls muted playsinline></video></div>`;
     document.body.appendChild(d);
     const close = () => { d.hidden = true; d.querySelector("video").pause(); };
     d.querySelector(".x").onclick = close;
@@ -396,7 +408,7 @@ function openVideo() {
 async function render() {
   ensureHome();
   document.querySelectorAll("#step-home .tab").forEach((b) => b.classList.toggle("active", b.dataset.kind === tab));
-  $("home-export").hidden = !WEBB().hasData();
+  $("home-export").hidden = !canExport();
   const where = $("home-where"), list = $("home-list"), last = recall();
   list.innerHTML = "";
   if (tab === "drive") {
@@ -417,12 +429,13 @@ async function render() {
     }
     where.innerHTML = `<p class="muted">구글 드라이브에 연결됨 (내 드라이브/BlockLearning/). 1시간이 지나면 다시 로그인을 묻습니다. <button id="proj-logout">로그아웃</button></p>`;
     $("proj-logout").onclick = () => { dv.signOut(); render(); };
-  } else {
+  } else if (!PC()) {
     where.innerHTML = `<p class="muted">이 브라우저에 저장됩니다. 사이트 데이터를 지우면 사라지니 [내려받기]나 구글 드라이브로 보관하세요.</p>`;
   }
   list.innerHTML = `<p class="muted">불러오는 중…</p>`;
   try {
     const items = await store(tab).list();
+    if (PC()) where.innerHTML = `<p class="muted">저장 폴더: <code>${esc(WEBB().dir())}</code></p>`;
     list.innerHTML = items.length ? items.map((p) => {
       const recent = last && last.id === p.id;
       return `<div class="proj-card${selId === p.id ? " sel" : ""}" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-meta="${esc(p.meta || "")}" data-steps="${esc(p.steps || "")}">
@@ -498,6 +511,7 @@ async function init() {
   let then = "";
   try { then = sessionStorage.getItem(START) || ""; sessionStorage.removeItem(START); } catch (e) { /* 없음 */ }
   if (then) { await WEBB().ready; afterStart(then); return; }
+  if (PC()) return resume();
   const job = new URLSearchParams(location.search).get("label");   // 라벨링 페이지 [studio에서 쓰기]: 새 프로젝트로 그 정답을 불러옴
   if (job) {
     history.replaceState(null, "", location.pathname);
@@ -510,6 +524,18 @@ async function init() {
   const last = recall();
   tab = last ? last.kind : "local";
   home();
+}
+
+// 설치형: 화면을 새로 고쳐도 서버에 남은 작업은 그대로 (app.js가 이어서 보임). 그 작업이 저장한 프로젝트면 계속 거기에 저장
+async function resume() {
+  home();
+  try {
+    await WEBB().ready;
+    const r = await WEBB().current();
+    const p = r.current && r.items.find((x) => x.id === r.current);
+    if (p) { cur = { kind: "local", id: p.id, name: p.name }; remember(); showCurrent(); }
+    if (st.step === "home") render();
+  } catch (e) { /* 첫 화면은 그대로 */ }
 }
 
 window.DLProjects = { init, saveNow, current: () => cur, home, startNew: startFresh, showSteps };

@@ -34,6 +34,8 @@ class UserError(Exception):
 class Studio:
     """한 사람이 쓰는 도구의 상태와 API. web=True면 torch 없이 (모델 검사의 '모델 정보'는 화면이 계산)."""
 
+    EXTRA_ROUTES: dict = {}                     # 설치형 서버만 더하는 API (server.py)
+
     def __init__(self, web: bool = False):
         self.web = web
         self.jobs = JobManager()
@@ -58,6 +60,13 @@ class Studio:
         full = [str(Path(p).resolve()) for p in paths]
         self.outputs.update(full)
         return full
+
+    def reset_work(self) -> None:
+        """새 프로젝트로: 데이터·모델·학습 결과를 비움 (라벨링 작업과 저장한 파일 목록은 둠)."""
+        self.cancel_training()
+        self.data = self.graph = self.model = self.model_graph = self.selection = None
+        self.train_settings, self.results = {}, {}
+        self.runs, self.run_weights, self.current_run = [], {}, None
 
     # ------------------------------------------------------------ API
     def api_task_select(self, b: dict) -> dict:
@@ -761,7 +770,7 @@ class Studio:
                 return 200, {"ok": True}
             if path.startswith("/api/label/"):
                 return 200, _clean(self.api_label(path[len("/api/label/"):], body))
-            name = ROUTES.get(path)
+            name = ROUTES.get(path) or self.EXTRA_ROUTES.get(path)
             if name is None:
                 return 404, _err("없는 주소")
             return 200, _clean(getattr(self, name)(body))

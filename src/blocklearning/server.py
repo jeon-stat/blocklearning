@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from blocklearning.core import Studio, UserError, _clean, _jsonable, _path  # noqa: F401  (UserError는 예전 import 자리)
 from blocklearning.data import DataError
+from blocklearning.myprojects import PROJECTS_DIR, Library
 
 STATIC_DIR = Path(__file__).parent / "static"
 UPLOAD_DIR = Path.home() / ".blocklearning" / "uploads"      # 브라우저로 고른 파일을 두는 곳 (서버에서 실행하면 서버 쪽)
@@ -33,17 +34,31 @@ DENIED_PAGE = """<!doctype html><meta charset="utf-8"><title>BlockLearning</titl
 
 class StudioServer(Studio, ThreadingHTTPServer):
     daemon_threads = True
+    EXTRA_ROUTES = {"/api/projects": "api_projects"}
 
-    def __init__(self, port: int, static_dir: Path, token: str, upload_dir: Path = UPLOAD_DIR):
+    def __init__(self, port: int, static_dir: Path, token: str, upload_dir: Path = UPLOAD_DIR,
+                 projects_dir: Path = PROJECTS_DIR):
         ThreadingHTTPServer.__init__(self, ("127.0.0.1", port), Handler)
         Studio.__init__(self)
         self.static_dir = Path(static_dir).resolve()
         self.token = token
         self.cookie = "bl_" + hashlib.sha256(token.encode()).hexdigest()[:12]   # 서버마다 다른 이름 (여러 개를 띄워도 섞이지 않게)
         self.upload_dir = Path(upload_dir)
+        self.library = Library(self, Path(projects_dir))
 
     def check_token(self, value: Optional[str]) -> bool:
         return bool(value) and hmac.compare_digest(str(value).encode(), self.token.encode())
+
+    def call(self, method: str, path: str, body=None) -> tuple:
+        """첫 화면 '내 프로젝트'(/api/projects/…)는 Library, 나머지는 Studio."""
+        if method == "POST" and path.startswith("/api/projects/"):
+            op = path[len("/api/projects/"):]
+            return Studio.call(self, method, "/api/projects", dict(body or {}, _op=op))
+        return Studio.call(self, method, path, body)
+
+    def api_projects(self, b: dict) -> dict:
+        b = dict(b)
+        return self.library.call(b.pop("_op", ""), b)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -220,6 +235,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(port: int = 0, static_dir: Optional[str] = None, token: Optional[str] = None,
-                upload_dir: Optional[str] = None) -> StudioServer:
+                upload_dir: Optional[str] = None, projects_dir: Optional[str] = None) -> StudioServer:
     return StudioServer(port, Path(static_dir) if static_dir else STATIC_DIR, token or secrets.token_urlsafe(24),
-                        Path(upload_dir) if upload_dir else UPLOAD_DIR)
+                        Path(upload_dir) if upload_dir else UPLOAD_DIR, Path(projects_dir) if projects_dir else PROJECTS_DIR)

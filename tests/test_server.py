@@ -25,7 +25,7 @@ def server(tmp_path):
     static.mkdir()
     (static / "index.html").write_text("<!doctype html><title>BlockLearning</title>", encoding="utf-8")
     (static / "app.js").write_text("console.log(1)", encoding="utf-8")
-    s = make_server(0, static_dir=str(static), upload_dir=str(tmp_path / "uploads"))
+    s = make_server(0, static_dir=str(static), upload_dir=str(tmp_path / "uploads"), projects_dir=str(tmp_path / "projects"))
     t = threading.Thread(target=s.serve_forever, daemon=True)
     t.start()
     urllib.request.install_opener(urllib.request.build_opener(_WithToken(s.token)))   # 시험의 요청은 접속 열쇠를 들고 감
@@ -100,6 +100,37 @@ def test_flow_example_to_trained(server, tmp_path):
     assert dl(tmp_path / "m.pt")[0] == 200
     assert dl(Path(__file__))[0] == 404                                 # 저장하지 않은 파일은 못 받음
     assert dl(tmp_path / "p.blocklearning", token=False)[0] == 403
+
+
+def test_my_projects_autosave_list_open(server, tmp_path):
+    """설치형 첫 화면 '내 프로젝트': 만들기 → (모델 전엔 저장 안 됨) → 저장 → 목록 → 새 프로젝트로 비우기 → 열기 → 이름 바꾸기 → 지우기."""
+    code, r = _call(server, "/api/projects/list", {})
+    assert code == 200 and r["items"] == [] and r["current"] is None
+    code, p = _call(server, "/api/projects/create", {"name": "심전도 (11. 26.)"})
+    assert code == 200 and p["name"] == "심전도 (11. 26.)"
+    _call(server, "/api/data/load", {"example": True})
+    code, e = _call(server, "/api/projects/save", {"id": p["id"], "meta": "", "steps": ""})
+    assert code == 400 and "모델" in e["error"]["message"]
+    _call(server, "/api/model/check", {"blocks": CNN})
+    code, s = _call(server, "/api/projects/save", {"id": p["id"], "meta": "학습 0번", "steps": '{"data":true}'})
+    assert code == 200 and s["files"] == [str((tmp_path / "projects" / f"{p['id']}.blocklearning").resolve())]
+    code, r = _call(server, "/api/projects/list", {})
+    assert [(i["id"], i["meta"], i["steps"]) for i in r["items"]] == [(p["id"], "학습 0번", '{"data":true}')]
+    assert r["current"] == p["id"] and r["dir"] == str((tmp_path / "projects").resolve())
+    code, _ = _call(server, "/api/projects/close", {})
+    assert code == 200 and _call(server, "/api/state")[1]["summary"] is None and _call(server, "/api/projects/list", {})[1]["current"] is None
+    code, o = _call(server, "/api/projects/open", {"id": p["id"]})
+    assert code == 200 and o["graph"] == from_blocks(CNN) and o["summary"]["length"] == 140
+    code, q = _call(server, "/api/projects/create", {"name": "빈 것"})
+    assert _call(server, "/api/projects/open", {"id": q["id"]})[1] == {"empty": True}
+    _call(server, "/api/projects/rename", {"id": p["id"], "name": "새 이름"})
+    assert {i["name"] for i in _call(server, "/api/projects/list", {})[1]["items"]} == {"새 이름", "빈 것"}
+    _call(server, "/api/projects/remove", {"id": p["id"]})
+    assert not (tmp_path / "projects" / f"{p['id']}.blocklearning").exists()
+    assert [i["id"] for i in _call(server, "/api/projects/list", {})[1]["items"]] == [q["id"]]
+    for bad in ("../x", "p", "pABC123", 5):                       # 폴더 밖 파일·이상한 번호는 거절
+        assert _call(server, "/api/projects/open", {"id": bad})[0] == 400
+    assert _call(server, "/api/projects/nope", {})[0] == 400
 
 
 def test_bad_input_returns_400(server):
