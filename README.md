@@ -34,9 +34,12 @@
 ## 실행 (로컬)
 
 ```bash
-pip install -e .            # 처음 한 번 (torch가 이미 있으면 그대로 씀). 이미지 폴더를 쓰려면 pip install -e ".[image]"
-python -m blocklearning     # 또는 blocklearning
+pip install blocklearning   # 처음 한 번 (torch가 이미 있으면 그대로 씀)
+blocklearning               # 또는 python -m blocklearning
 ```
+
+NVIDIA GPU로 학습하려면 [pytorch.org](https://pytorch.org/get-started/locally/)에서 고른 GPU용 `pip install torch ...`를 먼저 실행하세요
+(그냥 설치하면 Windows에서는 CPU용 torch가 깔립니다). 소스에서 설치하려면 저장소에서 `pip install -e .`.
 
 브라우저에 `http://127.0.0.1:8765/`가 열립니다. `--port 8800`으로 포트를, `--no-browser`로 브라우저 자동 열기를 바꿀 수 있습니다.
 애플리케이션 제어 정책이 실행 파일(`blocklearning.exe`)을 막는 PC에서는 `python -m blocklearning`을 쓰세요.
@@ -123,6 +126,13 @@ pip install -e . pytest
 npm install --prefix tests/js   # 웹 엔진 시험용 TF.js (node가 있으면)
 python -m pytest                # 화면 그래프 편집기·웹 엔진 시험은 node가 있으면 함께 돎
 ```
+
+### PyPI 배포
+
+`pyproject.toml`의 `version`을 올려 push한 뒤, GitHub에서 태그 `v<버전>`(예: `v0.1.1`)으로 Release를 게시하면
+`.github/workflows/publish.yml`이 패키지를 만들어 PyPI에 올립니다 (Trusted Publishing, 토큰 없음). PyPI 소개 글은 `docs/PYPI.md`.
+처음 한 번: PyPI → Account settings → Publishing → **Add a new pending publisher**에서
+프로젝트 `blocklearning`, 소유자 `jeon-stat`, 저장소 `blocklearning`, 워크플로 `publish.yml`, 환경 `pypi`를 등록.
 
 | 파일 (`src/blocklearning/`) | 하는 일 |
 |---|---|

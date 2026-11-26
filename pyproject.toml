@@ -1,15 +1,32 @@
 [project]
 name = "blocklearning"
 version = "0.1.0"
-description = "BlockLearning: 딥러닝을 직접 짜기 어려운 사람이 블록을 이어 모델을 만들고 학습해 쓰는 로컬 웹 도구"
-readme = "README.md"
+description = "블록을 이어 딥러닝 모델을 만들고 학습하는 브라우저 화면 도구 (PyTorch, 내 PC의 GPU로 학습)"
+readme = "docs/PYPI.md"
+license = "MIT"
+license-files = ["LICENSE", "src/blocklearning/pretrained/LICENSE-mnv3s.txt"]
+authors = [{ name = "jeon-stat" }]
 requires-python = ">=3.10"
-# torch는 PC에 이미 있는 것을 써도 됨 (없으면 pip가 설치)
-dependencies = ["numpy>=1.24", "torch>=2.0"]
+keywords = ["deep learning", "no-code", "pytorch", "education", "visual programming"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: Korean",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# torch는 PC에 이미 있는 것을 그대로 씀 (NVIDIA GPU용 torch를 먼저 깔아 두면 그걸로 학습)
+dependencies = ["numpy>=1.24", "torch>=2.0", "pillow>=9"]
 
 [project.optional-dependencies]
-# 이미지 폴더 불러오기 (png·jpg·bmp)
-image = ["pillow>=9"]
+image = []                          # 예전 설치 명령 호환 (pillow는 이제 기본으로 들어감)
+
+[project.urls]
+Homepage = "https://jeon-stat.github.io/blocklearning/"
+Source = "https://github.com/jeon-stat/blocklearning"
+Issues = "https://github.com/jeon-stat/blocklearning/issues"
 
 [project.scripts]
 blocklearning = "blocklearning.cli:main"
@@ -18,11 +35,18 @@ blocklearning = "blocklearning.cli:main"
 dev = ["pytest>=8"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/blocklearning"]
+exclude = ["**/__pycache__"]
+core-metadata-version = "2.4"          # PyPI가 확실히 받는 형식
+
+[tool.hatch.build.targets.sdist]
+include = ["src/blocklearning", "docs/PYPI.md", "LICENSE", "README.md", "pyproject.toml"]
+exclude = ["**/__pycache__"]
+core-metadata-version = "2.4"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
