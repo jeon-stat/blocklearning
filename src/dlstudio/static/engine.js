@@ -1063,16 +1063,18 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     vi.dispose(); ti.dispose();
   }
   const bs = Math.max(1, s.batch_size || 32), n = Xfit.shape[0];
-  let done = 0, bestKey = Infinity, bestEpoch = null, since = 0, early = false, bestState = null, kept = [];
+  let halted = false, done = 0, bestKey = Infinity, bestEpoch = null, since = 0, early = false, bestState = null, kept = [];
   const dropBest = () => { if (bestState) Object.values(bestState).forEach((t) => t.dispose()); bestState = null; };
   net.start = head;
   try {
     for (let epoch = 1; epoch <= (s.epochs || 30); epoch++) {
       const perm = Array.from({ length: n }, (_, i) => i);
       for (let i = n - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
-      let lossSum = 0, nb = 0;
+      let lossSum = 0, nb = 0, lastYield = Date.now();
       const termSum = {};
       for (let i = 0; i < n; i += bs) {
+        if (Date.now() - lastYield > 50) { await yieldNow(); lastYield = Date.now(); }   // 화면이 멈추지 않게 · [멈추기]를 받음
+        if (isCancelled && isCancelled()) { halted = true; break; }                        // 묶음마다 확인: 바로 멈춤
         const idx = perm.slice(i, i + bs);
         if (idx.length === 1 && n > 1) continue;            // BatchNorm은 학습 때 샘플 하나짜리 묶음을 못 받음
         const pending = [];
@@ -1096,8 +1098,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
         for (const [k, v] of kept) { termSum[k] = (termSum[k] || 0) + (await v.data())[0]; v.dispose(); }
         kept = [];
         nb++;
-        if (nb % 8 === 0) await yieldNow();                   // 화면이 멈추지 않게
       }
+      if (halted) break;                                      // 멈춘 epoch는 채점하지 않음 (그 앞 epoch까지 기록)
       const out = back(net.predict(Fte));
       done = epoch;
       let valLoss = null;
@@ -1132,14 +1134,15 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     }
     // 마지막 평가: GPU(WebGL) 값을 쓰되, 앞 32개를 CPU로 맞춰 봄. 다르면 (브라우저 GPU가 드물게 틀린 값을 냄) 전체를 CPU로.
     // 사전학습 층이 있으면 뽑아 둔 특징에서 (CPU로 그 큰 층을 다시 돌리지 않게)
-    const te = await checkedPredict(net, Fte, d.n_test), tr = await checkedPredict(net, Ftr, d.n_train);
+    // [멈추기]로 중간에 멈추면 학습 데이터 채점은 건너뜀 (오래 걸림). 학습 출력이 결과에 꼭 필요한 과제(이상 탐지 기준값 등)는 그대로
+    const te = await checkedPredict(net, Fte, d.n_test), tr = halted && !(ae || fc || seg || multi) ? null : await checkedPredict(net, Ftr, d.n_train);
     net.start = null;
-    const out = te.out, outTr = tr.out;
+    const out = te.out, outTr = tr ? tr.out : null;
     const r = { epochs_done: done, test_metric: score(out, "test"),
       metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : multi ? "mean" : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
-      train_metric: score(outTr, "train"),   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+      train_metric: outTr ? score(outTr, "train") : null,   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
       best_epoch: bestEpoch, early_stopped: early, n_val: vIdx ? vIdx.length : 0 };
-    if (!te.ok || !tr.ok)
+    if (!te.ok || (tr && !tr.ok))
       // 탭이 뒤에 있을 때 GPU가 결과 일부를 가끔 틀리게 읽어 옴 (학습 자체는 같았음 — 시드가 같으면 가중치가 똑같음)
       r.warnings.push({ message: "이 브라우저의 GPU가 결과 일부를 틀리게 내서, 아래 성적은 CPU로 다시 계산했습니다 (성적은 맞음)",
         hint: "브라우저 창이 가려져 있거나 다른 탭을 보는 동안 학습하면 생길 수 있습니다. 자주 나오면 이 탭을 띄워 둔 채 학습하세요" });

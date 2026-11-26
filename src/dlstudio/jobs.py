@@ -189,7 +189,7 @@ def target_scale(Y: np.ndarray) -> tuple:
 
 def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None,
         det=None, keep_best: bool = False, early_stop: int = 0, val_score=None, loss_spec=None, n_cls: int = 0,
-        class_w=None):
+        class_w=None, should_stop=None):
     """평범한 torch 학습: Adam, 분류는 교차 엔트로피, 회귀는 MSE, 탐지는 YOLO식 손실 (det: DetOut). 반복마다
     callback({"epoch", "loss", "val_loss", "best_epoch", "model"}), True를 돌려주면 멈춤. 돌려주는 모델은 CPU.
     keep_best·early_stop: 학습 몫의 VAL_FRAC를 검증 몫으로 떼어 epoch마다 검증 손실을 재고, 가장 낮았던 epoch의 모델을
@@ -237,10 +237,14 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         val_idx = perm[:nv].cpu().numpy()
     n = len(Xt)
     best, best_ep, since, best_state, early = float("inf"), None, 0, None, False
+    halted = False
     for epoch in range(1, epochs + 1):
         net.train()
         losses, terms = [], {}
         for idx in torch.randperm(n, device=dev).split(max(1, batch_size)):
+            if should_stop is not None and should_stop():  # 묶음마다 확인: [멈추기]를 누르면 바로 (그 epoch는 기록하지 않음)
+                halted = True
+                break
             if len(idx) == 1 and n > 1:                    # BatchNorm은 학습 때 샘플 하나짜리 묶음을 못 받음
                 continue
             opt.zero_grad()
@@ -253,6 +257,8 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
             loss.backward()
             opt.step()
             losses.append(float(loss.detach()))
+        if halted:
+            break
         if not np.isfinite(np.mean(losses)):
             raise FloatingPointError("손실이 발산함 (NaN) → 학습률(Learning rate)을 낮추세요")
         val_loss = None
@@ -363,7 +369,8 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
         try:
             net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
                       device=dev, callback=cb, det=data.n_out if data.task in ("segmentation", "multi") else None,
-                      keep_best=settings.keep_best, early_stop=settings.early_stop, **loss_args(data, settings))
+                      keep_best=settings.keep_best, early_stop=settings.early_stop, should_stop=lambda: job.cancelled,
+                      **loss_args(data, settings))
         finally:
             model.start = None
     if reg or heads:
@@ -481,7 +488,7 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
         try:
             net = fit(model, Xfit, data.y_train, "detection", settings.epochs, settings.lr, settings.batch_size,
                       seed=settings.seed, device=dev, callback=cb, det=det, keep_best=settings.keep_best,
-                      early_stop=settings.early_stop, **loss_args(data, settings),
+                      early_stop=settings.early_stop, **loss_args(data, settings), should_stop=lambda: job.cancelled,
                       val_score=lambda o, idx: detect.metric(o, [data.det["train"][i] for i in idx], G, K))
         finally:
             model.start = None

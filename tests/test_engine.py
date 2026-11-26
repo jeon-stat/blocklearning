@@ -99,7 +99,7 @@ def test_engine_matches_torch(results, name):
             assert np.allclose(g["running"][k], v, atol=1e-5, rtol=1e-4), (name, k)
 
 
-def _train_js(tmp_path, graph, d, settings, distance=None):
+def _train_js(tmp_path, graph, d, settings, distance=None, stop_after_ms=None):
     plan = codegen.plan_dict(graph, d.length, d.n_out, d.image)
     data = {"X_train": d.X_train.ravel().tolist(), "X_test": d.X_test.ravel().tolist(), "y_train": np.ravel(d.y_train).tolist(),
             "y_test": np.ravel(d.y_test).tolist(), "n_train": len(d.y_train), "n_test": len(d.y_test), "task": d.task, "n_out": d.n_out,
@@ -107,7 +107,7 @@ def _train_js(tmp_path, graph, d, settings, distance=None):
             "seg": {"n_cls": d.n_out.n_cls, "length": d.n_out.length} if d.task == "segmentation" else None,
             "multi": {"heads": d.n_out.heads} if d.task == "multi" else None, "channels": getattr(d.length, "channels", 1)}
     f = tmp_path / "train.json"
-    f.write_text(json.dumps({"plan": plan, "data": data, "settings": settings, "distance": distance}), encoding="utf-8")
+    f.write_text(json.dumps({"plan": plan, "data": data, "settings": settings, "distance": distance, "stop_after_ms": stop_after_ms}), encoding="utf-8")
     r = subprocess.run(["node", str(JS / "run_train.js"), str(f)], capture_output=True, text=True, encoding="utf-8", timeout=600)
     assert r.returncode == 0, r.stderr[-3000:]
     return json.loads(r.stdout)
@@ -159,3 +159,17 @@ def test_engine_trains_batchnorm_model(tmp_path):
     assert counts and all(v["data"][0] == 2 * n_batches for v in counts.values()), counts
     net = build_graph_model(g, d.length, d.n_out).eval()
     net.load_state_dict({k: torch.tensor(v["data"]).reshape(v["shape"]).to(net.state_dict()[k].dtype) for k, v in out["state"].items()})
+
+
+def test_engine_stop_is_quick(tmp_path):
+    """[멈추기]: epoch가 끝나길 기다리지 않고 묶음마다 확인해 바로 멈춤. 멈춘 epoch는 기록하지 않고, 학습 데이터 채점은 건너뜀."""
+    from dlstudio import tasks
+    from dlstudio.data import load_example
+    from dlstudio.graph import from_blocks
+    T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
+    d = load_example("bearing")
+    g = from_blocks(T["cnn"]["blocks"])
+    out = _train_js(tmp_path, g, d, {"epochs": 100, "lr": 0.001, "batch_size": 8, "seed": 0}, stop_after_ms=1500)
+    r = out["result"]                                       # 이 설정의 한 epoch는 CPU(Node)로 2분 넘게 걸림
+    assert r["epochs_done"] == len(out["progress"]) == 0 and r["train_metric"] is None and r["test_metric"] is not None
+    assert out["stopMs"] < 5000
