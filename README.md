@@ -1,16 +1,16 @@
-# DL studio
+# BlockLearning
 
 파이썬·딥러닝 코드를 몰라도 브라우저에서 **층(블록)을 선으로 이어** 모델을 만들고, 학습하고, 학습한 모델을 파일로 내보내 쓰는 도구입니다.
 제조(센서·설비)·의료(심전도 등) 시계열·표 데이터와 흑백 이미지를 대상으로 합니다.
 
 > 교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.
 
-**웹 버전:** https://jeon-stat.github.io/dl-studio/ — 설치 없이 브라우저에서 바로 씁니다. 계산은 모두 그 브라우저 안에서 하고, 고른 데이터 파일은 PC 밖으로 나가지 않습니다.
+**웹 버전:** https://jeon-stat.github.io/blocklearning/ — 설치 없이 브라우저에서 바로 씁니다. 계산은 모두 그 브라우저 안에서 하고, 고른 데이터 파일은 PC 밖으로 나가지 않습니다.
 **로컬 실행:** 아래처럼 내 PC에서 띄우면 `127.0.0.1`에만 열리고, 학습은 PyTorch로 합니다.
 
 ## 웹 버전 (GitHub Pages)
 
-저장소 맨 위의 `index.html`이 화면(`src/dlstudio/static/index.html`)을 불러 쓰고, 서버 대신 브라우저 안에서 계산합니다.
+저장소 맨 위의 `index.html`이 화면(`src/blocklearning/static/index.html`)을 불러 쓰고, 서버 대신 브라우저 안에서 계산합니다.
 
 | 하는 일 | 로컬 실행 | 웹 버전 |
 |---|---|---|
@@ -18,14 +18,14 @@
 | 학습·샘플 따라가기·모델 정보 | PyTorch | [TensorFlow.js](https://www.tensorflow.org/js) (`static/engine.js`, 그래픽카드가 있으면 WebGL로 빠르게) |
 | 데이터 넣기 | 경로 입력 | 파일·폴더 고르기 (브라우저 안에만 둠) |
 | 내보내기 | TorchScript `.pt` | PyTorch 코드 + 가중치 `.npz` 내려받기 |
-| 저장·열기 | `.dlstudio` 파일 | **내 프로젝트**: 바뀌면 자동 저장, 다시 열면 데이터·학습 결과째 이어서. 저장 위치는 이 브라우저(IndexedDB) 또는 **구글 드라이브**(내 드라이브/DL studio/<프로젝트>/). `.dlstudio`(데이터 포함) 내려받기·가져오기 |
+| 저장·열기 | `.blocklearning` 파일 | **내 프로젝트**: 바뀌면 자동 저장, 다시 열면 데이터·학습 결과째 이어서. 저장 위치는 이 브라우저(IndexedDB) 또는 **구글 드라이브**(내 드라이브/BlockLearning/<프로젝트>/). `.blocklearning`(데이터 포함) 내려받기·가져오기 |
 | 라벨링 작업실 | 있음 | 아직 없음 |
 
 - 엔진은 PyTorch 식을 TF.js 연산으로 그대로 옮겨서, 같은 가중치면 출력·기울기·BatchNorm 갱신이 PyTorch와 같습니다 (`tests/test_engine.py`, 46개 경우).
   그래서 웹에서 학습한 가중치를 PyTorch 코드로 그대로 내보냅니다.
 - 처음 열 때 Pyodide·TF.js를 받느라 5–10초쯤 걸립니다. 그다음은 서비스 워커(`sw.js`)가 받아 둔 것을 씀: 버전이 박힌 CDN 파일만
   브라우저에 두고, 이 사이트의 파일은 늘 네트워크에서 먼저 받아 새 버전이 바로 보입니다 (데이터·프로젝트는 지나지 않음).
-- 구글 드라이브: 권한은 `drive.file`(DL studio가 만든 파일만)뿐이고, 출입증은 메모리에만 둡니다 (새로 고치면 로그인 한 번).
+- 구글 드라이브: 권한은 `drive.file`(BlockLearning이 만든 파일만)뿐이고, 출입증은 메모리에만 둡니다 (새로 고치면 로그인 한 번).
   OAuth 클라이언트 ID는 `static/store.js`의 `GOOGLE_CLIENT_ID` (공개 값). 개인정보처리방침: [privacy.html](privacy.html)
 - 보안: `index.html`의 CSP로 통신은 구글 API·jsDelivr만 허용(조작된 코드가 데이터를 낯선 서버로 못 보냄), CDN 스크립트는 SRI 해시로 확인 (`static/boot.js`)
 - 배포: 저장소 Settings → Pages → Source를 **Deploy from a branch**, 가지 `main`, 폴더 `/ (root)`로. 무료 계정은 공개 저장소에서만 Pages를 쓸 수 있습니다.
@@ -35,11 +35,11 @@
 
 ```bash
 pip install -e .            # 처음 한 번 (torch가 이미 있으면 그대로 씀). 이미지 폴더를 쓰려면 pip install -e ".[image]"
-python -m dlstudio          # 또는 dlstudio
+python -m blocklearning     # 또는 blocklearning
 ```
 
 브라우저에 `http://127.0.0.1:8765/`가 열립니다. `--port 8800`으로 포트를, `--no-browser`로 브라우저 자동 열기를 바꿀 수 있습니다.
-애플리케이션 제어 정책이 실행 파일(`dlstudio.exe`)을 막는 PC에서는 `python -m dlstudio`를 쓰세요.
+애플리케이션 제어 정책이 실행 파일(`blocklearning.exe`)을 막는 PC에서는 `python -m blocklearning`을 쓰세요.
 
 ## 단계
 
@@ -70,15 +70,15 @@ python -m dlstudio          # 또는 dlstudio
 | 구간 분할 · 시계열 | 출하 검사 기계 전류 100Hz — 시점마다 공정 단계 5묶음 / 같은 기계 전류 + 공압 압력 두 채널 ([Mendeley ypzswhhzh9](https://doi.org/10.17632/ypzswhhzh9.3), CC BY 4.0) | TCN (팽창 합성곱), U-Net식, 양방향 GRU |
 | 여러 정답 · 표 | 유압 시스템 — 냉각기·펌프 상태(분류)와 밸브 %·축압기 압력(숫자)을 한 번에 (UCI, CC BY 4.0) | MLP (몸통 함께 쓰기), 깊은 MLP (몸통 함께 쓰기) |
 
-예시 데이터는 모두 공개된 실제 데이터입니다 (합성 데이터 없음). 원본을 작게 줄인 파일과 출처·라이선스·바꾼 내용은 `src/dlstudio/data/*.npz`·`*.SOURCE.txt`, 원본에서 다시 만드는 법은 `tools/build_examples.py`. 웹 버전은 예시를 누를 때만 그 파일을 받습니다.
+예시 데이터는 모두 공개된 실제 데이터입니다 (합성 데이터 없음). 원본을 작게 줄인 파일과 출처·라이선스·바꾼 내용은 `src/blocklearning/data/*.npz`·`*.SOURCE.txt`, 원본에서 다시 만드는 법은 `tools/build_examples.py`. 웹 버전은 예시를 누를 때만 그 파일을 받습니다.
 
 **객체 탐지**는 YOLO 첫 버전과 같은 격자 방식입니다: 그림을 2×2 AvgPool로 세 번 줄여 8×8 격자(64×64 그림 기준)로 만들고, 출력 블록이 격자 칸마다 1×1 필터로 '사물의 가운데가 이 칸에 있나 · 칸 안 위치 · 너비·높이 · 클래스'를 냅니다 (출력 앞이 격자가 아니면 모델 검사가 막음). 손실은 있음(BCE, 빈 칸은 무게 0.5) + 위치·크기 제곱 오차 × 5 + 클래스 교차 엔트로피, 찾은 상자는 같은 클래스끼리 50% 넘게 겹치면 점수 높은 것만 남깁니다. 같은 칸에 사물 가운데가 둘이면 큰 것만 배웁니다 (작은 사물이 빽빽하면 그림 크기를 키우세요).
 
 ## 저장과 내보내기
 
-- **프로젝트:** 모델 그래프·데이터 출처·설정·학습된 가중치·학습 기록을 `.dlstudio` 파일로 저장·열기
+- **프로젝트:** 모델 그래프·데이터 출처·설정·학습된 가중치·학습 기록을 `.blocklearning` 파일로 저장·열기
 - **모델 내보내기 (`.pt`):** ④ 아래 [학습한 모델 내보내기] 또는 위 [내보내기]. 정규화와 입력 모양 맞추기가 파일 안에 들어 있어서,
-  받는 쪽은 DL studio 없이 **torch만으로** 학습 CSV와 같은 열 순서의 원래 값(정답 열 빼고)을 넣으면 예측합니다.
+  받는 쪽은 BlockLearning 없이 **torch만으로** 학습 CSV와 같은 열 순서의 원래 값(정답 열 빼고)을 넣으면 예측합니다.
 
 ```python
 import json, torch
@@ -124,7 +124,7 @@ npm install --prefix tests/js   # 웹 엔진 시험용 TF.js (node가 있으면)
 python -m pytest                # 화면 그래프 편집기·웹 엔진 시험은 node가 있으면 함께 돎
 ```
 
-| 파일 (`src/dlstudio/`) | 하는 일 |
+| 파일 (`src/blocklearning/`) | 하는 일 |
 |---|---|
 | `graph.py` · `blocks.py` | 그래프 검사(모양·연결·규칙), 층 → torch 모델 |
 | `data.py` | CSV·폴더·이미지 읽기, 과제 판단, 정규화, 학습/시험 나누기, 예시 데이터 |
@@ -149,7 +149,7 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 - 학습 때 특징을 한 번만 뽑아 두고 뒷부분만 반복 학습합니다 (블록이 입력 바로 뒤에 있고, 앞에 증강이 없을 때).
 - 탐지: 블록 설정 [출력]을 '특징 지도'로 하면 그림을 2배로 넣어 앞 블록 8개까지만 써서, 원래 그림 8픽셀마다 특징 48개(탐지 격자와 같은 칸)를 냅니다. 대표 모델 [전이 학습 탐지 (MobileNetV3)] = 특징 지도 → Conv2D 64 → ReLU → 출력. PCB 결함 예시: 시험 mAP@0.5 0.23 (PyTorch 58초), 처음부터 학습하는 깊은 탐지 모델 0.23 (약 400초)·작은 탐지 모델 0.09.
 - 미세조정: 블록 설정 [함께 학습할 끝 블록]을 1–3으로 하면 끝 블록과 마지막 1×1 합성곱 둘을 함께 학습합니다 (작은 학습률 권장, 예: 0.0003). 15 epoch에서 강판 93.3% → 96.0% (끝 2개), 흉부 X-ray 90.8% → 93.3% (끝 1개)로 올랐지만, 특징을 매번 다시 계산해 3–10배 오래 걸리고 프로젝트에 학습한 값(수 MB)이 저장됩니다. 아주 작은 그림(28×28 흉부 X-ray)에서는 처음부터 학습하는 모델보다 나아지지 않을 수 있습니다.
-- 가중치: Google의 [MobileNetV3 small-100-224 feature vector](https://www.kaggle.com/models/google/mobilenet-v3/tfJs/small-100-224-feature-vector/1) (TF Hub `mobilenet_v3_small_100_224/feature_vector/5`, **Apache License 2.0**). `tools/build_pretrained.py`가 TF.js 파일을 `src/dlstudio/pretrained/mnv3s.bin`·`.json`으로 옮기고(축 순서만 바꿈), 원래 모델과 출력이 같은지 확인합니다. 출처·바꾼 내용은 `mnv3s.SOURCE.txt`, 라이선스 원문은 `LICENSE-mnv3s.txt`.
+- 가중치: Google의 [MobileNetV3 small-100-224 feature vector](https://www.kaggle.com/models/google/mobilenet-v3/tfJs/small-100-224-feature-vector/1) (TF Hub `mobilenet_v3_small_100_224/feature_vector/5`, **Apache License 2.0**). `tools/build_pretrained.py`가 TF.js 파일을 `src/blocklearning/pretrained/mnv3s.bin`·`.json`으로 옮기고(축 순서만 바꿈), 원래 모델과 출력이 같은지 확인합니다. 출처·바꾼 내용은 `mnv3s.SOURCE.txt`, 라이선스 원문은 `LICENSE-mnv3s.txt`.
 - 웹 버전은 이 블록을 처음 쓸 때 같은 사이트에서 가중치를 받습니다. 프로젝트·학습 기록에는 고정 가중치를 넣지 않고(열 때 다시 채움), 내보내는 PyTorch 코드·가중치에는 모두 넣습니다. Keras 코드로는 내보내지 않습니다.
 
 ### 구간 분할 (시점마다 상태)
@@ -158,7 +158,7 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 
 - 출력 블록 바로 앞은 길이 L인 줄이어야 합니다. 길이를 줄이는 Pool·stride 2·Flatten·Dense를 쓰면 빨간 상자로 알려 줍니다 (줄였으면 Upsample로 되돌리기, 순환 층은 return_sequences).
 - 결과: 시점 정확도(시험·학습), 시점마다 센 혼동 행렬·상태별 재현율, 상태가 많이 바뀌는 시험 창의 신호와 정답·예측 색 띠. ⑤ 예측은 예시 새 데이터 10개의 창마다 예측 구간과 정답, CSV(시점마다 한 줄).
-- 예시: 소형 전기 구동부 출하 검사 기계의 전류(100Hz)를 256칸(2.56초)씩 자르고, 기계 PLC 상태를 다섯 묶음(대기 · 동작 1–10 · 동작 11–16 · 긴 단계 17 · 동작 18–25)으로 붙였습니다. 별도 실험(겹치지 않는 창 전부, 팽창 합성곱 6층, 30 epoch)에서 압력만으로는 대기와 긴 단계를 가르지 못해 시점 정확도 58%, 전류만으로 98%, 둘 다 쓰면 99.7%였습니다. DL studio 예시(창 일부, TCN 대표 모델)는 웹에서 10 epoch에 86%입니다.
+- 예시: 소형 전기 구동부 출하 검사 기계의 전류(100Hz)를 256칸(2.56초)씩 자르고, 기계 PLC 상태를 다섯 묶음(대기 · 동작 1–10 · 동작 11–16 · 긴 단계 17 · 동작 18–25)으로 붙였습니다. 별도 실험(겹치지 않는 창 전부, 팽창 합성곱 6층, 30 epoch)에서 압력만으로는 대기와 긴 단계를 가르지 못해 시점 정확도 58%, 전류만으로 98%, 둘 다 쓰면 99.7%였습니다. BlockLearning 예시(창 일부, TCN 대표 모델)는 웹에서 10 epoch에 86%입니다.
 - 여러 채널: 예시 '전류 + 공압 압력'은 두 신호를 채널로 넣습니다 (입력 모양 (2, 256), 채널마다 정규화).
 - 내 CSV: 한 행 = 한 시점 (시간 순서), 값 열들 + 마지막 열 = 그 시점의 상태. 같은 길이의 창으로 겹치지 않게 자르고, 값 열이 여럿이면 채널. 역할 표에서 상태 열·안 쓸 열·창 길이를 바꿉니다.
 

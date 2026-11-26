@@ -8,12 +8,12 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import tasks
-from dlstudio.analysis import saliency
-from dlstudio.blocks import to_model_input
-from dlstudio.codegen import plan_dict
-from dlstudio.data import channels_of, load_example
-from dlstudio.graph import build_graph_model, from_blocks
+from blocklearning import tasks
+from blocklearning.analysis import saliency
+from blocklearning.blocks import to_model_input
+from blocklearning.codegen import plan_dict
+from blocklearning.data import channels_of, load_example
+from blocklearning.graph import build_graph_model, from_blocks
 
 JS = Path(__file__).parent / "js"
 HAS_NODE = shutil.which("node") is not None and (JS / "node_modules" / "@tensorflow" / "tfjs").exists()

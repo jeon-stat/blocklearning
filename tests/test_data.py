@@ -1,4 +1,4 @@
-"""DL studio 데이터: CSV(한 행 = 샘플, 정답 열 하나)와 합성 예시 데이터 → Dataset."""
+"""BlockLearning 데이터: CSV(한 행 = 샘플, 정답 열 하나)와 합성 예시 데이터 → Dataset."""
 import json
 from pathlib import Path
 import sys
@@ -6,9 +6,9 @@ import sys
 import numpy as np
 import pytest
 
-import dlstudio.data as data_mod
+import blocklearning.data as data_mod
 from tests.synth import example_arrays
-from dlstudio.data import (DataError, load_csv, load_example, load_image_folder, load_series_folder,
+from blocklearning.data import (DataError, load_csv, load_example, load_image_folder, load_series_folder,
                               make_dataset, read_series_folder, scan_series_folder)
 
 
@@ -73,7 +73,7 @@ def test_empty_cell_rows_are_dropped_and_counted(tmp_path):
 
 
 def test_thousands_separator_numbers():
-    from dlstudio.data import _num
+    from blocklearning.data import _num
     assert _num("1,234") == 1234 and _num("-1,234,567.5") == -1234567.5 and _num("12,34") is None and _num("0,5") is None
 
 
@@ -411,12 +411,12 @@ REAL = [  # 종류, 과제, 클래스 수(회귀 0), 길이, 그림, 샘플 수
 
 @pytest.mark.parametrize("kind,task,k,length,image,n", REAL, ids=[r[0] for r in REAL])
 def test_real_examples(kind, task, k, length, image, n):
-    from dlstudio.data import EXAMPLES
+    from blocklearning.data import EXAMPLES
     d = load_example(kind)
     assert d.task == task and len(d.classes) == k and d.length == length and d.image == image
     assert len(d.X_train) + len(d.X_test) == n and np.isfinite(d.X_train).all()
     json.dumps(d.summary(), ensure_ascii=False)
-    src = Path(__file__).resolve().parents[1] / "src" / "dlstudio" / "data" / f"{EXAMPLES[kind][0]}.SOURCE.txt"
+    src = Path(__file__).resolve().parents[1] / "src" / "blocklearning" / "data" / f"{EXAMPLES[kind][0]}.SOURCE.txt"
     assert "CC BY 4.0" in src.read_text(encoding="utf-8") or "Open Data Commons Attribution" in src.read_text(encoding="utf-8")
     if image:
         raw = d.raw(d.X_train)
@@ -425,15 +425,15 @@ def test_real_examples(kind, task, k, length, image, n):
 
 def test_old_synthetic_names_load_real_data():
     """예전(합성) 예시 이름으로 저장한 프로젝트도 열림 → 바꾼 실제 데이터."""
-    from dlstudio.data import ALIASES, EXAMPLE_KINDS
+    from blocklearning.data import ALIASES, EXAMPLE_KINDS
     assert set(ALIASES.values()) <= set(EXAMPLE_KINDS)
     assert load_example("vibration").classes == load_example("bearing").classes
     assert load_example("process_reg").features[0] == "시멘트 (kg/m³)"
 
 
 def test_example_files_and_no_synthetic_generators():
-    import dlstudio.data as D
-    from dlstudio.data import EXAMPLE_KINDS, example_files
+    import blocklearning.data as D
+    from blocklearning.data import EXAMPLE_KINDS, example_files
     for kind in EXAMPLE_KINDS:
         fs = example_files(kind)
         assert fs and all((Path(D.__file__).parent / "data" / f).exists() for f in fs), kind

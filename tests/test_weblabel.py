@@ -6,7 +6,7 @@ import zipfile
 import numpy as np
 import pytest
 
-from dlstudio import web, weblabel
+from blocklearning import web, weblabel
 
 
 @pytest.fixture()

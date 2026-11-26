@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlockLearning</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="app">
+<header class="top">
+  <div class="brand" title="BlockLearning"><svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M10 9.5v6.5M10 16l11 6.5M10 16h11" stroke="#fff" stroke-width="1.8" stroke-linecap="round" fill="none" opacity=".85"/><rect x="6.5" y="6" width="7" height="5" rx="1.6" fill="#fff"/><rect x="6.5" y="13.5" width="7" height="5" rx="1.6" fill="#fff"/><rect x="18.5" y="13.5" width="7" height="5" rx="1.6" fill="#fff" opacity=".9"/><rect x="18.5" y="20.5" width="7" height="5" rx="1.6" fill="#fff" opacity=".75"/></svg><span class="bt">BlockLearning<span class="sub">블록으로 딥러닝 모델 만들기</span></span></div>
+  <nav class="steps" id="steps">
+    <div class="nav-label">만들기</div>
+    <button data-step="task" class="step active"><span class="n">1</span><span class="sl">과제<small>무엇을 할지 고르기</small></span></button>
+    <button data-step="data" class="step"><span class="n">2</span><span class="sl">데이터<small>CSV·그림 넣기</small></span></button>
+    <button data-step="model" class="step"><span class="n">3</span><span class="sl">모델<small>블록으로 쌓기</small></span></button>
+    <button data-step="train" class="step"><span class="n">4</span><span class="sl">학습<small>배우고 채점하기</small></span></button>
+    <button data-step="predict" class="step"><span class="n">5</span><span class="sl">예측<small>새 데이터에 쓰기</small></span></button>
+  </nav>
+  <div class="files">
+    <button id="btn-label" title="정답이 없는 데이터에 정답 붙이기 (새 탭). 붙인 정답은 ② 데이터의 라벨링한 데이터에서 불러 씀">라벨링 ↗</button>
+    <button id="btn-open">열기</button>
+    <button id="btn-save">저장</button>
+    <button id="btn-export">내보내기</button>
+  </div>
+</header>
+
+<div id="message" class="message" hidden>
+  <div class="msg-main"><span id="msg-text"></span> <span id="msg-hint" class="hint"></span></div>
+  <details id="msg-detail-box" hidden><summary>자세히</summary><pre id="msg-detail"></pre></details>
+  <button id="msg-close" class="x" aria-label="닫기">×</button>
+</div>
+
+<main>
+  <!-- ① 과제 -->
+  <section id="step-task" class="panel">
+    <h2>① 무엇을 하고 싶나요?</h2>
+    <p class="muted use-note">교육·실험용 도구입니다. 학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.</p>
+    <div class="skip-task"><button id="btn-skip-task">과제는 나중에 — 데이터부터 넣기 →</button></div>
+    <div id="families" class="tcards"></div>
+    <div id="subtask-box" hidden>
+      <h3>어떤 데이터인가요?</h3>
+      <div id="subtasks" class="tcards"></div>
+    </div>
+    <div id="template-box" hidden>
+      <h3>대표 모델 고르기</h3>
+      <div id="templates" class="tcards"></div>
+      <div class="next"><button class="primary go" data-go="data">다음: 데이터 넣기 →</button></div>
+    </div>
+  </section>
+
+  <!-- ② 데이터 -->
+  <section id="step-data" class="panel" hidden>
+    <h2>② 데이터 넣기 <span id="data-task-name" class="tag"></span></h2>
+    <p class="lead" id="data-guide"></p>
+    <div class="sec-title"><h3>예시 데이터로 시작</h3></div>
+    <div id="example-btns" class="ex-grid"></div>
+    <div class="sec-title" id="mine-title"><h3>내 데이터 넣기</h3></div>
+    <div class="src-grid" id="mine-grid">
+      <div class="src-card" id="csv-card">
+        <div class="src-head"><b>CSV 파일</b><span>한 행 = 샘플 하나</span></div>
+        <div class="src-row"><input id="csv-path" class="path" placeholder="C:\data\ecg.csv"><button id="btn-csv">CSV 불러오기</button></div>
+        <div id="dropzone" class="dropzone" hidden>또는 CSV 파일을 이 화면에 끌어다 놓으세요</div>
+        <div id="csv-pick" class="csv-pick" hidden>
+          <div class="pick-head"><b id="pick-file"></b> <span class="muted" id="pick-info"></span></div>
+          <div class="role-cols" id="pick-cols"></div>
+          <div class="row"><label id="pick-ch-box">채널 수 <input id="pick-channels" type="number" min="1" max="64" value="1"></label>
+            <label id="pick-len-box" hidden>창 길이 <input id="pick-length" type="number" min="8" max="4096" placeholder="자동"></label>
+            <button id="btn-pick-load">불러오기</button><span class="muted" id="pick-note"></span></div>
+        </div>
+        <details id="csv-format" class="fmt"><summary>CSV는 어떤 모양이어야 하나요?</summary><div id="csv-format-body"></div></details>
+      </div>
+      <div class="src-card" id="image-row" hidden>
+        <div class="src-head"><b>이미지 폴더</b><span>클래스마다 하위 폴더 (예: 사진/양품, 사진/불량)</span></div>
+        <div class="src-row"><input id="folder-path" class="path" placeholder="C:\data\사진 (안에 클래스별 하위 폴더)"></div>
+        <div class="src-row"><label class="inline">크기 <select id="folder-size"><option value="8">8×8</option><option value="16">16×16</option><option value="28" selected>28×28</option><option value="32">32×32</option></select></label>
+          <span class="grow"></span><button id="btn-folder">폴더 불러오기</button></div>
+      </div>
+      <div class="src-card" id="label-card" hidden>
+        <div class="src-head"><b>라벨링한 데이터</b><span>라벨링 페이지에서 정답을 붙인 작업 (이 브라우저)</span></div>
+        <div id="label-jobs" class="label-jobs"></div>
+        <div class="src-row"><label class="check"><input id="label-confirmed" type="checkbox"> 확인된 정답만</label>
+          <span class="grow"></span><a class="btn-link" href="label.html" target="_blank" rel="noopener">라벨링 페이지 ↗</a></div>
+      </div>
+      <div class="src-card" id="series-row" hidden>
+        <div class="src-head"><b>시계열 폴더</b><span>샘플(사이클·환자)마다 CSV 하나</span></div>
+        <div class="src-row"><input id="series-path" class="path" placeholder="C:\data\사이클 (사이클·환자마다 CSV 하나)"></div>
+        <div class="src-row"><input id="series-label-file" class="path" placeholder="정답 표 CSV (선택: 파일이름, 정답)"></div>
+        <div class="src-row"><span class="grow"></span><button id="btn-series-scan">폴더 살펴보기</button></div>
+      </div>
+    </div>
+    <div class="box series-box" id="series-box" hidden>
+      <div id="series-info" class="series-info"></div>
+      <div class="grid4">
+        <div class="series-cols"><span>값 열</span><span id="series-columns"></span></div>
+        <label>길이 (시점 수로 맞춤) <input id="series-length" type="number" min="8" max="65536" step="8"></label>
+        <label>길이 맞추기 <select id="series-resample"><option value="interp">처음부터 끝까지 고르게 다시 뽑기</option><option value="crop">앞에서 자르고 모자라면 채우기</option></select></label>
+      </div>
+      <div class="row"><button id="btn-series-load" class="primary">불러오기</button></div>
+      <div id="series-guide" class="series-guide" hidden></div>
+    </div>
+    <details class="more">
+      <summary>더 보기</summary>
+      <div class="grid4">
+        <label>정답 열 번호 <input id="label-col" type="number" min="1" placeholder="마지막 열"></label>
+        <label>과제 <select id="task"><option value="auto">자동</option><option value="classification">분류</option><option value="regression">회귀</option><option value="forecast" hidden>시계열 예측</option><option value="anomaly" hidden>이상 탐지</option><option value="segmentation" hidden>구간 분할</option><option value="multi" hidden>여러 정답</option></select></label>
+        <label id="image-width-box" hidden>이미지 너비 <input id="image-width" type="number" min="1"></label>
+        <label>시험 비율 <input id="test-ratio" type="number" min="0.05" max="0.5" step="0.05" value="0.2"></label>
+        <label class="check"><input id="normalize" type="checkbox" checked> <span id="normalize-text">정규화</span></label>
+      </div>
+    </details>
+    <ul id="data-issues" class="issues"></ul>
+    <div id="data-summary" hidden>
+      <div class="sec-title"><h3>불러온 데이터</h3></div>
+      <div id="auto-task" class="auto-task" hidden></div>
+      <div class="cards" id="data-cards"></div>
+      <div class="box role-box" id="role-box" hidden>
+        <div class="role-cols" id="role-cols"></div>
+        <div class="row"><label id="role-ch-box">채널 수 <input id="role-channels" type="number" min="1" max="64" value="1"></label>
+          <label id="role-len-box" hidden>창 길이 <input id="role-length" type="number" min="8" max="4096"></label>
+          <button id="btn-role-reload">이 역할로 다시 읽기</button><span class="muted" id="role-note"></span></div>
+      </div>
+      <div class="box fc-box" id="fc-box" hidden>
+        <div class="grid4">
+          <label>맞힐 값 열 <select id="fc-column"></select></label>
+          <label>입력 길이 <input id="fc-L" type="number" min="2" max="4096"></label>
+          <label>예측 길이 <input id="fc-H" type="number" min="1" max="1024"></label>
+          <label>간격 <input id="fc-stride" type="number" min="1" max="1000"></label>
+        </div>
+        <label class="check" id="fc-cal-box" hidden><input id="fc-cal" type="checkbox" checked> 요일·시각도 넣기 (<span id="fc-time-col"></span> 열)</label>
+        <div class="row"><button id="btn-fc-reload">이 설정으로 다시 만들기</button><span class="muted" id="fc-note"></span></div>
+      </div>
+      <h3>샘플 미리보기</h3>
+      <div id="data-preview" class="preview"></div>
+    </div>
+    <div class="next"><button class="primary go back" data-go="task">← 이전: 과제</button>
+      <button id="btn-next-data" class="primary go" data-go="model" hidden>다음: 모델 만들기 →</button></div>
+  </section>
+
+  <!-- ③ 모델 -->
+  <section id="step-model" class="panel" hidden>
+    <h2>③ 모델 만들기</h2>
+    <div class="empty-step" data-empty="model">
+      <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
+      <b>먼저 데이터를 넣어 주세요</b>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button></div>
+    </div>
+    <div class="row toolbar">
+      <span class="muted">대표 모델:</span>
+      <span id="tpl-btns"></span>
+      <button id="btn-clear" title="빈 모델에서 직접 쌓기 (Ctrl+Z로 되돌릴 수 있음)">빈 모델로</button>
+      <span class="grow"></span>
+      <button id="btn-code" title="지금 모델을 PyTorch·TensorFlow 코드로">코드로 보기</button>
+    </div>
+    <div class="row toolbar">
+      <button id="btn-undo" title="Ctrl+Z" disabled>↶ 되돌리기</button>
+      <button id="btn-redo" title="Ctrl+Y" disabled>↷ 다시 하기</button>
+      <button id="btn-autolayout" title="고른 상자가 있으면 바로 위 상자와 가운데 맞춤 (화살표 수직), 없으면 옮겨 둔 위치를 지우고 다시 정렬">자동 정렬</button>
+      <details class="viewopt">
+        <summary>보기 설정</summary>
+        <div class="viewopt-box">
+          <label>방향 <select id="flow-dir"><option value="v">위→아래</option><option value="h">왼쪽→오른쪽</option></select></label>
+          <label><input id="auto-wrap" type="checkbox"> <span id="auto-wrap-text">자동 열바꿈</span></label>
+          <label>선 <select id="edge-style"><option value="ortho">꺾인선</option><option value="curve">곡선</option></select></label>
+        </div>
+      </details>
+      <span class="zoom" role="group" aria-label="판 확대·축소">
+        <button id="zoom-out" title="축소 (Ctrl+− 또는 판 위에서 Ctrl+휠)" aria-label="축소">−</button>
+        <button id="zoom-reset" title="100%로 (Ctrl+0)">100%</button>
+        <button id="zoom-in" title="확대 (Ctrl++ 또는 판 위에서 Ctrl+휠)" aria-label="확대">＋</button>
+        <button id="zoom-fit" title="모델 전체가 보이게">전체 보기</button>
+      </span>
+      <span id="check-status" class="status"></span>
+    </div>
+    <div class="model-layout">
+      <div id="palette" class="palette"></div>
+      <div id="canvas" class="canvas"></div>
+      <aside class="side">
+        <div class="box"><h3>설정</h3><div id="settings"></div></div>
+        <div class="box preview-box" id="preview-box" hidden>
+          <h3>미리보기 <span id="preview-name" class="muted"></span><button id="preview-close" class="x" aria-label="닫기">×</button></h3>
+          <div id="preview-body"></div>
+        </div>
+        <div class="box">
+          <h3>모델 정보</h3>
+          <div id="panel" class="kv"><p class="muted">층을 쌓으면 계산됩니다</p></div>
+          <ul id="panel-warnings" class="warns"></ul>
+        </div>
+        <div class="box">
+          <h3>문제</h3>
+          <ul id="model-issues" class="issues"><li class="muted">없음</li></ul>
+        </div>
+      </aside>
+    </div>
+    <div class="next"><button class="primary go back" data-go="data">← 이전: 데이터</button>
+      <button class="primary go" data-go="train">다음: 학습 →</button></div>
+  </section>
+
+  <!-- ④ 학습 -->
+  <section id="step-train" class="panel" hidden>
+    <h2>④ 학습</h2>
+    <div class="empty-step" data-empty="train">
+      <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
+      <b>학습할 데이터가 없습니다</b>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button></div>
+    </div>
+    <div id="train-guard" class="guard" hidden></div>
+    <div class="row">
+      <label>Epochs <input id="epochs" type="number" min="1" max="500" value="30"></label>
+      <button id="btn-train" class="primary">학습 시작</button>
+      <button id="btn-train-stop">멈추기</button>
+      <button id="btn-code-train" title="학습한 모델을 PyTorch·TensorFlow 코드로">코드로 보기</button>
+      <span id="train-status" class="status"></span>
+    </div>
+    <div id="train-bar" class="train-bar" hidden><i></i></div>
+    <div class="train-opts">
+      <div class="grid4">
+        <label>Learning rate <input id="lr" type="number" step="0.0001" value="0.001"></label>
+        <label>Batch size <input id="batch" type="number" min="1" value="32"></label>
+        <label class="check"><input id="keep-best" type="checkbox" checked> 가장 좋았던 epoch 남기기</label>
+        <label>조기 종료 <select id="early-stop"><option value="0">끔</option><option value="5">5 epoch</option><option value="10">10 epoch</option><option value="20">20 epoch</option></select></label>
+        <label>장치 <select id="device"><option value="auto">자동 (GPU 있으면 GPU)</option><option value="cpu">CPU</option><option value="cuda">GPU</option></select></label>
+      </div>
+      <div class="loss-box"><span class="loss-k">손실 =</span><span id="loss-terms"></span><button id="loss-add" type="button">+ 항</button><button id="loss-reset" type="button" hidden>기본으로</button><select id="loss-recipe" hidden></select></div>
+    </div>
+    <div class="train-layout">
+      <div class="box"><h3>학습 곡선</h3><svg id="curve" class="curve" viewBox="0 0 560 220"></svg><div id="loss-parts" class="kv loss-parts"></div></div>
+      <div class="box"><h3>결과</h3><div id="train-result" class="kv"><p class="muted">학습이 끝나면 나옵니다</p></div>
+        <ul id="train-warnings" class="warns"></ul><div id="train-confusion"></div><div id="cm-pick" class="cm-pick" hidden></div>
+        <div id="train-scatter"></div></div>
+    </div>
+    <div class="box" id="det-box" hidden></div>
+    <div class="box" id="runs-box" hidden>
+      <h3>학습 기록</h3>
+      <div id="runs" class="table-wrap"></div>
+      <div id="runs-compare" class="table-wrap runs-compare" hidden></div>
+    </div>
+    <div class="box" id="sample-box" hidden>
+      <h3>샘플 하나 따라가 보기</h3>
+      <div class="row">
+        <button id="btn-prev">◀</button>
+        <span>시험 샘플 <input id="sample-index" type="number" min="0" value="0"></span>
+        <button id="btn-next">▶</button>
+        <span id="sample-info" class="status"></span>
+      </div>
+      <div id="sample-flow" class="flow wide"></div>
+    </div>
+    <div class="next"><button class="primary go back" data-go="model">← 이전: 모델</button>
+      <button id="btn-export-pt">학습한 모델 내보내기 (.pt)</button>
+      <button class="primary go" data-go="predict">다음: 새 데이터로 예측 →</button></div>
+  </section>
+
+  <!-- ⑤ 예측 -->
+  <section id="step-predict" class="panel" hidden>
+    <h2>⑤ 새 데이터로 예측</h2>
+    <div class="empty-step" data-empty="predict">
+      <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
+      <b>아직 학습한 모델이 없습니다</b>
+      <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button></div>
+    </div>
+    <div id="predict-guard" class="guard" hidden></div>
+    <div id="predict-inputs">
+      <div class="row" data-kind="example"><button id="btn-predict-example" class="primary">예시 새 데이터 10개로 예측</button></div>
+      <div class="row" data-kind="csv"><input id="predict-path" class="path" placeholder="C:\data\new.csv"><button id="btn-predict-csv" class="primary">CSV로 예측</button></div>
+      <div class="row" data-kind="folder"><input id="predict-folder" class="path" placeholder="C:\data\새 그림 폴더"><button id="btn-predict-folder" class="primary">그림 폴더로 예측</button></div>
+      <div class="row" data-kind="series"><input id="predict-series" class="path" placeholder="C:\data\새 사이클 (샘플마다 CSV 하나)"><button id="btn-predict-series" class="primary">폴더로 예측</button></div>
+      <details data-kind="rows" id="predict-manual" class="more"><summary>값을 직접 넣어 예측</summary>
+        <div id="predict-form" class="grid4"></div>
+        <div class="row"><button id="btn-predict-rows" class="primary">이 값으로 예측</button></div>
+      </details>
+      <p class="muted" id="predict-format"></p>
+    </div>
+    <ul id="predict-issues" class="issues"></ul>
+    <div id="predict-result" hidden>
+      <div class="cards" id="predict-cards"></div>
+      <div id="predict-gallery"></div>
+      <div class="row"><button id="btn-predict-download">결과 CSV 내려받기</button><span id="predict-note" class="muted"></span></div>
+      <div class="table-wrap"><table class="tab predict-table" id="predict-table"></table></div>
+    </div>
+    <div class="next"><button class="primary go back" data-go="train">← 이전: 학습</button></div>
+  </section>
+
+</main>
+
+<div id="code-dialog" class="dialog" hidden>
+  <div class="dialog-box" role="dialog" aria-label="코드로 보기">
+    <div class="dialog-head">
+      <b>코드로 보기</b>
+      <div class="tabs"><button class="tab active" data-fw="pytorch">PyTorch</button><button class="tab" data-fw="tensorflow">TensorFlow</button></div>
+      <button id="code-close" class="x" aria-label="닫기">×</button>
+    </div>
+    <p id="code-note" class="muted"></p>
+    <pre id="code-text" class="code"></pre>
+    <div class="row"><button id="code-copy">복사</button><button id="code-save" class="primary">파일로 저장 (.py)</button></div>
+  </div>
+</div>
+
+<script src="/static/graph.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

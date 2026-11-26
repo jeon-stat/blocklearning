@@ -2,9 +2,9 @@
 import re
 from pathlib import Path
 
-import dlstudio
+import blocklearning
 
-STATIC = Path(dlstudio.__file__).parent / "static"
+STATIC = Path(blocklearning.__file__).parent / "static"
 FILES = ["index.html", "app.js", "graph.js", "style.css"]
 
 
@@ -29,7 +29,7 @@ def test_no_external_urls():
 
 def test_all_layer_types_in_palette():
     """검사가 아는 층은 모두 왼쪽 목록에 (Input·Repeat·옛 블록 묶음 빼고)."""
-    from dlstudio.graph import LAYER_TYPES
+    from blocklearning.graph import LAYER_TYPES
     js = (STATIC / "graph.js").read_text(encoding="utf-8")
     for t in LAYER_TYPES:
         if t in ("input", "repeat", "branch", "residual"):
@@ -202,7 +202,7 @@ def test_wrap_controls():
 
 
 def test_no_he_words_on_screen():
-    """DL studio는 동형암호를 다루지 않음: 화면 파일에 암호문·HE·Poly2·모드 전환이 없음."""
+    """BlockLearning은 동형암호를 다루지 않음: 화면 파일에 암호문·HE·Poly2·모드 전환이 없음."""
     import re as _re
     for f in ("index.html", "app.js", "graph.js", "label.html", "label.js"):
         text = (STATIC / f).read_text(encoding="utf-8")
@@ -224,7 +224,7 @@ def test_web_version_files():
     """웹 버전(GitHub Pages): 저장소 맨 위 index.html이 화면을 불러 Pyodide·TF.js·엔진·다리·화면 순서로 부름."""
     root = STATIC.parents[2]
     assert (root / ".nojekyll").exists()
-    assert 'src/dlstudio/static/boot.js' in (root / "index.html").read_text(encoding="utf-8")
+    assert 'src/blocklearning/static/boot.js' in (root / "index.html").read_text(encoding="utf-8")
     html = (STATIC / "boot.js").read_text(encoding="utf-8")
     assert 'index.html' in html and "pyodide" in html and "tfjs@" in html
     order = [html.find(f'"{f}"') for f in ("engine.js", "web.js", "graph.js", "app.js")]
@@ -266,6 +266,16 @@ def test_web_training_runs_in_worker():
     assert web.count("trainOffMain(") == 3                                         # 정의 + ④ 학습 + 라벨링 딥러닝 제안
     assert "integrity: tf[1]" in worker and "net.state()" in worker
     assert "globalThis.DLEngine = API" in (STATIC / "engine.js").read_text(encoding="utf-8")
+
+
+def test_old_name_data_still_opens():
+    """이름을 BlockLearning으로 바꿔도 예전(DL studio) 데이터가 그대로: 브라우저 보관함·설정 이름, 드라이브 폴더, .dlstudio 파일."""
+    store = (STATIC / "store.js").read_text(encoding="utf-8")
+    assert 'indexedDB.open("dlstudio"' in store and '"project.dlstudio"' in store
+    assert 'OLD_ROOT_NAME = "DL studio"' in store and "find(OLD_ROOT_NAME)" in store       # 예전 드라이브 폴더는 새 이름으로 바꿔 씀
+    projects, web = (STATIC / "projects.js").read_text(encoding="utf-8"), (STATIC / "web.js").read_text(encoding="utf-8")
+    assert '"dlstudio-current"' in projects and "(blocklearning|dlstudio)" in projects
+    assert '".blocklearning,.dlstudio,.zip"' in web
 
 
 def test_web_label_page_and_python_files():

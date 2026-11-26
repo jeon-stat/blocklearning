@@ -8,10 +8,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dlstudio.blocks import to_model_input
-from dlstudio.graph import build_graph_model, check_graph
+from blocklearning.blocks import to_model_input
+from blocklearning.graph import build_graph_model, check_graph
 
-GRAPH_JS = Path(__file__).resolve().parents[1] / "src" / "dlstudio" / "static" / "graph.js"
+GRAPH_JS = Path(__file__).resolve().parents[1] / "src" / "blocklearning" / "static" / "graph.js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node 없음")
 
 

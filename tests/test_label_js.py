@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-import dlstudio
+import blocklearning
 
-STATIC = Path(dlstudio.__file__).parent / "static"
+STATIC = Path(blocklearning.__file__).parent / "static"
 LABEL = STATIC / "label.js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node 없음")
 

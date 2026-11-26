@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import codegen, tasks
-from dlstudio.blocks import to_model_input
-from dlstudio.data import load_example
-from dlstudio.graph import build_graph_model, check_graph
+from blocklearning import codegen, tasks
+from blocklearning.blocks import to_model_input
+from blocklearning.data import load_example
+from blocklearning.graph import build_graph_model, check_graph
 from tests.extra_cases import extra_cases
 from tests.test_graph_build import random_graph
 

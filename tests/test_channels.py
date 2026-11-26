@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import tasks
-from dlstudio.blocks import to_model_input
-from dlstudio.codegen import plan_dict
-from dlstudio.data import channels_of, load_csv, load_example, load_series_folder
-from dlstudio.graph import build_graph_model, check_graph, from_blocks
-from dlstudio.jobs import Job, TrainSettings, train_job
+from blocklearning import tasks
+from blocklearning.blocks import to_model_input
+from blocklearning.codegen import plan_dict
+from blocklearning.data import channels_of, load_csv, load_example, load_series_folder
+from blocklearning.graph import build_graph_model, check_graph, from_blocks
+from blocklearning.jobs import Job, TrainSettings, train_job
 
 T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
 SMALL = [{"type": "conv", "channels": 8, "kernel": 5, "stride": 1}, {"type": "act", "kind": "relu"},
@@ -51,7 +51,7 @@ def test_torch_training_and_predict_and_code():
         warnings.simplefilter("ignore")
         r = train_job(Job("t"), g, d, TrainSettings(epochs=2))
     assert 0 <= r["test_metric"] <= 1 and len(r["seg_samples"][0]["x"]) == 256
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     s = Studio()
     s.api_data_load({"example": "pneumatic_seg2"})
     s.model, s.model_graph, s.results = r["model"], g, {k: v for k, v in r.items() if k != "model"}
@@ -118,7 +118,7 @@ def test_csv_roles(tmp_path):
     d = load_csv(str(f), targets=[4, 5], skip=[0])                    # 정답 둘 (분류 + 값), ID는 안 씀
     assert d.task == "multi" and [h["kind"] for h in d.n_out.heads] == ["class", "value"] and d.X_train.shape[1] == 3
     assert [c["role"] for c in d.summary()["columns"]] == ["skip", "input", "input", "input", "target", "target"]
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     st = Studio()
     st.api_data_load({"path": str(f)})
     r = st.api_data_load({"roles_reload": {"targets": [4, 5], "skip": [0], "channels": 1}})
@@ -137,7 +137,7 @@ def test_segment_csv_long_series(tmp_path):
     rows = ["시각,전류,압력,상태"] + [f"t{i},{cur[i]:.3f},{pres[i]:.3f},{state[i]}" for i in range(T)]
     f = tmp_path / "long.csv"
     f.write_text("\n".join(rows), encoding="utf-8")
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     s = Studio()
     r = s.api_data_load({"path": str(f), "task": "segmentation"})["summary"]
     d = s.data
@@ -154,7 +154,7 @@ def test_segment_csv_long_series(tmp_path):
 
 def test_csv_columns_before_load(tmp_path):
     """② CSV 열 고르기: 불러오기 전에 열마다 이름·종류·값·짐작한 역할 (번호·글자 = 안 씀, 마지막 = 정답), 긴 시계열 열도."""
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     f = tmp_path / "p.csv"
     f.write_text("ID,날짜,온도,압력,등급,수율\n" + "\n".join(f"{i + 1},2026-03-{i % 28 + 1:02d},{180 + i % 7},{3 + i % 3 * 0.1:.1f},"
                                                        f"{'양호' if i % 3 else '불량'},{90 - i % 5}" for i in range(30)), encoding="utf-8")

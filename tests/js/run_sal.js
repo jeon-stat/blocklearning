@@ -2,7 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 globalThis.tf = require("@tensorflow/tfjs");
-const E = require(path.join(__dirname, "../../src/dlstudio/static/engine.js"));
+const E = require(path.join(__dirname, "../../src/blocklearning/static/engine.js"));
 const f = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const out = [];
 for (const c of f) {

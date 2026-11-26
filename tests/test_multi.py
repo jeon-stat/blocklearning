@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import losses, multi, tasks
-from dlstudio.data import load_example
-from dlstudio.graph import build_graph_model, check_graph, from_blocks
-from dlstudio.jobs import Job, TrainSettings, train_job
+from blocklearning import losses, multi, tasks
+from blocklearning.data import load_example
+from blocklearning.graph import build_graph_model, check_graph, from_blocks
+from blocklearning.jobs import Job, TrainSettings, train_job
 
 JS = Path(__file__).parent / "js"
 HAS_NODE = shutil.which("node") is not None and (JS / "node_modules" / "@tensorflow" / "tfjs").exists()
@@ -77,7 +77,7 @@ def test_torch_training_result_predict_and_code():
         out = m(torch.as_tensor(d.X_test[:, None, :], dtype=torch.float32)).double().numpy()
     assert multi.metric(out, d.y_test, d.n_out.heads) == pytest.approx(r["test_metric"])
     assert abs(out[:, d.n_out.heads[1]["start"]].mean() - d.y_test[:, 1].mean()) < 5    # 값 머리는 원래 단위 (밸브 %)
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     s = Studio()
     s.api_data_load({"example": "hydraulic_multi"})
     s.model, s.model_graph, s.results = m, g, {k: v for k, v in r.items() if k != "model"}

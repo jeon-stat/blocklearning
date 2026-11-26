@@ -1,4 +1,4 @@
-"""DL studio HTTP API: 실제 서버를 스레드로 띄워 데이터 → 모델 검사 → 학습 → 그림 → 원격(가짜 실행기) 순서로 호출."""
+"""BlockLearning HTTP API: 실제 서버를 스레드로 띄워 데이터 → 모델 검사 → 학습 → 그림 → 원격(가짜 실행기) 순서로 호출."""
 import json
 import threading
 import time
@@ -8,10 +8,10 @@ import urllib.request
 import numpy as np
 import pytest
 
-from dlstudio.graph import from_blocks
+from blocklearning.graph import from_blocks
 
-from dlstudio import cli
-from dlstudio.server import make_server
+from blocklearning import cli
+from blocklearning.server import make_server
 
 CNN = [{"type": "conv", "channels": 8, "kernel": 5}, {"type": "act", "kind": "relu"}, {"type": "global_avg"},
        {"type": "output"}]
@@ -21,7 +21,7 @@ CNN = [{"type": "conv", "channels": 8, "kernel": 5}, {"type": "act", "kind": "re
 def server(tmp_path):
     static = tmp_path / "static"
     static.mkdir()
-    (static / "index.html").write_text("<!doctype html><title>DL studio</title>", encoding="utf-8")
+    (static / "index.html").write_text("<!doctype html><title>BlockLearning</title>", encoding="utf-8")
     (static / "app.js").write_text("console.log(1)", encoding="utf-8")
     s = make_server(0, static_dir=str(static))
     t = threading.Thread(target=s.serve_forever, daemon=True)
@@ -73,9 +73,9 @@ def test_flow_example_to_trained(server, tmp_path):
     assert "model" not in st["result"] and st["result"]["test_metric"] > 0
     code, a = _call(server, "/api/activations", {"sample_index": 0})
     assert code == 200 and "b0" in a["values"] and a["label"] in ("정상", "이상") and a["order"][:2] == ["input", "b0"]
-    code, _ = _call(server, "/api/project/save", {"path": str(tmp_path / "p.dlstudio")})
+    code, _ = _call(server, "/api/project/save", {"path": str(tmp_path / "p.blocklearning")})
     assert code == 200
-    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "p.dlstudio")})
+    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "p.blocklearning")})
     assert code == 200 and o["graph"] == from_blocks(CNN) and o["trained"] is True
     code, x = _call(server, "/api/project/export", {"path": str(tmp_path / "m.pt")})
     assert code == 200 and (tmp_path / "m.pt").exists() and x["info"]["task"] == "classification"
@@ -102,7 +102,7 @@ def test_data_errors_have_locations(server, tmp_path):
 
 def test_static_index_and_traversal(server):
     with urllib.request.urlopen(_url(server, "/")) as r:
-        assert r.status == 200 and b"DL studio" in r.read()
+        assert r.status == 200 and b"BlockLearning" in r.read()
     with urllib.request.urlopen(_url(server, "/static/app.js")) as r:
         assert r.status == 200
     import http.client
@@ -141,7 +141,7 @@ def _raw(server, path, body=b"{}", headers=None):
 def test_rejects_cross_site_requests(server):
     """다른 웹사이트가 로컬 API를 부르지 못하게: JSON만, Host는 127.0.0.1·localhost, Origin은 같은 출처."""
     port = server.server_address[1]
-    body = json.dumps({"path": "x.dlstudio"}).encode()
+    body = json.dumps({"path": "x.blocklearning"}).encode()
     assert _raw(server, "/api/project/save", body, {"Content-Type": "text/plain"})[0] == 415
     assert _raw(server, "/api/project/save", body, {"Content-Type": "application/json", "Host": "evil.com"})[0] == 403
     assert _raw(server, "/api/project/save", body, {"Content-Type": "application/json",
@@ -181,7 +181,7 @@ def test_loading_data_cancels_training_and_drops_its_model(server):
 
 
 def test_json_never_contains_nan():
-    from dlstudio.server import _clean
+    from blocklearning.server import _clean
     out = json.dumps(_clean({"a": float("nan"), "b": [1.0, float("inf")], "c": {"d": 2}}), allow_nan=False)
     assert json.loads(out) == {"a": None, "b": [1.0, None], "c": {"d": 2}}
 
@@ -213,7 +213,7 @@ def test_tasks_catalog_and_selection(server):
 
 
 def test_image_flow(server, tmp_path):
-    from dlstudio.tasks import find
+    from blocklearning.tasks import find
     code, d = _call(server, "/api/data/load", {"example": "digits"})
     assert code == 200 and d["summary"]["image"] == [32, 32]
     blocks = find("classification", "cls_img", "cnn2d")[2]["blocks"]
@@ -223,8 +223,8 @@ def test_image_flow(server, tmp_path):
     assert _wait(server, j["id"])["state"] == "done"
     code, a = _call(server, "/api/activations", {"sample_index": 0})
     assert code == 200 and len(a["values"]["b0"]) == 16 and len(a["values"]["b0"][0]) == 32     # (C, H, W)
-    _call(server, "/api/project/save", {"path": str(tmp_path / "i.dlstudio")})
-    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "i.dlstudio")})
+    _call(server, "/api/project/save", {"path": str(tmp_path / "i.blocklearning")})
+    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "i.blocklearning")})
     assert code == 200 and o["summary"]["image"] == [32, 32] and o["trained"]
 
 
@@ -267,8 +267,8 @@ def test_series_folder_scan_load_train_and_project(server, tmp_path):
     assert code == 200 and d["summary"]["length"] == 16 and d["summary"]["classes"] == ["이상", "정상"], d
     _, j = _call(server, "/api/train", {"blocks": CNN, "settings": {"epochs": 1}})
     assert _wait(server, j["id"])["state"] == "done"
-    _call(server, "/api/project/save", {"path": str(tmp_path / "s.dlstudio")})
-    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "s.dlstudio")})
+    _call(server, "/api/project/save", {"path": str(tmp_path / "s.blocklearning")})
+    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "s.blocklearning")})
     assert code == 200 and o["summary"]["length"] == 16 and o["trained"]
     code, e = _call(server, "/api/data/scan_folder", {"path": str(tmp_path / "없음")})
     assert code == 400
@@ -280,10 +280,10 @@ def test_series_project_with_missing_label_file(server, tmp_path):
                                                "label_file": str(tmp_path / "labels.csv")})
     assert code == 200 and d["summary"]["classes"] == ["이상", "정상"], d
     _call(server, "/api/model/check", {"blocks": CNN})                    # 저장하려면 블록이 있어야 함
-    code, _ = _call(server, "/api/project/save", {"path": str(tmp_path / "t.dlstudio")})
+    code, _ = _call(server, "/api/project/save", {"path": str(tmp_path / "t.blocklearning")})
     assert code == 200
     (tmp_path / "labels.csv").unlink()                                     # 정답 표가 사라짐
-    code, e = _call(server, "/api/project/open", {"path": str(tmp_path / "t.dlstudio")})
+    code, e = _call(server, "/api/project/open", {"path": str(tmp_path / "t.blocklearning")})
     assert code == 400 and "labels.csv" in e["error"]["message"]
     assert _call(server, "/api/state")[0] == 200                           # 서버는 계속 동작
 
@@ -300,8 +300,8 @@ def test_series_regression_task_survives_project_reopen(server, tmp_path):
     assert code == 200 and d["summary"]["task"] == "regression", d
     _, j = _call(server, "/api/train", {"blocks": CNN, "settings": {"epochs": 1}})
     assert _wait(server, j["id"])["state"] == "done"
-    _call(server, "/api/project/save", {"path": str(tmp_path / "r.dlstudio")})
-    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "r.dlstudio")})
+    _call(server, "/api/project/save", {"path": str(tmp_path / "r.blocklearning")})
+    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "r.blocklearning")})
     assert code == 200 and o["summary"]["task"] == "regression" and o["trained"], o
 
 
@@ -484,7 +484,7 @@ def test_label_team_api(server, tmp_path):
     root.mkdir()
     for i in range(12):
         (root / f"c{i:02d}.csv").write_text("v\n" + "\n".join(str((j + i) % 5) for j in range(10)), encoding="utf-8")
-    from dlstudio.labeling import LabelProject
+    from blocklearning.labeling import LabelProject
     q = LabelProject.new(str(root), "v", ["a", "b"], str(tmp_path / "other.dllabel"))
     q.who = "동료"
     q.set_labels(["c00.csv"], "b")
@@ -518,15 +518,15 @@ def test_graph_check_and_train_far_concat(server):
 
 def test_save_after_reloading_data_keeps_edited_graph(server, tmp_path):
     """학습 뒤 데이터를 다시 불러오고 모델을 고쳐 저장하면, 예전에 학습한 그래프가 아니라 고친 그래프가 저장됨."""
-    from dlstudio.project import open_project
+    from blocklearning.project import open_project
     _call(server, "/api/data/load", {"example": "ecg"})
     _, j = _call(server, "/api/train", {"blocks": CNN, "settings": {"epochs": 1}})
     _wait(server, j["id"])
     _call(server, "/api/data/load", {"example": "ecg"})
     edited = from_blocks([{"type": "conv", "channels": 4, "kernel": 3}, {"type": "global_avg"}, {"type": "output"}])
     _call(server, "/api/model/check", {"graph": edited})
-    code, _ = _call(server, "/api/project/save", {"path": str(tmp_path / "e.dlstudio")})
-    assert code == 200 and open_project(str(tmp_path / "e.dlstudio"))["graph"] == edited
+    code, _ = _call(server, "/api/project/save", {"path": str(tmp_path / "e.blocklearning")})
+    assert code == 200 and open_project(str(tmp_path / "e.blocklearning"))["graph"] == edited
     assert _call(server, "/api/state")[1]["trained_graph"] is None
 
 
@@ -564,8 +564,8 @@ def test_relaxed_graph_flow(server, tmp_path):
     assert code == 200 and "t" in a["values"]
     code, x = _call(server, "/api/project/export", {"path": str(tmp_path / "m.pt")})
     assert code == 200 and (tmp_path / "m.pt").exists() and x["info"]["classes"] == ["정상", "이상"]
-    _call(server, "/api/project/save", {"path": str(tmp_path / "p.dlstudio")})
-    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "p.dlstudio")})
+    _call(server, "/api/project/save", {"path": str(tmp_path / "p.blocklearning")})
+    code, o = _call(server, "/api/project/open", {"path": str(tmp_path / "p.blocklearning")})
     assert code == 200 and o["trained"] is True
 
 

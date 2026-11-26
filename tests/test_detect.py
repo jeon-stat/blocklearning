@@ -8,11 +8,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dlstudio import codegen, detect
-from dlstudio.data import make_det_dataset
+from blocklearning import codegen, detect
+from blocklearning.data import make_det_dataset
 from tests.synth import parts_det_arrays
-from dlstudio.graph import build_graph_model, check_graph, from_blocks
-from dlstudio.tasks import T_CNN2D, T_DET_RES, T_DET_SMALL
+from blocklearning.graph import build_graph_model, check_graph, from_blocks
+from blocklearning.tasks import T_CNN2D, T_DET_RES, T_DET_SMALL
 
 JS = Path(__file__).parent / "js"
 HAS_NODE = shutil.which("node") is not None and (JS / "node_modules" / "@tensorflow" / "tfjs").exists()
@@ -83,7 +83,7 @@ def test_check_needs_grid_before_output():
 
 def test_torch_training_learns_and_reports():
     torch = pytest.importorskip("torch")
-    from dlstudio.jobs import Job, TrainSettings, train_job
+    from blocklearning.jobs import Job, TrainSettings, train_job
     X, B = parts_det_arrays(n=160, seed=3)
     d = make_det_dataset(X, B, ["원형 부품", "사각 부품"], 64, seed=1)
     j = Job("train")
@@ -98,7 +98,7 @@ def test_torch_training_learns_and_reports():
 def test_label_boxes_become_detection_data(tmp_path):
     """라벨링 도형 → [학습 데이터로 쓰기]: 다각형·원은 감싸는 상자, 점은 뺌, 상자가 없는 클래스는 뺌."""
     PIL = pytest.importorskip("PIL.Image")
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     root = tmp_path / "그림"
     root.mkdir()
     for i in range(12):
@@ -132,7 +132,7 @@ def test_label_boxes_become_detection_data(tmp_path):
 
 
 def test_predict_table_lists_boxes():
-    from dlstudio import predict
+    from blocklearning import predict
     d = _small()
     out = _perfect(d)
     t = predict.table(d, [f"n{i}.png" for i in range(len(out))], out, None, d.X_test)

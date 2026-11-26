@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlockLearning · 라벨링 작업실</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="lab">
+<header class="top lab-top">
+  <div class="brand"><svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><defs><linearGradient id="lg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg2)"/><path d="M8 22l5-5 4 3 7-9" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="11" r="2.4" fill="#fff"/></svg><span class="bt">BlockLearning<span class="sub">라벨링</span></span></div>
+  <div id="lab-progress" class="lab-progress"></div>
+  <div class="files">
+    <button id="lab-switch" hidden title="다른 데이터·다른 정답 종류로 새 작업을 만들거나 다른 작업 파일을 엽니다">새 작업 · 다른 작업 열기</button>
+    <button id="lab-undo" title="Ctrl+Z" disabled>↶ 되돌리기</button>
+    <button id="lab-redo" title="Ctrl+Y" disabled>↷ 다시 하기</button>
+    <a class="btn-link" href="/" target="_blank">studio 열기 ↗</a>
+  </div>
+</header>
+
+<div id="message" class="message" hidden>
+  <div class="msg-main"><span id="msg-text"></span> <span id="msg-hint" class="hint"></span></div>
+  <details id="msg-detail-box" hidden><summary>자세히</summary><pre id="msg-detail"></pre></details>
+  <button id="msg-close" class="x" aria-label="닫기">×</button>
+</div>
+
+<main>
+  <!-- 처음: 작업 만들기·열기 -->
+  <section id="lab-start" class="panel">
+    <h2>라벨링</h2>
+    <p class="lead">데이터에 정답을 붙입니다. 데이터는 <b>시계열</b>(샘플마다 CSV 하나인 폴더), <b>이미지</b>(그림 폴더), <b>표</b>(CSV 한 파일, 한 행 = 샘플) 중에서 고르고,
+      정답은 클래스(분류)·숫자(회귀)·구간(시계열 시점별 단계)·도형(이미지 속 물체를 상자·다각형·점으로) 중에서 고릅니다.
+      붙인 정답은 작업 파일에 바로바로 저장되고, 다 붙이면 studio 학습 데이터로 씁니다. 데이터 파일은 바꾸지 않습니다.</p>
+    <div id="lab-back-box" class="row" hidden><button id="lab-back">← 지금 작업으로 돌아가기</button> <span id="lab-back-name" class="muted"></span></div>
+    <h3>새 작업</h3>
+    <div class="row">
+      <label>데이터 <select id="lab-kind"><option value="series_folder">시계열: 샘플마다 CSV 하나인 폴더</option>
+        <option value="image_folder">이미지 폴더 (하위 폴더 포함)</option><option value="table">표: CSV 한 파일 (한 행 = 샘플)</option></select></label>
+      <label>목적 <select id="lab-purpose"><option value="general">일반</option><option value="anomaly">이상 탐지 (정상·이상)</option></select></label>
+      <label>정답 <select id="lab-schema"><option value="class">클래스 (분류)</option><option value="number">숫자 (회귀)</option><option value="segments">구간 (시계열 시점별 단계·상태)</option><option value="boxes">도형: 상자·다각형·점 (이미지)</option></select></label>
+    </div>
+    <div class="row">
+      <input id="lab-folder" class="path" placeholder="C:\data\사이클 (샘플마다 CSV 하나)">
+      <button id="lab-scan">살펴보기</button>
+    </div>
+    <div id="lab-new-box" hidden>
+      <div id="lab-scan-info" class="series-info"></div>
+      <div class="grid4">
+        <label id="lab-column-box">기준 열 (정렬·규칙·학습에 씀) <select id="lab-column"></select></label>
+        <div id="lab-extra-box" class="wide lab-extra" hidden><span>함께 볼 열 (선택, 7개까지) — 여러 센서를 위아래로 함께 보며 붙입니다</span>
+          <div id="lab-extra-cols" class="lab-extra-cols"></div></div>
+        <label id="lab-idcol-box" hidden>ID 열 (선택, 비우면 '행 번호') <input id="lab-idcol" placeholder="예: lot"></label>
+        <label id="lab-classes-box">클래스 (쉼표로 나눔, 9개까지) <input id="lab-classes-input" value="정상, 이상"></label>
+        <label class="wide">작업 파일 (.dllabel) <input id="lab-file" class="path"></label>
+      </div>
+      <div class="row"><button id="lab-new" class="primary">새 작업 만들기</button></div>
+    </div>
+    <h3>작업 파일 열기</h3>
+    <div class="row">
+      <input id="lab-open-file" class="path" placeholder="C:\data\사이클_labels.dllabel">
+      <button id="lab-open">열기</button>
+    </div>
+  </section>
+
+  <!-- 작업 -->
+  <section id="lab-work" class="panel" hidden>
+    <div class="row lab-tools">
+      <span id="lab-title" class="lab-title"></span>
+      <button id="lab-tool-rule">규칙으로 붙이기</button>
+      <button id="lab-tool-cluster">비슷한 것끼리 묶기</button>
+      <button id="lab-suggest" title="사람이 붙인·확인한 정답으로 요약값(최대·평균 등)만 보는 작은 모델을 학습해 나머지에 제안 (빠름)">빠른 제안</button>
+      <button id="lab-deep" title="사람이 붙이거나 확인한 정답(10개 이상)으로 딥러닝 모델(시계열 1D CNN·그림 작은 CNN·표 MLP)을 학습해 나머지에 제안 (모양까지 봄, 수십 초)">딥러닝 제안</button>
+      <button id="lab-tool-import">정답 표 가져오기</button>
+      <button id="lab-tool-column" hidden>열에서 구간 가져오기</button>
+      <button id="lab-tool-export">내보내기</button>
+      <button id="lab-normal-cand" hidden title="비슷한 것끼리 묶어 가장 큰 묶음을 골라 줌 (정답은 붙이지 않음)">정상 후보 찾기</button>
+      <button id="lab-export-normal" hidden title="정상 샘플 목록 CSV: 정상만으로 학습하는 이상 탐지(오토인코더)용">정상만 내보내기</button>
+      <button id="lab-use" class="primary">학습 데이터로 쓰기</button>
+      <label class="check"><input id="lab-confirmed-only" type="checkbox"> 확인된 정답만</label>
+      <button id="lab-tool-team">여럿이 나눠 하기</button>
+      <span id="lab-who-show" class="muted lab-who"></span>
+    </div>
+
+    <div id="lab-rule" class="box lab-panel" hidden>
+      <h3>규칙으로 붙이기 <span class="muted">샘플마다 계산한 요약값으로 조건을 걸어 한꺼번에</span></h3>
+      <div id="lab-conds"></div>
+      <div class="row">
+        <button id="lab-cond-add">+ 조건</button>
+        <label id="lab-rule-label-box">붙일 클래스 <select id="lab-rule-label"></select></label>
+        <label id="lab-rule-num-box" hidden>붙일 숫자 <input id="lab-rule-num" type="number" step="any"></label>
+        <label class="check"><input id="lab-rule-overwrite" type="checkbox"> 정답 있는 것도 덮어쓰기</label>
+        <button id="lab-rule-preview">미리 보기</button>
+        <button id="lab-rule-apply" class="primary">적용</button>
+        <span id="lab-rule-result" class="status"></span>
+      </div>
+    </div>
+    <div id="lab-cluster" class="box lab-panel" hidden>
+      <h3>비슷한 것끼리 묶기 <span class="muted">모양이 비슷한 샘플을 묶어 보여 줍니다 (정답은 바꾸지 않음). 묶음째 골라 숫자키로 붙이세요</span></h3>
+      <div class="row"><label>묶음 수 <input id="lab-cluster-k" type="number" min="2" max="20" value="6"></label><button id="lab-cluster-go" class="primary">묶기</button></div>
+      <div id="lab-cluster-groups" class="lab-groups"></div>
+    </div>
+    <div id="lab-column-panel" class="box lab-panel" hidden>
+      <h3>열에서 구간 가져오기 <span class="muted">데이터 CSV의 단계·상태 열에서 같은 값이 이어지는 구간을 만듭니다 (사람이 칠한 샘플은 그대로)</span></h3>
+      <div class="row"><label>열 <select id="lab-col-select"></select></label><button id="lab-col-go" class="primary">가져오기</button></div>
+    </div>
+    <div id="lab-team" class="box lab-panel" hidden>
+      <h3>여럿이 나눠 하기 <span class="muted">서버 없이 파일로: 작업을 나눠 각자 붙이고, 받은 작업 파일을 합칩니다. 정답이 다르면 '충돌'로 표시됩니다</span></h3>
+      <div class="row"><label>작업자 이름 <input id="lab-who" placeholder="예: 김연구"></label><button id="lab-who-go">바꾸기</button></div>
+      <div class="row"><label>나눌 수 <input id="lab-split-n" type="number" min="2" max="20" value="2"></label><button id="lab-split-go">작업 나누기</button>
+        <span class="muted">작업 파일 옆에 …_part1.dllabel … 이 생깁니다 (각자 열어서 맡은 샘플만)</span></div>
+      <div class="row"><input id="lab-merge-file" class="path" placeholder="다른 사람의 작업 파일 (.dllabel)"><button id="lab-merge-go" class="primary">합치기</button></div>
+    </div>
+    <div id="lab-import" class="box lab-panel" hidden>
+      <h3>정답 표 가져오기 <span class="muted">첫 열 = 파일 이름, 둘째 열 = 정답. 가져온 정답은 '확인 안 함'으로 들어갑니다</span></h3>
+      <div class="row"><input id="lab-import-file" class="path" placeholder="C:\data\정답.csv"><button id="lab-import-go" class="primary">가져오기</button></div>
+    </div>
+    <div id="lab-export" class="box lab-panel" hidden>
+      <h3>내보내기 <span class="muted">정답 표 CSV (file,label). studio의 '정답 표 CSV' 칸에 넣어 씁니다</span></h3>
+      <div class="row"><input id="lab-export-file" class="path"><button id="lab-export-go" class="primary">내보내기</button></div>
+      <div class="row" id="lab-export-det" hidden>
+        <input id="lab-yolo-dir" class="path" placeholder="YOLO 폴더 (labels/, classes.txt)"><button id="lab-yolo-go">YOLO로</button>
+        <input id="lab-coco-file" class="path" placeholder="COCO annotations.json"><button id="lab-coco-go">COCO로</button>
+      </div>
+    </div>
+
+    <div id="lab-classes" class="lab-classes"></div>
+    <div id="lab-numbar" class="row lab-numbar" hidden>
+      <span class="muted">숫자 정답:</span> 고른 샘플에 <input id="lab-num-all" type="number" step="any" placeholder="값"> <button id="lab-num-all-go">같은 값 넣기</button>
+      <span class="muted">크게 보기에서는 숫자를 넣고 Enter (다음 샘플로)</span>
+    </div>
+
+    <div class="lab-layout">
+      <div class="lab-left">
+        <div class="row lab-filters">
+          <label>정답 <select id="lab-f-label"></select></label>
+          <label>출처 <select id="lab-f-by"><option value="">전부</option><option value="manual">사람</option><option value="rule">규칙</option><option value="import">가져옴</option><option value="model">모델 제안</option></select></label>
+          <label class="check"><input id="lab-f-unconfirmed" type="checkbox"> 확인 안 함만</label>
+          <label class="check"><input id="lab-f-error" type="checkbox"> 읽기 오류만</label>
+          <label>묶음 <select id="lab-f-cluster"><option value="">전부</option></select></label>
+          <label>작업자 <select id="lab-f-who"><option value="">전부</option></select></label>
+          <label class="check"><input id="lab-f-conflict" type="checkbox"> 충돌만</label>
+          <label>정렬 <select id="lab-sort"><option value="name">이름</option></select></label>
+          <label class="check"><input id="lab-desc" type="checkbox"> 큰 것부터</label>
+        </div>
+        <div class="muted lab-help">카드를 누르면 오른쪽에 크게 보입니다. Ctrl+클릭 더하기 · Shift+클릭 범위 · Ctrl+A 이 페이지 전부 · 숫자 1–9 클래스 붙이기 · 0 지우기 · Enter 확인 · ←/→ 이전·다음 · Esc 고르기 풀기</div>
+        <div id="lab-grid" class="lab-grid"></div>
+        <div class="row lab-pager"><button id="lab-prev-page">◀</button><span id="lab-page" class="status"></span><button id="lab-next-page">▶</button></div>
+      </div>
+      <aside class="box lab-right">
+        <div id="lab-detail"><p class="muted">왼쪽 카드를 누르면 여기에 크게 보입니다.</p></div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<script src="/static/label.js"></script>
+</body>
+</html>

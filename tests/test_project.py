@@ -1,4 +1,4 @@
-"""프로젝트 저장·열기(.dlstudio = zip)."""
+"""프로젝트 저장·열기(.blocklearning = zip)."""
 import zipfile
 
 import numpy as np
@@ -8,9 +8,9 @@ import torch
 import io
 import json
 
-from dlstudio.blocks import build_model, to_model_input
-from dlstudio.graph import build_graph_model, from_blocks, model_from_saved
-from dlstudio.project import open_project, save_project
+from blocklearning.blocks import build_model, to_model_input
+from blocklearning.graph import build_graph_model, from_blocks, model_from_saved
+from blocklearning.project import open_project, save_project
 
 CNN = [{"type": "conv", "channels": 4, "kernel": 3}, {"type": "act", "kind": "relu"}, {"type": "global_avg"},
        {"type": "output"}]
@@ -25,7 +25,7 @@ def _X():
 
 def test_save_open_roundtrip(tmp_path):
     m = build_graph_model(GRAPH, 12, 2, seed=3).eval()
-    p = str(tmp_path / "a.dlstudio")
+    p = str(tmp_path / "a.blocklearning")
     save_project(p, GRAPH, SRC, SETTINGS, m, {"test_metric": 0.9})
     pr = open_project(p)
     assert pr["graph"] == GRAPH and pr["data_source"] == SRC and pr["train_settings"] == SETTINGS
@@ -37,7 +37,7 @@ def test_save_open_roundtrip(tmp_path):
 
 
 def test_save_without_model(tmp_path):
-    p = str(tmp_path / "a.dlstudio")
+    p = str(tmp_path / "a.blocklearning")
     save_project(p, GRAPH, SRC, SETTINGS, None, {})
     assert open_project(p)["state_dict"] is None
     assert model_from_saved(open_project(p), 12, 2) is None
@@ -52,13 +52,13 @@ def test_open_rejects_other_zip(tmp_path):
 
 
 def test_save_open_non_ascii_path(tmp_path):
-    p = tmp_path / "한글폴더" / "모델.dlstudio"
+    p = tmp_path / "한글폴더" / "모델.blocklearning"
     save_project(str(p), GRAPH, SRC, SETTINGS, build_graph_model(GRAPH, 12, 2), {})
     assert open_project(str(p))["graph"] == GRAPH
 
 
 def test_selection_roundtrip(tmp_path):
-    p = str(tmp_path / "s.dlstudio")
+    p = str(tmp_path / "s.blocklearning")
     sel = {"family": "classification", "subtask": "cls_ts", "template": "cnn"}
     save_project(p, GRAPH, SRC, SETTINGS, None, {}, selection=sel)
     assert open_project(p)["selection"] == sel

@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import segment, tasks
-from dlstudio.data import load_example
-from dlstudio.graph import build_graph_model, check_graph, from_blocks
-from dlstudio.jobs import Job, TrainSettings, train_job
+from blocklearning import segment, tasks
+from blocklearning.data import load_example
+from blocklearning.graph import build_graph_model, check_graph, from_blocks
+from blocklearning.jobs import Job, TrainSettings, train_job
 
 T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
 
@@ -62,7 +62,7 @@ def test_torch_training_result_and_project(tmp_path):
     with torch.no_grad():
         out = m(torch.as_tensor(d.X_test[:, None, :], dtype=torch.float32)).numpy()
     assert segment.metric(out, d.y_test, 5) == pytest.approx(r["test_metric"])
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     s = Studio()
     s.api_data_load({"example": "pneumatic_seg"})
     s.model, s.model_graph, s.results = m, g, {k: v for k, v in r.items() if k != "model"}
@@ -93,7 +93,7 @@ def test_web_engine_training_matches_torch(tmp_path):
 
 def test_keras_code_uses_per_step_loss():
     """TensorFlow 코드: 출력 (상태 × 길이)를 시점마다 교차 엔트로피로 (펼친 출력에 바로 걸면 모양이 맞지 않음)."""
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     s = Studio()
     s.api_data_load({"example": "pneumatic_seg"})
     code = s.api_code({"framework": "tensorflow", "graph": from_blocks(T["seg_bigru"]["blocks"]), "settings": {"epochs": 1}})["code"]

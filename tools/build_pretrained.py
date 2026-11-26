@@ -1,4 +1,4 @@
-"""사전학습 가중치 만들기: Google MobileNetV3-Small (ImageNet, Apache 2.0)의 TF.js 파일 → DL studio 가중치 (src/dlstudio/pretrained/).
+"""사전학습 가중치 만들기: Google MobileNetV3-Small (ImageNet, Apache 2.0)의 TF.js 파일 → BlockLearning 가중치 (src/blocklearning/pretrained/).
 
     python tools/build_pretrained.py <TF.js 모델 폴더>
 
@@ -22,7 +22,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-OUT = ROOT / "src" / "dlstudio" / "pretrained"
+OUT = ROOT / "src" / "blocklearning" / "pretrained"
 P = "StatefulPartitionedCall/StatefulPartitionedCall/predict/MobilenetV3/"
 
 SOURCE = """MobileNetV3-Small 특징 추출기 (ImageNet ILSVRC-2012로 미리 학습) — Google, Apache License 2.0 (LICENSE-mnv3s.txt).
@@ -30,7 +30,7 @@ Kaggle google/mobilenet-v3, TfJs small-100-224-feature-vector 버전 1 (TF Hub g
 https://www.kaggle.com/models/google/mobilenet-v3/tfJs/small-100-224-feature-vector/1
 Howard A, et al. Searching for MobileNetV3. ICCV 2019 (arXiv:1905.02244).
 바꾼 내용: 합성곱 가중치의 축 순서를 PyTorch 모양(출력, 입력, 높이, 너비)으로 바꾸고 이름을 붙여 float32로 다시 저장 (값은 그대로).
-원래 모델과 같은 계산: 입력 −1~1, TensorFlow 'SAME' 채움, 끝의 1×1 합성곱(1024)까지. DL studio는 앞에 그림마다 0~1로 맞추기와 크기 바꾸기를 더함.
+원래 모델과 같은 계산: 입력 −1~1, TensorFlow 'SAME' 채움, 끝의 1×1 합성곱(1024)까지. BlockLearning은 앞에 그림마다 0~1로 맞추기와 크기 바꾸기를 더함.
 """
 
 CHECK_JS = r"""
@@ -72,7 +72,7 @@ def read_tfjs(folder: Path) -> dict:
 
 def convert(folder: Path) -> None:
     import torch
-    from dlstudio.nn_extra import MobileNetV3Small
+    from blocklearning.nn_extra import MobileNetV3Small
     W, se = read_tfjs(folder)
     conv = lambda a: torch.as_tensor(np.ascontiguousarray(a.transpose(3, 2, 0, 1)))       # (h, w, 입력, 출력) → (출력, 입력, h, w)
     dwc = lambda a: torch.as_tensor(np.ascontiguousarray(a.transpose(2, 3, 0, 1)))        # (h, w, 채널, 1) → (채널, 1, h, w)

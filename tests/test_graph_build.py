@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio.analysis import activations
-from dlstudio.blocks import to_model_input
-from dlstudio.graph import build_graph_model, check_graph, output_linear
+from blocklearning.analysis import activations
+from blocklearning.blocks import to_model_input
+from blocklearning.graph import build_graph_model, check_graph, output_linear
 from tests.test_graph_check import G, N, conv, dense_res, downsample_res, far_concat
 
 

@@ -2,8 +2,8 @@
 import json
 
 import numpy as np
-from dlstudio.analysis import activations, model_panel
-from dlstudio.blocks import build_model, to_model_input
+from blocklearning.analysis import activations, model_panel
+from blocklearning.blocks import build_model, to_model_input
 
 EXAMPLE = [
     {"type": "conv", "channels": 16, "kernel": 5},

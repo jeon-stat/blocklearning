@@ -7,8 +7,8 @@ import pytest
 
 from pathlib import Path
 
-from dlstudio.data import DataError, load_series_folder
-from dlstudio.labeling import LabelProject
+from blocklearning.data import DataError, load_series_folder
+from blocklearning.labeling import LabelProject
 
 
 def _folder(tmp, n=12, sub=None, length=30, peak=None):
@@ -359,7 +359,7 @@ def _images(tmp, sub=("밝음", "어두움"), n=6):
 
 def test_image_folder_project(tmp_path):
     pytest.importorskip("PIL")
-    from dlstudio.data import load_image_folder
+    from blocklearning.data import load_image_folder
     root = _images(tmp_path)
     p = LabelProject.new(str(root), "", [], str(tmp_path / "i.dllabel"), kind="image_folder")
     s = p.state()
@@ -376,7 +376,7 @@ def test_image_folder_project(tmp_path):
 
 
 def test_table_project_and_training_csv(tmp_path):
-    from dlstudio.data import load_csv
+    from blocklearning.data import load_csv
     f = tmp_path / "공정.csv"
     rows = [f"id{i},{20 + i},{1.0 + (i % 3) * 0.1},메모{i}" for i in range(20)]
     f.write_text("lot,온도,압력,비고\n" + "\n".join(rows), encoding="utf-8")

@@ -5,7 +5,7 @@ __pycache__/
 *.log
 .omc/
 .superpowers/
-*.dlstudio
+*.blocklearning
 *.pt
 dist/
 build/

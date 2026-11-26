@@ -5,9 +5,9 @@ import warnings
 import numpy as np
 import pytest
 
-from dlstudio import tasks
-from dlstudio.data import EXAMPLE_KINDS, example_new, load_example
-from dlstudio.graph import build_graph_model, from_blocks
+from blocklearning import tasks
+from blocklearning.data import EXAMPLE_KINDS, example_new, load_example
+from blocklearning.graph import build_graph_model, from_blocks
 
 T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
 FIRST = {e[0]: s["templates"][0] for f in tasks.CATALOG for s in f["subtasks"] if s["available"] for e in s["example_data"]}
@@ -36,7 +36,7 @@ def test_example_new_is_held_out(kind):
 
 @pytest.mark.parametrize("kind", EXAMPLE_KINDS)
 def test_predict_with_example_new(kind):
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     s = Studio()
     s.api_data_load({"example": kind})
     d = s.data

@@ -4,8 +4,8 @@ import json
 import numpy as np
 import pytest
 
-from dlstudio import web, weblabel
-from dlstudio.core import Studio
+from blocklearning import web, weblabel
+from blocklearning.core import Studio
 
 torch = pytest.importorskip("torch")
 

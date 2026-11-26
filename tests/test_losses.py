@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import losses, tasks
-from dlstudio.data import load_example
-from dlstudio.graph import from_blocks
-from dlstudio.jobs import Job, TrainSettings, train_job
+from blocklearning import losses, tasks
+from blocklearning.data import load_example
+from blocklearning.graph import from_blocks
+from blocklearning.jobs import Job, TrainSettings, train_job
 
 JS = Path(__file__).parent / "js"
 HAS_NODE = shutil.which("node") is not None and (JS / "node_modules" / "@tensorflow" / "tfjs").exists()
@@ -98,7 +98,7 @@ def test_training_with_assembled_loss_torch_and_engine(tmp_path):
 
 def test_block_output_l1_torch_engine_and_code(tmp_path):
     """블록 출력 L1 (act_l1): 고른 블록의 출력 크기를 손실에 더함 — PyTorch·엔진 학습, 검사, 내보내는 코드."""
-    from dlstudio.core import Studio, UserError
+    from blocklearning.core import Studio, UserError
     d = load_example("ecg")
     d.X_train, d.y_train, d.X_test, d.y_test = d.X_train[:160], d.y_train[:160], d.X_test[:60], d.y_test[:60]
     g = from_blocks([{"type": "conv", "channels": 8, "kernel": 5, "stride": 1}, {"type": "act", "kind": "relu"},

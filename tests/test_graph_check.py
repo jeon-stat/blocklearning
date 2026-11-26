@@ -1,8 +1,8 @@
 """그래프 검사(check_graph): 형식·연결·모양·합치기·RNN·Tanh·Repeat 규칙."""
 import pytest
 
-from dlstudio import blocks as B
-from dlstudio.graph import check_graph
+from blocklearning import blocks as B
+from blocklearning.graph import check_graph
 
 
 def G(*nodes):
@@ -177,7 +177,7 @@ def test_add_same_input_twice_is_fine():
 
 def test_pos_is_ignored_by_check_and_build():
     """화면 위치(pos)는 모델에 영향 없음."""
-    from dlstudio.graph import build_graph_model
+    from blocklearning.graph import build_graph_model
     g = G(dict(conv("c", "input", 8), pos=[300, 20]), N("g", "global_avg", "c", pos=[1, 2]), N("o", "output", "g"))
     c = check_graph(g, 20, 2)
     assert c.ok, c.issues
@@ -186,7 +186,7 @@ def test_pos_is_ignored_by_check_and_build():
 
 def test_view_only_fields_are_ignored():
     """화면용 값(pos, size)은 검사·모델에 영향 없음."""
-    from dlstudio.graph import build_graph_model
+    from blocklearning.graph import build_graph_model
     g = G(dict(conv("c", "input", 8), size=[300, 80]), N("g", "global_avg", "c", size=[100, 40]), N("o", "output", "g"))
     assert check_graph(g, 20, 2).ok
     build_graph_model(g, 20, 2)

@@ -1,5 +1,5 @@
 """블록 JSON 검증과 블록마다 출력 모양 (설계 문서 4·5절)."""
-from dlstudio.blocks import check
+from blocklearning.blocks import check
 
 EXAMPLE = [
     {"type": "conv", "channels": 16, "kernel": 5},

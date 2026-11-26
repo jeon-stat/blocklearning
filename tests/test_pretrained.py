@@ -9,16 +9,16 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import codegen, layers, tasks
-from dlstudio.data import load_example
-from dlstudio.graph import build_graph_model, from_blocks
-from dlstudio.jobs import Job, TrainSettings, train_job
-from dlstudio.nn_extra import MobileNetV3Small
-from dlstudio.pretrained import arrays, frozen_names
+from blocklearning import codegen, layers, tasks
+from blocklearning.data import load_example
+from blocklearning.graph import build_graph_model, from_blocks
+from blocklearning.jobs import Job, TrainSettings, train_job
+from blocklearning.nn_extra import MobileNetV3Small
+from blocklearning.pretrained import arrays, frozen_names
 
 T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
 GRAPH = from_blocks(T["mnv3_transfer"]["blocks"])
-ENGINE = Path(__file__).parents[1] / "src" / "dlstudio" / "static" / "engine.js"
+ENGINE = Path(__file__).parents[1] / "src" / "blocklearning" / "static" / "engine.js"
 
 
 def small(kind="steelblast", n_train=120, n_test=60):
@@ -40,14 +40,14 @@ def test_weights_file_matches_block_definition():
 
 
 def test_source_and_license_files():
-    d = Path(__file__).parents[1] / "src" / "dlstudio" / "pretrained"
+    d = Path(__file__).parents[1] / "src" / "blocklearning" / "pretrained"
     src = (d / "mnv3s.SOURCE.txt").read_text(encoding="utf-8")
     assert "Apache License 2.0" in src and "Google" in src
     assert "Apache License" in (d / "LICENSE-mnv3s.txt").read_text(encoding="utf-8")
 
 
 def test_check_rules():
-    from dlstudio.graph import check_graph
+    from blocklearning.graph import check_graph
     d = load_example("steelblast")
     assert check_graph(GRAPH, d.length, d.n_out, image=d.image).ok
     e = load_example("ecg")                                       # 시계열에는 못 씀
@@ -63,7 +63,7 @@ def test_training_keeps_pretrained_and_caching_gives_same_result(monkeypatch):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         fast = train_job(Job("a"), GRAPH, d, s)
-        from dlstudio import graph as G
+        from blocklearning import graph as G
         cls = G._graph_net_class()
         monkeypatch.setattr(cls, "frozen_head", lambda self: None, raising=False)
         monkeypatch.setattr(G, "_graph_net_class", lambda: cls)
@@ -78,7 +78,7 @@ def test_training_keeps_pretrained_and_caching_gives_same_result(monkeypatch):
 
 
 def test_project_and_runs_leave_out_frozen_weights(tmp_path):
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     s = Studio()
     s.api_data_load({"example": "steelblast"})
     s.data = small()
@@ -89,13 +89,13 @@ def test_project_and_runs_leave_out_frozen_weights(tmp_path):
     frozen = frozen_names(GRAPH, s.data.length, s.data.n_out, s.data.image)
     assert len(frozen) == len(arrays("mnv3s"))
     assert not frozen & set(s.run_weights[s.current_run])
-    path = tmp_path / "p.dlstudio"
+    path = tmp_path / "p.blocklearning"
     s.api_project_save({"path": str(path)})
     assert path.stat().st_size < 200_000                         # 사전학습 3.7MB는 넣지 않음
-    from dlstudio.project import open_project
+    from blocklearning.project import open_project
     pr = open_project(str(path))
     assert not frozen & set(pr["state_dict"]) and not frozen & set(pr["run_weights"][s.current_run])
-    from dlstudio.graph import model_from_saved
+    from blocklearning.graph import model_from_saved
     m = model_from_saved(pr, s.data.length, s.data.n_out, image=s.data.image).eval()
     x = torch.as_tensor(s.data.X_test[:8].reshape(-1, 1, *s.data.image), dtype=torch.float32)
     with torch.no_grad():
@@ -124,7 +124,7 @@ def test_web_engine_trains_transfer_model(tmp_path):
 def test_image_anomaly_distance_head_torch_and_web_engine(tmp_path):
     """이미지 이상 탐지 '정상과의 거리': 경사 학습 없이 정상 특징 분포를 넣음 → AUC, 웹 엔진도 같은 점수."""
     from tests.test_engine import _train_js, pytestmark as engine_mark
-    from dlstudio.graph import check_graph
+    from blocklearning.graph import check_graph
     d = load_example("steelblast_ae")
     d.X_train, d.y_train = d.X_train[:96], d.y_train[:96]
     pick = np.r_[np.flatnonzero(d.y_test == 0)[:32], np.flatnonzero(d.y_test == 1)[:32]]   # 정상 32 · 이상 32
@@ -169,7 +169,7 @@ def test_fine_tuning_trains_only_the_last_blocks_and_is_saved(tmp_path):
             assert np.array_equal(v.numpy(), a[name]) == (k not in tuned), k
     frozen = frozen_names(g, d.length, d.n_out, d.image)
     assert frozen and not frozen & tuned
-    from dlstudio.graph import model_from_saved
+    from blocklearning.graph import model_from_saved
     m = model_from_saved({"graph": g, "state_dict": {k: v.numpy() for k, v in sd.items() if k not in frozen}},
                          d.length, d.n_out, image=d.image).eval()
     x = torch.as_tensor(d.X_test.reshape(-1, 1, *d.image), dtype=torch.float32)

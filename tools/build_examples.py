@@ -1,4 +1,4 @@
-"""예시 데이터 만들기: 공개 실제 데이터의 원본 → 작게 줄인 npz (src/dlstudio/data/). 원본은 저장소에 넣지 않는다.
+"""예시 데이터 만들기: 공개 실제 데이터의 원본 → 작게 줄인 npz (src/blocklearning/data/). 원본은 저장소에 넣지 않는다.
 
     python tools/build_examples.py <원본 폴더> [이름 …]
 
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-OUT = Path(__file__).resolve().parents[1] / "src" / "dlstudio" / "data"
+OUT = Path(__file__).resolve().parents[1] / "src" / "blocklearning" / "data"
 RNG = np.random.default_rng(0)
 
 

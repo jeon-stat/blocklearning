@@ -8,12 +8,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dlstudio import anomaly, forecast, tasks
-from dlstudio.data import DataError, load_example
-from dlstudio.graph import check_graph, from_blocks
+from blocklearning import anomaly, forecast, tasks
+from blocklearning.data import DataError, load_example
+from blocklearning.graph import check_graph, from_blocks
 
 JS = Path(__file__).parent / "js"
-ENGINE = Path(__file__).parents[1] / "src" / "dlstudio" / "static" / "engine.js"
+ENGINE = Path(__file__).parents[1] / "src" / "blocklearning" / "static" / "engine.js"
 HAS_NODE = shutil.which("node") is not None and (JS / "node_modules" / "@tensorflow" / "tfjs").exists()
 T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
 
@@ -57,7 +57,7 @@ def test_forecast_example_and_summary():
 
 
 def test_forecast_csv_loader_and_reload(tmp_path):
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     rows = ["시각,온도,전력"] + [f"2026-01-01 {i},{20 + np.sin(i / 5):.4f},{100 + 10 * np.sin(i / 24 * 2 * np.pi):.4f}"
                                for i in range(600)]
     rows[50] = "2026-01-01 49,,"                                            # 빈 칸은 앞뒤 값으로 메움
@@ -94,8 +94,8 @@ def test_calendar_channels_and_time_column():
 
 
 def test_forecast_csv_with_time_column_predicts_with_calendar(tmp_path):
-    from dlstudio.core import Studio
-    from dlstudio.predict import read_new
+    from blocklearning.core import Studio
+    from blocklearning.predict import read_new
     t0 = np.datetime64("2026-03-02T00:00")
     v = [100 + 50 * ((i // 24) % 7 < 5) + 10 * np.sin(i / 24 * 2 * np.pi) for i in range(24 * 40)]
     rows = ["시각,전력"] + [f"{str(t0 + np.timedelta64(i, 'h')).replace('T', ' ')},{x:.3f}" for i, x in enumerate(v)]
@@ -138,7 +138,7 @@ def test_pick_normal_and_single_class_csv(tmp_path):
     assert anomaly.pick_normal(["결함", "정상"], np.array([0, 0, 0, 1])) == 1
     assert anomaly.pick_normal(["A", "B"], np.array([0, 1, 1])) == 1
     assert anomaly.pick_normal(["A", "B"], np.array([0, 1, 1]), normal="A") == 0
-    from dlstudio.core import Studio
+    from blocklearning.core import Studio
     rng = np.random.default_rng(0)
     f = tmp_path / "ok.csv"
     f.write_text("\n".join(["a,b,c,상태"] + [f"{x:.3f},{y:.3f},{x + y:.3f},양품" for x, y in rng.normal(size=(60, 2))]),
@@ -180,7 +180,7 @@ def test_subtasks_available_and_templates_check(sid):
 @pytest.mark.parametrize("kind,tid,ep,need", [("steel_power", "fc_mlp", 15, 0.5), ("bearing_ae", "ae_dense", 25, 0.75),
                                               ("hydraulic_ae", "ae_tab_dense", 40, 0.85)])
 def test_train_job_learns_and_result_is_json(kind, tid, ep, need):
-    from dlstudio.jobs import Job, TrainSettings, train_job
+    from blocklearning.jobs import Job, TrainSettings, train_job
     d = load_example(kind)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -227,9 +227,9 @@ def test_engine_metrics_match_python():
 def test_engine_trains_and_python_builds_same_result(tmp_path, kind, tid):
     """웹 엔진 학습 → 출력(원래 단위로 접힘)을 Python task_result에 넘김. 엔진 가중치를 PyTorch에 넣으면 같은 출력·성적."""
     import torch
-    from dlstudio.blocks import to_model_input
-    from dlstudio.graph import build_graph_model
-    from dlstudio.jobs import task_result
+    from blocklearning.blocks import to_model_input
+    from blocklearning.graph import build_graph_model
+    from blocklearning.jobs import task_result
     from tests.test_engine import _train_js
     d = load_example(kind)
     g = from_blocks(T[tid]["blocks"])

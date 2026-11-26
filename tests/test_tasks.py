@@ -6,11 +6,11 @@ import numpy as np
 
 import pytest
 
-from dlstudio import tasks
-from dlstudio.blocks import build_model, check, to_model_input
-from dlstudio.graph import build_graph_model, check_graph
-from dlstudio.data import load_example
-from dlstudio.tasks import CATALOG, find
+from blocklearning import tasks
+from blocklearning.blocks import build_model, check, to_model_input
+from blocklearning.graph import build_graph_model, check_graph
+from blocklearning.data import load_example
+from blocklearning.tasks import CATALOG, find
 
 
 def _available():

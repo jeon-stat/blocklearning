@@ -6,11 +6,11 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import tasks
-from dlstudio.blocks import to_model_input
-from dlstudio.data import load_example
-from dlstudio.graph import build_graph_model, check_graph
-from dlstudio.project import export_torch
+from blocklearning import tasks
+from blocklearning.blocks import to_model_input
+from blocklearning.data import load_example
+from blocklearning.graph import build_graph_model, check_graph
+from blocklearning.project import export_torch
 
 
 def G(*nodes):

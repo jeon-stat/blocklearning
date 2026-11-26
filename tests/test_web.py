@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import codegen, web
-from dlstudio.blocks import to_model_input
-from dlstudio.graph import build_graph_model
+from blocklearning import codegen, web
+from blocklearning.blocks import to_model_input
+from blocklearning.graph import build_graph_model
 
 
 def _state_js(net) -> dict:
@@ -32,7 +32,7 @@ def _studio_with_example():
 
 
 def _graph():
-    from dlstudio.tasks import DEFAULT_TEMPLATES, _view
+    from blocklearning.tasks import DEFAULT_TEMPLATES, _view
     return _view(DEFAULT_TEMPLATES[0])["graph"]
 
 
@@ -41,8 +41,8 @@ def test_web_python_runs_without_torch():
     code = r'''
 import sys, json
 sys.modules["torch"] = None
-from dlstudio import web
-from dlstudio.tasks import DEFAULT_TEMPLATES, _view
+from blocklearning import web
+from blocklearning.tasks import DEFAULT_TEMPLATES, _view
 s = web.WebStudio()
 assert s.call("POST", "/api/data/load", {"example": "ecg"})[0] == 200
 g = _view(DEFAULT_TEMPLATES[0])["graph"]
@@ -99,7 +99,7 @@ def test_project_bytes_roundtrip_with_weights(tmp_path):
     web.set_trained(s, json.dumps(g), json.dumps({"epochs": 3}), json.dumps({"test_metric": 0.5, "metric_name": "accuracy"}))
     raw = web.project_bytes(s, _state_js(net))
     assert set(zipfile.ZipFile(io.BytesIO(raw)).namelist()) == {"project.json", "model.npz"}
-    p = tmp_path / "p.dlstudio"
+    p = tmp_path / "p.blocklearning"
     p.write_bytes(raw)
     s2 = web.WebStudio()                                     # 새로 연 페이지: 예시 데이터는 다시 불러옴
     r = json.loads(web.open_project(s2, str(p)))
@@ -113,12 +113,12 @@ def test_project_bytes_roundtrip_with_weights(tmp_path):
 
 
 def test_open_project_needs_data_when_not_example(tmp_path):
-    from dlstudio.project import save_project
-    p = tmp_path / "q.dlstudio"
+    from blocklearning.project import save_project
+    p = tmp_path / "q.blocklearning"
     save_project(str(p), _graph(), {"path": "/data/u1/x.csv"}, {}, None, {})
     r = json.loads(web.open_project(web.WebStudio(), str(p)))
     assert r["status"] == 400 and "데이터" in r["body"]["error"]["message"]
-    bad = tmp_path / "bad.dlstudio"
+    bad = tmp_path / "bad.blocklearning"
     bad.write_bytes(b"not a zip")
     assert json.loads(web.open_project(web.WebStudio(), str(bad)))["status"] == 400
 
@@ -167,7 +167,7 @@ def test_record_roundtrip_with_data_copy(tmp_path, data_dir, together):
     proj = web.record_project(s, _state_js(net), "내 프로젝트", with_data=together)
     meta = json.loads(zipfile.ZipFile(io.BytesIO(proj)).read("project.json"))
     assert meta["name"] == "내 프로젝트" and meta["data_source"]["path"] == "@data/u7/내데이터.csv"
-    pp = tmp_path / "p.dlstudio"
+    pp = tmp_path / "p.blocklearning"
     pp.write_bytes(proj)
     dp = ""
     if not together:
@@ -191,7 +191,7 @@ def test_record_example_project_needs_no_data(tmp_path, data_dir):
     g = _graph()
     s.call("POST", "/api/model/check", {"graph": g})
     assert web.data_zip(s) == b""
-    pp = tmp_path / "e.dlstudio"
+    pp = tmp_path / "e.blocklearning"
     pp.write_bytes(web.record_project(s, None, "예시"))
     r = json.loads(web.record_open(web.WebStudio(), str(pp), ""))
     assert r["status"] == 200 and r["body"]["state"] is None and r["body"]["response"]["graph"] == g
@@ -200,7 +200,7 @@ def test_record_example_project_needs_no_data(tmp_path, data_dir):
 def test_record_missing_data_copy_is_explained(tmp_path, data_dir):
     s = _csv_studio(data_dir)
     s.call("POST", "/api/model/check", {"graph": _dense_graph()})
-    pp = tmp_path / "p.dlstudio"
+    pp = tmp_path / "p.blocklearning"
     pp.write_bytes(web.record_project(s, None))
     r = json.loads(web.record_open(web.WebStudio(), str(pp), ""))
     assert r["status"] == 400 and "데이터 사본" in r["body"]["error"]["message"]
@@ -210,7 +210,7 @@ def test_record_open_ignores_paths_outside(tmp_path, data_dir):
     """데이터 사본 zip 안의 ../ 경로는 풀지 않음 (다른 곳에 파일을 쓰지 못하게)."""
     s = _csv_studio(data_dir)
     s.call("POST", "/api/model/check", {"graph": _dense_graph()})
-    pp = tmp_path / "p.dlstudio"
+    pp = tmp_path / "p.blocklearning"
     pp.write_bytes(web.record_project(s, None))
     evil = io.BytesIO()
     with zipfile.ZipFile(evil, "w") as z:

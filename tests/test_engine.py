@@ -12,9 +12,9 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import codegen
-from dlstudio.blocks import to_model_input
-from dlstudio.graph import build_graph_model
+from blocklearning import codegen
+from blocklearning.blocks import to_model_input
+from blocklearning.graph import build_graph_model
 from tests.test_codegen import CASES
 
 JS = Path(__file__).parent / "js"
@@ -43,9 +43,9 @@ def _fixture(case, seed=1):
     state = {k: {"shape": list(v.shape), "data": v.detach().numpy().ravel().tolist()} for k, v in net.state_dict().items()}
     fx = {"name": name, "plan": codegen.plan_dict(g, L, n_out, image), "state": state,
           "x": {"shape": list(x.shape), "data": x.numpy().ravel().tolist()}}
-    from dlstudio.analysis import attention
+    from blocklearning.analysis import attention
     exp = {"y": y, "trace": tr, "params": sum(p.numel() for p in net.parameters() if p.requires_grad), "attn": attention(net, x[0].numpy())}
-    from dlstudio.nn_extra import RANDOM_MODULES
+    from blocklearning.nn_extra import RANDOM_MODULES
     has_dropout = any(isinstance(m, (torch.nn.modules.dropout._DropoutNd,) + RANDOM_MODULES) for m in net.modules())
     if not has_dropout and any(p.requires_grad for p in net.parameters()):   # 학습 모드: 묶음 통계 BatchNorm, 교차 엔트로피 기울기
         labels = [i % n_out for i in range(len(x))]
@@ -115,9 +115,9 @@ def _train_js(tmp_path, graph, d, settings, distance=None, stop_after_ms=None):
 
 def test_engine_trains_classification_and_weights_run_in_torch(tmp_path):
     """엔진 학습: 정확도가 오르고, 학습한 가중치를 PyTorch 모델에 넣으면 같은 정확도 (웹 → PyTorch 내보내기 경로)."""
-    from dlstudio.data import make_dataset
+    from blocklearning.data import make_dataset
     from tests.synth import example_arrays
-    from dlstudio.tasks import DEFAULT_TEMPLATES, _view
+    from blocklearning.tasks import DEFAULT_TEMPLATES, _view
     d = make_dataset(*example_arrays(n=300, length=140))
     g = _view(DEFAULT_TEMPLATES[0])["graph"]
     out = _train_js(tmp_path, g, d, {"epochs": 6, "lr": 0.01, "batch_size": 32, "seed": 0})
@@ -137,9 +137,9 @@ def test_engine_trains_classification_and_weights_run_in_torch(tmp_path):
 
 
 def test_engine_trains_regression_in_original_units(tmp_path):
-    from dlstudio.data import load_example
+    from blocklearning.data import load_example
     d = load_example("process_reg")
-    g = next(t for f in __import__("dlstudio.tasks", fromlist=["x"]).catalog_view()["families"] for s in f["subtasks"]
+    g = next(t for f in __import__("blocklearning.tasks", fromlist=["x"]).catalog_view()["families"] for s in f["subtasks"]
              if s["id"].startswith("reg") and s["input"] == "tabular" for t in s["templates"])["graph"]
     out = _train_js(tmp_path, g, d, {"epochs": 15, "lr": 0.01, "batch_size": 32, "seed": 0})
     r = out["result"]
@@ -148,9 +148,9 @@ def test_engine_trains_regression_in_original_units(tmp_path):
 
 def test_engine_trains_batchnorm_model(tmp_path):
     """BatchNorm이 든 모델도 웹 엔진에서 학습됨: 묶음 수(num_batches_tracked, 정수)가 묶음마다 1씩 늘고 PyTorch에 그대로 들어감."""
-    from dlstudio.data import load_example
-    from dlstudio.graph import from_blocks
-    from dlstudio.tasks import T_DEEP_MLP
+    from blocklearning.data import load_example
+    from blocklearning.graph import from_blocks
+    from blocklearning.tasks import T_DEEP_MLP
     d = load_example("concrete")
     g = from_blocks(T_DEEP_MLP["blocks"])
     out = _train_js(tmp_path, g, d, {"epochs": 2, "lr": 0.003, "batch_size": 64, "seed": 0})
@@ -163,9 +163,9 @@ def test_engine_trains_batchnorm_model(tmp_path):
 
 def test_engine_stop_is_quick(tmp_path):
     """[멈추기]: epoch가 끝나길 기다리지 않고 묶음마다 확인해 바로 멈춤. 멈춘 epoch는 기록하지 않고, 학습 데이터 채점은 건너뜀."""
-    from dlstudio import tasks
-    from dlstudio.data import load_example
-    from dlstudio.graph import from_blocks
+    from blocklearning import tasks
+    from blocklearning.data import load_example
+    from blocklearning.graph import from_blocks
     T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
     d = load_example("bearing")
     g = from_blocks(T["cnn"]["blocks"])

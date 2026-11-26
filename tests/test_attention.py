@@ -3,10 +3,10 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import tasks
-from dlstudio.analysis import attention, attn_view
-from dlstudio.blocks import to_model_input
-from dlstudio.graph import build_graph_model, from_blocks
+from blocklearning import tasks
+from blocklearning.analysis import attention, attn_view
+from blocklearning.blocks import to_model_input
+from blocklearning.graph import build_graph_model, from_blocks
 
 
 def _tpl(tid):
@@ -57,8 +57,8 @@ def test_attn_view_pool_shape():
 @pytest.mark.parametrize("tid,kind", [("transformer", "ecg"), ("ft_transformer", "steel_plates"), ("vit", "digits"),
                                       ("cnn_transformer", "steelblast")])
 def test_api_activations_has_attention(tid, kind, tmp_path):
-    from dlstudio.core import Studio
-    from dlstudio.data import load_example
+    from blocklearning.core import Studio
+    from blocklearning.data import load_example
     s = Studio()
     d = load_example(kind)
     s.data = d

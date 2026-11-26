@@ -1,5 +1,5 @@
 {
-  "name": "dlstudio-js-tests",
+  "name": "blocklearning-js-tests",
   "private": true,
   "description": "웹 엔진(TF.js) 시험용. tests/test_engine.py가 node로 부름",
   "devDependencies": {

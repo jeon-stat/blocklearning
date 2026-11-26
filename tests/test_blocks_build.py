@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio.blocks import build_model, check, to_model_input
+from blocklearning.blocks import build_model, check, to_model_input
 
 EXAMPLE = [
     {"type": "conv", "channels": 16, "kernel": 5},

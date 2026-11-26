@@ -5,9 +5,9 @@ import time
 import numpy as np
 import pytest
 
-from dlstudio import web
-from dlstudio.core import Studio
-from dlstudio.tasks import DEFAULT_TEMPLATES, _view
+from blocklearning import web
+from blocklearning.core import Studio
+from blocklearning.tasks import DEFAULT_TEMPLATES, _view
 
 torch = pytest.importorskip("torch")
 G = _view(DEFAULT_TEMPLATES[0])["graph"]
@@ -46,7 +46,7 @@ def test_runs_record_restore_delete(trained, tmp_path):
         acc = float((s.model(x).argmax(1).numpy() == d.y_test).mean())
     assert abs(acc - r["results"]["test_metric"]) < 1e-9                # 되돌린 모델 = 그때의 성적
     # 프로젝트에 기록과 가중치가 함께
-    p = str(tmp_path / "p.dlstudio")
+    p = str(tmp_path / "p.blocklearning")
     assert s.call("POST", "/api/project/save", {"path": p})[0] == 200
     s2 = Studio()
     c, r = s2.call("POST", "/api/project/open", {"path": p})
@@ -89,7 +89,7 @@ def test_predict_tabular_rows_and_regression():
     s.call("POST", "/api/data/load", {"example": "process_cls"})
     summ = s.data.summary()
     assert "rows" in summ["predict_kinds"] and len(summ["feature_means"]) == s.data.length
-    from dlstudio.tasks import catalog_view
+    from blocklearning.tasks import catalog_view
     g = next(t["graph"] for f in catalog_view()["families"] for sub in f["subtasks"] for t in sub.get("templates", []) if t["id"] == "mlp")
     c, r = s.call("POST", "/api/train", {"graph": g, "settings": {"epochs": 2}})
     while s.call("GET", f"/api/jobs/{r['id']}")[1]["state"] == "running":
@@ -118,7 +118,7 @@ def test_samples_cell_and_preview(trained):
 
 def test_web_runs_and_predict_without_torch_engine():
     """웹 쪽: 엔진 가중치로 기록 더하기 → 되돌리기 응답, 예측 준비·마무리 (엔진 출력 대신 torch로 계산해 넣음)."""
-    from dlstudio.graph import build_graph_model
+    from blocklearning.graph import build_graph_model
     s = web.WebStudio()
     s.call("POST", "/api/data/load", {"example": "ecg"})
     d = s.data

@@ -5,10 +5,10 @@ import numpy as np
 import pytest
 import torch
 
-from dlstudio import tasks
-from dlstudio.data import load_example
-from dlstudio.graph import build_graph_model, from_blocks
-from dlstudio.jobs import Job, TrainSettings, fit, train_job
+from blocklearning import tasks
+from blocklearning.data import load_example
+from blocklearning.graph import build_graph_model, from_blocks
+from blocklearning.jobs import Job, TrainSettings, fit, train_job
 
 T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
 

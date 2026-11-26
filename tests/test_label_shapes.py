@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from dlstudio.core import Studio
+from blocklearning.core import Studio
 
 PIL = pytest.importorskip("PIL.Image")
 

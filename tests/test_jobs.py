@@ -4,10 +4,10 @@ import time
 import numpy as np
 import pytest
 
-from dlstudio.graph import build_graph_model, from_blocks
-from dlstudio.data import make_dataset
+from blocklearning.graph import build_graph_model, from_blocks
+from blocklearning.data import make_dataset
 from tests.synth import example_arrays
-from dlstudio.jobs import JobManager, TrainSettings, train_job
+from blocklearning.jobs import JobManager, TrainSettings, train_job
 
 CNN = [{"type": "conv", "channels": 8, "kernel": 5}, {"type": "act", "kind": "relu"}, {"type": "global_avg"},
        {"type": "output"}]
@@ -134,7 +134,7 @@ def test_concurrent_starts_never_overlap():
 
 
 def test_regression_result_has_mae_and_scatter():
-    from dlstudio.data import load_example
+    from blocklearning.data import load_example
     d = load_example("process_reg")
     dense = [{"type": "dense", "units": 16}, {"type": "act", "kind": "relu"}, {"type": "output"}]
     jm = JobManager()
@@ -147,8 +147,8 @@ def test_regression_result_has_mae_and_scatter():
 def test_regression_with_offset_target_learns_and_outputs_original_units():
     """정답이 21–96처럼 0에서 먼 값이어도 학습이 됨 (정답을 정규화해 학습하고 출력층에서 되돌림)."""
     import torch
-    from dlstudio.blocks import check, to_model_input
-    from dlstudio.data import load_example
+    from blocklearning.blocks import check, to_model_input
+    from blocklearning.data import load_example
     d = load_example("process_reg")
     dense = [{"type": "dense", "units": 32}, {"type": "act", "kind": "relu"}, {"type": "dense", "units": 16},
              {"type": "act", "kind": "relu"}, {"type": "output"}]
