@@ -109,6 +109,73 @@ async function api(path, body) {
   return j;
 }
 
+// ------------------------------------------------------------ 설치형: 브라우저로 고른 파일을 BlockLearning을 실행한 컴퓨터로 올림
+// (서버에서 실행하고 내 PC 브라우저로 볼 때, 내 PC의 파일을 서버에 두는 방법. 받은 위치를 경로 칸에 넣음)
+function pickLocal(opts) {
+  return new Promise((resolve) => {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    if (opts.accept) inp.accept = opts.accept;
+    if (opts.dir) { inp.webkitdirectory = true; inp.multiple = true; }
+    inp.onchange = () => resolve(Array.from(inp.files || []));
+    inp.click();
+  });
+}
+async function uploadFiles(files, onStep) {             // → 올린 파일 경로 (폴더면 폴더 경로)
+  const batch = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("");
+  let last = null;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i], rel = f.webkitRelativePath || f.name;
+    if (onStep) onStep(i + 1, files.length);
+    const r = await fetch(`/api/upload?batch=${batch}&rel=${encodeURIComponent(rel)}`,
+      { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f });
+    const j = await r.json().catch(() => ({ error: { message: `올리지 못함 (${r.status})` } }));
+    if (!r.ok) throw j.error || { message: `올리지 못함 (${r.status})` };
+    last = j;
+  }
+  return files[0].webkitRelativePath ? last.top : last.path;
+}
+async function pickUpload(opts, btn) {                   // 고르고 올리기 → 경로 (안 고르면 "")
+  const files = await pickLocal(opts);
+  if (!files.length) return "";
+  const label = btn ? btn.textContent : "";
+  try { return await uploadFiles(files, (i, n) => { if (btn && n > 1) btn.textContent = `올리는 중 ${i}/${n}`; }); }
+  finally { if (btn) btn.textContent = label; }
+}
+function localSetup() {
+  const picks = [                                         // [경로 칸, 고르기 설정, 고른 뒤 누를 단추]
+    ["csv-path", { accept: ".csv,.tsv,.txt" }, "btn-csv"], ["folder-path", { dir: true }, "btn-folder"],
+    ["series-path", { dir: true }, "btn-series-scan"], ["series-label-file", { accept: ".csv,.tsv,.txt" }, ""],
+    ["predict-path", { accept: ".csv,.tsv,.txt" }, "btn-predict-csv"], ["predict-folder", { dir: true }, "btn-predict-folder"],
+    ["predict-series", { dir: true }, "btn-predict-series"],
+  ];
+  for (const [id, opts, then] of picks) {
+    const el = $(id);
+    if (!el) continue;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pick";
+    b.textContent = opts.dir ? "폴더 고르기" : "파일 고르기";
+    b.onclick = async () => {
+      try {
+        const p = await pickUpload(opts, b);
+        if (!p) return;
+        el.value = p;
+        el.dispatchEvent(new Event("change"));
+        if (then && $(then)) $(then).click();
+      } catch (e) { showError(e); }
+    };
+    el.after(b);
+  }
+  api("/api/device").then((d) => {                       // 학습 장치: GPU 이름 또는 CPU
+    const sel = $("device");
+    if (!sel) return;
+    const auto = sel.querySelector('option[value="auto"]'), gpu = sel.querySelector('option[value="cuda"]');
+    if (auto) auto.textContent = d.gpu ? `자동 (GPU: ${d.name})` : "자동 (CPU, GPU 없음)";
+    if (gpu) gpu.disabled = !d.gpu;
+  }).catch(() => {});
+}
+
 let msgTimer = null;
 // 데이터가 없을 때 ③·④·⑤는 내용 대신 안내 화면. 사이드바에는 아직 못 쓰는 단계를 흐리게
 function renderEmpty() {
@@ -1888,11 +1955,13 @@ function applyOpened(r) {                                // 연 프로젝트를 
   go(r.trained ? "train" : "model");
 }
 $("btn-open").onclick = async () => {
-  const path = WEB ? await window.DLS_WEB.pickProject() : prompt("열 프로젝트 파일 경로 (.blocklearning)");
+  let path;
+  try { path = WEB ? await window.DLS_WEB.pickProject() : await pickUpload({ accept: ".blocklearning,.dlstudio" }, $("btn-open")); }
+  catch (e) { return showError(e); }
   if (!path) return;
   try {
     applyOpened(await api("/api/project/open", { path }));
-    showMessage(`열었음: ${WEB ? path.split("/").pop() : path}`, "", "", true);
+    showMessage(`열었음: ${path.split(/[\\/]/).pop()}`, "", "", true);
   } catch (e) { showError(e); }
 };
 $("btn-export").onclick = async () => {                // torch만 있으면 읽는 파일 (정규화·모양 맞추기 포함)
@@ -1958,7 +2027,7 @@ $("code-save").onclick = async () => {
 
 // 화면을 새로 고쳐도 서버에 남은 상태(데이터, 블록, 학습된 모델)를 이어서 씀
 (async () => {
-  if (!WEB) go("task");                                      // 웹은 첫 화면 '내 프로젝트' (projects.js)
+  if (!WEB) { go("task"); localSetup(); }                   // 웹은 첫 화면 '내 프로젝트' (projects.js)
   drawCurve([], "accuracy");
   if (!st.catalog.length) {                                  // 첫 로딩: 빈 화면 대신 무엇을 기다리는지
     $("families").innerHTML = `<p class="muted loading">과제 목록을 불러오는 중…${WEB ? " 처음엔 10~20초" : ""}</p>`;

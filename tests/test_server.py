@@ -3,7 +3,9 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ import pytest
 from blocklearning.graph import from_blocks
 
 from blocklearning import cli
-from blocklearning.server import make_server
+from blocklearning.server import TOKEN_HEADER, make_server
 
 CNN = [{"type": "conv", "channels": 8, "kernel": 5}, {"type": "act", "kind": "relu"}, {"type": "global_avg"},
        {"type": "output"}]
@@ -23,12 +25,23 @@ def server(tmp_path):
     static.mkdir()
     (static / "index.html").write_text("<!doctype html><title>BlockLearning</title>", encoding="utf-8")
     (static / "app.js").write_text("console.log(1)", encoding="utf-8")
-    s = make_server(0, static_dir=str(static))
+    s = make_server(0, static_dir=str(static), upload_dir=str(tmp_path / "uploads"))
     t = threading.Thread(target=s.serve_forever, daemon=True)
     t.start()
+    urllib.request.install_opener(urllib.request.build_opener(_WithToken(s.token)))   # 시험의 요청은 접속 열쇠를 들고 감
     yield s
+    urllib.request.install_opener(None)
     s.shutdown()
     s.server_close()
+
+
+class _WithToken(urllib.request.BaseHandler):
+    def __init__(self, token):
+        self.token = token
+
+    def http_request(self, req):
+        req.add_header(TOKEN_HEADER, self.token)
+        return req
 
 
 def _url(s, path):
@@ -107,7 +120,7 @@ def test_static_index_and_traversal(server):
         assert r.status == 200
     import http.client
     c = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
-    c.request("GET", "/static/../../server.py")
+    c.request("GET", "/static/../../server.py", headers={TOKEN_HEADER: server.token})
     assert c.getresponse().status == 404
 
 
@@ -130,10 +143,13 @@ def test_state_restores_after_reload(server):
     assert s["results"]["metric_name"] == "accuracy"
 
 
-def _raw(server, path, body=b"{}", headers=None):
+def _raw(server, path, body=b"{}", headers=None, token=True, method="POST"):
     import http.client
     c = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
-    c.request("POST", path, body=body, headers=headers or {})
+    h = dict(headers or {})
+    if token:
+        h.setdefault(TOKEN_HEADER, server.token)
+    c.request(method, path, body=body if method == "POST" else None, headers=h)
     r = c.getresponse()
     return r.status, r.read()
 
@@ -595,3 +611,75 @@ def test_code_api_and_save(server, tmp_path):
     code, r = _call(server, "/api/code/save", {"graph": g, "framework": "tensorflow", "path": str(tmp_path / "k.py")})
     assert code == 200 and r["files"] == [str(tmp_path / "k.py")]
     assert _call(server, "/api/code/save", {"graph": g, "framework": "pytorch", "path": str(tmp_path / "m.txt")})[0] == 400
+
+
+def _req(server, method, path, headers=None, body=None):
+    import http.client
+    c = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
+    c.request(method, path, body=body, headers=headers or {})
+    r = c.getresponse()
+    return r.status, dict(r.getheaders()), r.read()
+
+
+def test_needs_access_token(server):
+    """접속 열쇠 없이는 화면·API·올리기 모두 거절 (공용 서버의 다른 사용자, 열쇠 없는 주소)."""
+    code, _, body = _req(server, "GET", "/")
+    assert code == 403 and "접속 열쇠" in body.decode("utf-8")
+    assert _req(server, "GET", "/api/state")[0] == 403
+    assert _req(server, "POST", "/api/data/load", {"Content-Type": "application/json"}, b'{"example": "ecg"}')[0] == 403
+    assert _req(server, "GET", "/?token=wrong")[0] == 403
+    assert _req(server, "GET", "/api/state", {TOKEN_HEADER: "wrong"})[0] == 403
+
+
+def test_token_link_sets_cookie(server):
+    """열쇠 든 주소로 처음 열면 쿠키로 기억하고 열쇠를 주소에서 지움 (그다음은 쿠키로)."""
+    code, h, _ = _req(server, "GET", f"/?token={server.token}")
+    assert code == 302 and h["Location"] == "/"
+    cookie = h["Set-Cookie"]
+    assert cookie.startswith(server.cookie + "=") and "HttpOnly" in cookie and "SameSite=Lax" in cookie
+    jar = cookie.split(";")[0]
+    assert _req(server, "GET", "/", {"Cookie": jar})[0] == 200
+    assert _req(server, "GET", "/api/state", {"Cookie": jar})[0] == 200
+    assert _req(server, "GET", "/", {"Cookie": f"{server.cookie}=wrong"})[0] == 403
+
+
+def test_forwarded_port_host_allowed(server):
+    """SSH·VS Code로 이어 온 포트(브라우저 주소의 포트가 다름)도 열림. 다른 출처는 거절."""
+    h = {TOKEN_HEADER: server.token, "Host": "localhost:9999", "Content-Type": "application/json"}
+    assert _req(server, "POST", "/api/data/load", dict(h, Origin="http://localhost:9999"), b'{"example": "ecg"}')[0] == 200
+    assert _req(server, "POST", "/api/data/load", dict(h, Origin="http://localhost:8888"), b'{"example": "ecg"}')[0] == 403
+    assert _req(server, "GET", "/api/state", {TOKEN_HEADER: server.token, "Host": "10.0.0.5:8765"})[0] == 403
+
+
+def test_upload_saves_inside_upload_dir(server, tmp_path):
+    """브라우저로 고른 파일을 올린 파일 폴더 안에만 저장 (폴더 밖 경로·이상한 이름은 거절)."""
+    up = {TOKEN_HEADER: server.token, "Content-Type": "application/octet-stream"}
+    rows = "\n".join("1,2,3,%d" % (i % 2) for i in range(12)).encode()
+    code, _, body = _req(server, "POST", "/api/upload?batch=abcdef1234&rel=" + urllib.parse.quote("데이터/a.csv"), up, rows)
+    r = json.loads(body)
+    assert code == 200 and Path(r["path"]).read_bytes() == rows
+    assert Path(r["top"]) == (tmp_path / "uploads" / "abcdef1234" / "데이터").resolve()
+    assert _call(server, "/api/data/load", {"path": r["path"]})[0] == 200
+    for rel in ("../x.csv", "a/../../x.csv", "C:/x.csv", ""):
+        assert _req(server, "POST", "/api/upload?batch=abcdef1234&rel=" + urllib.parse.quote(rel), up, b"x")[0] == 400, rel
+    assert _req(server, "POST", "/api/upload?batch=../../x&rel=a.csv", up, b"x")[0] == 400
+    assert _req(server, "POST", "/api/upload?batch=abcdef1234&rel=a.csv",
+                {TOKEN_HEADER: server.token, "Content-Type": "application/json"}, b"x")[0] == 415
+    assert not (tmp_path / "x.csv").exists()
+
+
+def test_device_info(server):
+    code, d = _call(server, "/api/device")
+    assert code == 200 and set(d) == {"gpu", "name", "count"} and isinstance(d["gpu"], bool)
+
+
+def test_cli_guide_for_ssh_and_vscode():
+    """서버에서 실행하면 내 PC에서 할 SSH 포트 잇기 명령을, VS Code면 Ctrl+클릭 안내를. 이 PC면 주소만."""
+    url = "http://127.0.0.1:8765/?token=t"
+    ssh = {"SSH_CONNECTION": "10.0.0.9 50000 192.168.1.20 2222"}
+    g = cli.guide(url, 8765, ssh)
+    assert "ssh -L 8765:127.0.0.1:8765 -p 2222 " in g and "@192.168.1.20" in g and "tmux" in g and url in g
+    assert "-p " not in cli.guide(url, 8765, {"SSH_CONNECTION": "10.0.0.9 50000 192.168.1.20 22"})
+    v = cli.guide(url, 8766, dict(ssh, TERM_PROGRAM="vscode"))
+    assert "VS Code" in v and "ssh -L" not in v
+    assert cli.remote_kind({}) == "" and "ssh" not in cli.guide(url, 8765, {}).lower()

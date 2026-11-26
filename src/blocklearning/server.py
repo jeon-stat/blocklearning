@@ -1,8 +1,17 @@
-"""BlockLearning 로컬 HTTP 서버: 127.0.0.1에만 열고, 화면(static)과 JSON API(core.Studio)를 제공한다."""
+"""BlockLearning 로컬 HTTP 서버: 127.0.0.1에만 열고, 화면(static)과 JSON API(core.Studio)를 제공한다.
+
+접속 열쇠(token): 실행할 때마다 새로 만들어, 열쇠가 든 주소(…/?token=…)로 처음 연 브라우저만 들어온다 (Jupyter와 같은 방식).
+같은 컴퓨터를 쓰는 다른 사람(공용 GPU 서버)이나 다른 웹사이트가 이 서버에 들어오지 못하게 한다.
+"""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import mimetypes
+import re
+import secrets
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
@@ -12,15 +21,29 @@ from blocklearning.core import Studio, UserError, _clean, _jsonable, _path  # no
 from blocklearning.data import DataError
 
 STATIC_DIR = Path(__file__).parent / "static"
+UPLOAD_DIR = Path.home() / ".blocklearning" / "uploads"      # 브라우저로 고른 파일을 두는 곳 (서버에서 실행하면 서버 쪽)
+MAX_UPLOAD = 4 * 1024 ** 3                                     # 파일 하나 4GB까지
+TOKEN_HEADER = "X-BlockLearning-Token"
+HOST_RE = re.compile(r"^(127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$")   # SSH·VS Code로 이어 온 포트 번호는 달라도 됨
+DENIED_PAGE = """<!doctype html><meta charset="utf-8"><title>BlockLearning</title>
+<body style="font-family:system-ui,sans-serif;max-width:560px;margin:60px auto;padding:0 16px;line-height:1.6">
+<h2>접속 열쇠가 필요합니다</h2>
+<p>BlockLearning을 실행한 명령창에 나온 주소(<code>…/?token=…</code>)로 여세요.</p></body>"""
 
 
 class StudioServer(Studio, ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port: int, static_dir: Path):
+    def __init__(self, port: int, static_dir: Path, token: str, upload_dir: Path = UPLOAD_DIR):
         ThreadingHTTPServer.__init__(self, ("127.0.0.1", port), Handler)
         Studio.__init__(self)
         self.static_dir = Path(static_dir).resolve()
+        self.token = token
+        self.cookie = "bl_" + hashlib.sha256(token.encode()).hexdigest()[:12]   # 서버마다 다른 이름 (여러 개를 띄워도 섞이지 않게)
+        self.upload_dir = Path(upload_dir)
+
+    def check_token(self, value: Optional[str]) -> bool:
+        return bool(value) and hmac.compare_digest(str(value).encode(), self.token.encode())
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -29,11 +52,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):            # 터미널을 조용히
         pass
 
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
+    def _send(self, code: int, body: bytes, ctype: str, headers: Optional[dict] = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")       # 열쇠 든 주소가 다른 곳으로 새지 않게
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -42,24 +68,48 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, body.encode(), "application/json; charset=utf-8")
 
     def _same_origin(self) -> bool:
-        """다른 웹사이트가 로컬 API를 부르지 못하게 (CSRF·DNS rebinding): Host와 Origin이 이 서버여야 함."""
-        port = self.server.server_address[1]
-        ok = {f"127.0.0.1:{port}", f"localhost:{port}"}
-        if self.headers.get("Host", "") not in ok:
+        """다른 웹사이트가 로컬 API를 부르지 못하게 (CSRF·DNS rebinding): Host는 이 컴퓨터, Origin은 같은 출처."""
+        host = self.headers.get("Host", "")
+        if not HOST_RE.match(host):
             return False
         origin = self.headers.get("Origin")
-        return origin is None or origin in {f"http://{h}" for h in ok}
+        return origin is None or origin == f"http://{host}"
+
+    def _authed(self) -> bool:
+        if self.server.check_token(self.headers.get(TOKEN_HEADER)):
+            return True
+        jar = SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return False
+        c = jar.get(self.server.cookie)
+        return c is not None and self.server.check_token(c.value)
 
     def _error(self, code: int, message: str, hint: str = "", detail: str = "", issues=None) -> None:
         self._json(code, {"error": {"message": message, "hint": hint, "detail": detail, "issues": issues or []}})
 
+    def _deny(self, path: str) -> None:
+        if path.startswith("/api/"):
+            return self._error(403, "접속 열쇠가 없음", "BlockLearning을 실행한 명령창에 나온 주소(…/?token=…)로 다시 여세요")
+        self._send(403, DENIED_PAGE.encode(), "text/html; charset=utf-8")
+
     def do_GET(self):
-        path = unquote(urlparse(self.path).path)
+        url = urlparse(self.path)
+        path = unquote(url.path)
         if not self._same_origin():
             return self._error(403, "다른 사이트에서 온 요청은 받지 않음")
+        token = parse_qs(url.query).get("token", [""])[0]
+        if token:                                                # 열쇠 든 주소로 처음 열 때: 쿠키로 기억하고 열쇠를 주소에서 지움
+            if not self.server.check_token(token):
+                return self._deny(path)
+            cookie = f"{self.server.cookie}={self.server.token}; Path=/; HttpOnly; SameSite=Lax"
+            return self._send(302, b"", "text/plain", {"Location": path or "/", "Set-Cookie": cookie})
+        if not self._authed():
+            return self._deny(path)
         if path.startswith("/api/"):
             if path == "/api/label/file":
-                return self._label_file(parse_qs(urlparse(self.path).query).get("name", [""])[0])
+                return self._label_file(parse_qs(url.query).get("name", [""])[0])
             code, obj = self.server.call("GET", path)
             return self._json(code, obj)
         if path in ("/", "/index.html"):
@@ -98,10 +148,18 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, p.read_bytes(), ctype)
 
     def do_POST(self):
-        path = unquote(urlparse(self.path).path)
+        url = urlparse(self.path)
+        path = unquote(url.path)
         if not self._same_origin():
             return self._error(403, "다른 사이트에서 온 요청은 받지 않음")
-        if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+        if not self._authed():
+            return self._deny(path)
+        ctype = self.headers.get("Content-Type") or ""
+        if path == "/api/upload":
+            if not ctype.startswith("application/octet-stream"):
+                return self._error(415, "파일 내용만 받음")
+            return self._upload(parse_qs(url.query))
+        if not ctype.startswith("application/json"):
             return self._error(415, "JSON 요청만 받음")
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -111,6 +169,42 @@ class Handler(BaseHTTPRequestHandler):
         code, obj = self.server.call("POST", path, body)
         self._json(code, obj)
 
+    def _upload(self, q: dict) -> None:
+        """브라우저에서 고른 파일 하나를 이 컴퓨터의 올린 파일 폴더(~/.blocklearning/uploads/<묶음>/<상대 경로>)에 저장."""
+        batch, rel = q.get("batch", [""])[0], q.get("rel", [""])[0]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", batch):
+            return self._error(400, "올리기 묶음 이름이 맞지 않음")
+        parts = [p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")]
+        if not parts or len(parts) > 32 or any(p == ".." or ":" in p or len(p) > 255 for p in parts):
+            return self._error(400, "파일 이름이 맞지 않음")
+        try:
+            n = int(self.headers.get("Content-Length") or -1)
+        except ValueError:
+            n = -1
+        if n < 0:
+            return self._error(411, "파일 크기를 알 수 없음")
+        if n > MAX_UPLOAD:
+            return self._error(413, "파일이 너무 큼 (하나에 4GB까지)", "큰 데이터는 서버에 직접 두고 경로를 넣으세요")
+        root = (self.server.upload_dir / batch).resolve()
+        dest = root.joinpath(*parts).resolve()
+        if root not in dest.parents:
+            return self._error(400, "파일 이름이 맞지 않음")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        left = n
+        with open(dest, "wb") as f:
+            while left > 0:
+                chunk = self.rfile.read(min(left, 1 << 20))
+                if not chunk:
+                    break
+                f.write(chunk)
+                left -= len(chunk)
+        if left:
+            dest.unlink(missing_ok=True)
+            return self._error(400, "파일을 끝까지 받지 못함")
+        self._json(200, {"path": str(dest), "top": str(root / parts[0])})
 
-def make_server(port: int = 0, static_dir: Optional[str] = None) -> StudioServer:
-    return StudioServer(port, Path(static_dir) if static_dir else STATIC_DIR)
+
+def make_server(port: int = 0, static_dir: Optional[str] = None, token: Optional[str] = None,
+                upload_dir: Optional[str] = None) -> StudioServer:
+    return StudioServer(port, Path(static_dir) if static_dir else STATIC_DIR, token or secrets.token_urlsafe(24),
+                        Path(upload_dir) if upload_dir else UPLOAD_DIR)

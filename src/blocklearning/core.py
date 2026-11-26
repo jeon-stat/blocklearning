@@ -740,6 +740,8 @@ class Studio:
                     return 200, tasks.catalog_view()
                 if path == "/api/runs":
                     return 200, _clean(self.api_runs())
+                if path == "/api/device":
+                    return 200, device_info()
                 if path.startswith("/api/jobs/"):
                     try:
                         return 200, _clean(self.job_view(path.split("/")[3]))
@@ -764,6 +766,14 @@ class Studio:
             return 400, _err(f"입력이 맞지 않음: {e}", "값을 확인하세요", traceback.format_exc()[-1500:])
         except Exception as e:                                 # 화면에는 한 줄, 자세히는 detail
             return 500, _err(f"처리 중 오류: {type(e).__name__}: {str(e)[:200]}", "", traceback.format_exc()[-3000:])
+
+
+def device_info() -> dict:
+    """학습에 쓸 장치 (화면의 '장치' 칸): NVIDIA GPU가 있으면 그 이름, 없으면 CPU."""
+    import torch
+    if torch.cuda.is_available():
+        return {"gpu": True, "name": torch.cuda.get_device_name(0), "count": torch.cuda.device_count()}
+    return {"gpu": False, "name": None, "count": 0}
 
 
 def _err(message: str, hint: str = "", detail: str = "", issues=None) -> dict:

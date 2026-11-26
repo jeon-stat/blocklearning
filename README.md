@@ -41,8 +41,26 @@ blocklearning               # 또는 python -m blocklearning
 NVIDIA GPU로 학습하려면 [pytorch.org](https://pytorch.org/get-started/locally/)에서 고른 GPU용 `pip install torch ...`를 먼저 실행하세요
 (그냥 설치하면 Windows에서는 CPU용 torch가 깔립니다). 소스에서 설치하려면 저장소에서 `pip install -e .`.
 
-브라우저에 `http://127.0.0.1:8765/`가 열립니다. `--port 8800`으로 포트를, `--no-browser`로 브라우저 자동 열기를 바꿀 수 있습니다.
+브라우저에 `http://127.0.0.1:8765/?token=…`이 열립니다. `--port 8800`으로 포트를, `--no-browser`로 브라우저 자동 열기를 바꿀 수 있습니다.
 애플리케이션 제어 정책이 실행 파일(`blocklearning.exe`)을 막는 PC에서는 `python -m blocklearning`을 쓰세요.
+학습 화면의 '장치' 칸에 학습에 쓸 GPU 이름(없으면 CPU)이 나옵니다. 데이터는 경로를 넣거나 [파일 고르기]·[폴더 고르기]로 브라우저에서 고릅니다
+(고른 파일은 BlockLearning을 실행한 컴퓨터의 `~/.blocklearning/uploads/`에 복사됨. 다 쓴 뒤 지워도 됨).
+
+### GPU 서버에서 쓰기
+
+서버에 SSH로 접속해 `pip install blocklearning` → `blocklearning`을 실행하면, 명령창에 내 PC에서 할 일이 나옵니다.
+
+- **터미널(SSH)로 접속했을 때:** 내 PC에서 새 터미널을 열고 안내된 `ssh -L 8765:127.0.0.1:8765 사용자@서버` 를 실행한 뒤, 안내된 주소를 내 PC 브라우저로 엽니다.
+- **VS Code(Remote-SSH)로 접속했을 때:** 안내된 주소를 Ctrl+클릭하면 VS Code가 포트를 이어 내 PC 브라우저로 엽니다.
+- 터미널을 닫아도 학습이 계속되게 하려면 `tmux new -s bl` 안에서 실행하고 `Ctrl+B`, `D`로 빠져나옵니다 (다시 볼 때 `tmux attach -t bl`).
+
+### 보안
+
+- 서버는 그 컴퓨터 안(`127.0.0.1`)에서만 열립니다. 다른 컴퓨터에서 보려면 위처럼 SSH로 포트를 이어 오세요. **서버를 바깥(`0.0.0.0`)에 열지 마세요.**
+- 실행할 때마다 새 **접속 열쇠**(주소의 `token`)를 만들고, 열쇠가 든 주소로 연 브라우저만 들어옵니다 (Jupyter와 같은 방식).
+  같은 서버를 쓰는 다른 사용자도 열쇠 없이는 못 들어오니, **그 주소를 남에게 보여 주거나 공유하지 마세요.** 끄면(Ctrl+C) 열쇠도 버려집니다.
+- 다른 웹사이트가 몰래 부르는 요청(CSRF·DNS rebinding)은 Host·Origin 검사로 거절하고, 프로젝트 파일은 코드 실행 없이(pickle 없이) 읽습니다.
+- 학습·데이터는 그 컴퓨터 밖으로 보내지 않습니다. 보안 문제를 찾으면 [SECURITY.md](SECURITY.md)를 보세요.
 
 ## 단계
 
