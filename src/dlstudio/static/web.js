@@ -98,6 +98,55 @@ const pyCall = (method, path, body) => {
   return r.body;
 };
 
+// ------------------------------------------------------------ 학습 일꾼 (train-worker.js): 화면과 다른 스레드에서 학습
+// 일꾼이 GPU(WebGL)를 못 쓰는데 화면은 쓸 수 있으면 (OffscreenCanvas가 없는 브라우저 등) 화면 스레드에서 학습 (느린 CPU보다 나음)
+let worker = null;
+function trainWorker() {
+  if (!worker) worker = new Promise((ok, no) => {
+    const B = window.DL_BOOT || {};
+    if (typeof Worker === "undefined" || !B.TF) return no(new Error("일꾼 없음"));
+    const static_ = new URL(B.STATIC || "src/dlstudio/static/", location.href).href;
+    const w = new Worker(static_ + "train-worker.js?v=" + Date.now());
+    const runs = new Map();
+    w.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "ready") {
+        if (E().tf.getBackend() !== "cpu" && m.backend === "cpu") { w.terminate(); return no(new Error("일꾼 GPU 없음")); }
+        return ok({ w, runs });
+      }
+      const r = runs.get(m.id);
+      if (!r) return;
+      if (m.type === "epoch") { if (r.onEpoch(m.p)) w.postMessage({ type: "cancel", id: m.id }); }
+      else { runs.delete(m.id); m.type === "done" ? r.ok(m) : r.no(Object.assign(new Error(m.message), { name: m.name })); }
+    };
+    w.onerror = (e) => {                                   // 일꾼이 죽음 (메모리 부족 등): 하던 학습은 오류로, 다음엔 새 일꾼
+      e.preventDefault();
+      const err = new Error(e.message || "학습 일꾼이 멈춤");
+      no(err); runs.forEach((r) => r.no(err)); runs.clear();
+      w.terminate(); worker = null;
+    };
+    w.postMessage({ type: "init", tf: B.TF, engine: static_ + "engine.js?v=" + Date.now() });
+  });
+  return worker;
+}
+async function trainOffMain(plan, d, s, onEpoch, isCancelled) {   // E().train과 같은 결과 {net, result, out, outTr}
+  let W_;
+  try { W_ = await trainWorker(); }
+  catch (e) {                                            // 일꾼을 못 쓰면 지금처럼 화면 스레드에서
+    await E().ensurePretrained(plan, PRETRAINED);
+    return E().train(plan, d, s, onEpoch, isCancelled);
+  }
+  const id = "t" + (++W.n), { w, runs } = W_;
+  const m = await new Promise((ok, no) => {
+    runs.set(id, { ok, no, onEpoch });
+    const poll = setInterval(() => { if (!runs.has(id)) clearInterval(poll); else if (isCancelled && isCancelled()) w.postMessage({ type: "cancel", id }); }, 100);
+    w.postMessage({ type: "train", id, plan, d, s, pretrained: new URL(PRETRAINED, location.href).href });   // 데이터는 복사 (화면 쪽도 계속 씀)
+  });
+  const net = new (E().Net)(plan, s.seed || 0);           // 일꾼이 학습한 가중치를 화면 쪽 모델에 (예측·미리보기·저장은 여기서)
+  try { net.load(m.state); } catch (e) { net.dispose(); throw e; }
+  return { net, result: m.result, out: m.out || undefined, outTr: m.outTr || undefined };
+}
+
 // ------------------------------------------------------------ 학습 (작업처럼: id → 진행 읽기)
 function startTrain(body) {
   const plan = wrapped(W.mod.plan(W.studio, JSON.stringify(body.graph)));
@@ -110,8 +159,8 @@ function startTrain(body) {
   W.running = job;
   const onEpoch = (p) => { job.progress.push(p); job.progress.splice(0, Math.max(0, job.progress.length - 100)); return job.cancelled; };
   const dist = plan.steps.find((st) => st.type === "output" && st.cfg.head === "distance");     // 이상 탐지 '정상과의 거리'
-  E().ensurePretrained(plan, PRETRAINED).then(() => (dist ? E().fitDistance(plan, data, fitDistance(dist), onEpoch)
-    : E().train(plan, data, s, onEpoch, () => job.cancelled))).then(({ net, result, out, outTr }) => {
+  (dist ? E().ensurePretrained(plan, PRETRAINED).then(() => E().fitDistance(plan, data, fitDistance(dist), onEpoch))
+    : trainOffMain(plan, data, s, onEpoch, () => job.cancelled)).then(({ net, result, out, outTr }) => {
     if ((job.cancelled && !job.stopped) || W.data !== data) { net.dispose(); job.state = "cancelled"; return; }   // 다시 시작·데이터 바뀜은 버림
     result.stopped = !!job.stopped;
     if (out) Object.assign(result, wrapped(W.mod.task_result(W.studio, new Uint8Array(out.buffer), new Uint8Array(outTr.buffer))));   // 예측·이상 탐지
@@ -319,7 +368,7 @@ async function deepSuggest(body) {                      // 딥러닝 제안: 정
   const Xp = f32("X_pred");
   p.destroy();
   const epochs = 40;
-  const { net, result } = await E().train(prep.plan, d, { epochs, lr: 0.003, batch_size: 32, seed: 0 },
+  const { net, result } = await trainOffMain(prep.plan, d, { epochs, lr: 0.003, batch_size: 32, seed: 0 },
     (pr) => { if (body.onProgress) body.onProgress(`${prep.model} 학습 중… ${pr.epoch}/${epochs}`); return false; });
   let probs;
   const x = E().toInput(Xp, meta.n_pred, net.kind, d.length, d.image, d.channels);

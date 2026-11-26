@@ -258,6 +258,16 @@ def test_web_storage_and_security():
     assert (root / "privacy.html").exists() and "drive.file" in (root / "privacy.html").read_text(encoding="utf-8")
 
 
+def test_web_training_runs_in_worker():
+    """웹 학습은 학습 일꾼(train-worker.js)에서: 화면 스레드가 버벅이지 않게. TF.js는 일꾼도 내용 해시(SRI)를 확인하고 받음."""
+    web = (STATIC / "web.js").read_text(encoding="utf-8")
+    worker = (STATIC / "train-worker.js").read_text(encoding="utf-8")
+    assert "E().train(" not in web.replace("return E().train(plan, d, s, onEpoch, isCancelled)", "")   # 일꾼을 못 쓸 때만 화면 스레드
+    assert web.count("trainOffMain(") == 3                                         # 정의 + ④ 학습 + 라벨링 딥러닝 제안
+    assert "integrity: tf[1]" in worker and "net.state()" in worker
+    assert "globalThis.DLEngine = API" in (STATIC / "engine.js").read_text(encoding="utf-8")
+
+
 def test_web_label_page_and_python_files():
     """웹 라벨링 페이지: 첫 페이지와 같은 보안 정책, 라벨링 스크립트, 그리고 Pyodide가 받는 파이썬 파일이 패키지와 맞음."""
     root = STATIC.parents[2]

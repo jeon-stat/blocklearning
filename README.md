@@ -136,7 +136,7 @@ python -m pytest                # 화면 그래프 편집기·웹 엔진 시험�
 | `labeling*.py` | 라벨링 작업실 |
 | `core.py` | 상태와 API (HTTP와 상관없음: 로컬 서버와 웹 버전이 함께 씀) |
 | `server.py` · `cli.py` | 로컬 HTTP 서버(표준 라이브러리만)와 실행 명령 |
-| `web.py` · `static/web.js` · `static/engine.js` | 웹 버전: Pyodide 쪽 함수, 화면과 잇는 다리, TF.js 학습 엔진 |
+| `web.py` · `static/web.js` · `static/engine.js` · `static/train-worker.js` | 웹 버전: Pyodide 쪽 함수, 화면과 잇는 다리, TF.js 학습 엔진, 학습 일꾼(화면과 다른 스레드) |
 | `static/store.js` · `static/projects.js` · `static/boot.js` | 웹 버전: 저장소(브라우저·구글 드라이브), 내 프로젝트·자동 저장, 시작 |
 | `static/` | 화면 (외부 라이브러리 없음) |
 

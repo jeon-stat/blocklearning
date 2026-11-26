@@ -1322,5 +1322,5 @@ function thin(v) {
 const API = { Net, train, fitDistance, segMetric, buildLoss, multiMetric, saliency, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
 if (typeof module !== "undefined") module.exports = API;
-if (typeof window !== "undefined") window.DLEngine = API;
+else globalThis.DLEngine = API;                       // 브라우저 화면(window)·학습 일꾼(train-worker.js)
 })();
