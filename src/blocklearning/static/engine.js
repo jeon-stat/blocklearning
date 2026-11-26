@@ -746,9 +746,10 @@ function frozenHead(plan) {
   if (!st || st.inputs.length !== 1 || st.inputs[0] !== "x" || !st.params.length || !st.params.every((p) => p[2] === "frozen")) return null;
   return plan.steps.slice(1).some((s) => s.inputs.includes("x")) ? null : st.name;
 }
-async function headFeatures(net, X, batch = MNV3S_B) {        // 고정 층의 출력 (묶음마다, 화면이 멈추지 않게)
+async function headFeatures(net, X, batch = MNV3S_B, isCancelled = null) {   // 고정 층의 출력 (묶음마다, 화면이 멈추지 않게)
   const st = net.plan.steps[0], N = X.shape[0], parts = [];
   for (let i = 0; i < N; i += batch) {
+    if (isCancelled && isCancelled()) { parts.forEach((t) => t.dispose()); throw stopped(); }   // [멈추기]: 특징을 뽑는 중에도 바로
     const y = tf.tidy(() => layer(st, [X.slice(i, Math.min(batch, N - i))], net.P, false, []));
     await y.data();
     parts.push(y);
@@ -1037,7 +1038,11 @@ async function train(plan, d, s, onEpoch, isCancelled) {
   const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image, d.channels);
   const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image, d.channels);
   const head = frozenHead(plan);                           // 고정한 사전학습 층: 특징을 한 번만 뽑고 뒷부분만 학습
-  const Ftr = head ? await headFeatures(net, Xtr) : Xtr, Fte = head ? await headFeatures(net, Xte) : Xte;
+  let Ftr = Xtr, Fte = Xte;
+  if (head) {
+    try { Ftr = await headFeatures(net, Xtr, MNV3S_B, isCancelled); Fte = await headFeatures(net, Xte, MNV3S_B, isCancelled); }
+    catch (e) { if (Ftr !== Xtr) Ftr.dispose(); [Xtr, Xte].forEach((t) => t.dispose()); net.dispose(); throw e; }
+  }
   const ytr = seg ? tf.tidy(() => tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), seg.n_cls).toFloat().reshape([d.n_train, seg.length, seg.n_cls]))
     : det ? tf.tensor2d(d.y_train, [d.n_train, d.n_out])
     : multi ? tf.tensor2d(Float32Array.from(d.y_train, (v, i) => { const h = multi.heads[i % T]; return h.kind === "value" ? (v - mu[h.start]) / sd[h.start] : v; }), [d.n_train, T])
@@ -1134,8 +1139,9 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     }
     // 마지막 평가: GPU(WebGL) 값을 쓰되, 앞 32개를 CPU로 맞춰 봄. 다르면 (브라우저 GPU가 드물게 틀린 값을 냄) 전체를 CPU로.
     // 사전학습 층이 있으면 뽑아 둔 특징에서 (CPU로 그 큰 층을 다시 돌리지 않게)
-    // [멈추기]로 중간에 멈추면 학습 데이터 채점은 건너뜀 (오래 걸림). 학습 출력이 결과에 꼭 필요한 과제(이상 탐지 기준값 등)는 그대로
-    const te = await checkedPredict(net, Fte, d.n_test), tr = halted && !(ae || fc || seg || multi) ? null : await checkedPredict(net, Ftr, d.n_train);
+    // [멈추기]로 중간에 멈추면 학습 데이터 채점과 CPU로 맞춰 보기는 건너뜀 (무거운 모델은 몇 분 걸림). 학습 출력이 결과에 꼭 필요한 과제(이상 탐지 기준값 등)는 그대로
+    const chk = (n) => (halted ? 0 : n);
+    const te = await checkedPredict(net, Fte, chk(d.n_test)), tr = halted && !(ae || fc || seg || multi) ? null : await checkedPredict(net, Ftr, chk(d.n_train));
     net.start = null;
     const out = te.out, outTr = tr ? tr.out : null;
     const r = { epochs_done: done, test_metric: score(out, "test"),
@@ -1273,6 +1279,7 @@ function detResult(out, gts, det) {
 
 // fn을 CPU 백엔드에서 (이미 CPU거나 CPU가 없으면 그대로). 가중치는 TF.js가 알아서 옮김
 // GPU로 예측하고 앞 몇 개만 CPU로 맞춰 봄 → {out, ok}. 맞지 않으면 전체를 CPU로 다시 (ok false)
+const stopped = () => Object.assign(new Error("멈춤"), { name: "Stopped" });   // 학습을 시작하기 전(특징 뽑기)에 [멈추기]: 남길 모델 없이 '멈춤'
 async function checkedPredict(net, X, n, k = 32) {
   const out = net.predict(X);
   if (!n || tf.getBackend() === "cpu") return { out, ok: true };

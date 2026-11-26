@@ -268,6 +268,13 @@ def test_web_training_runs_in_worker():
     assert "globalThis.DLEngine = API" in (STATIC / "engine.js").read_text(encoding="utf-8")
 
 
+def test_stop_skips_slow_final_checks():
+    """[멈추기] 뒤에는 CPU로 맞춰 보기(무거운 모델은 몇 분)를 건너뛰고, 사전학습 특징을 뽑는 중에도 바로 멈춤."""
+    eng = (STATIC / "engine.js").read_text(encoding="utf-8")
+    assert "const chk = (n) => (halted ? 0 : n);" in eng and "checkedPredict(net, Fte, chk(d.n_test))" in eng
+    assert "headFeatures(net, Xtr, MNV3S_B, isCancelled)" in eng and "throw stopped();" in eng
+
+
 def test_old_name_data_still_opens():
     """이름을 BlockLearning으로 바꿔도 예전(DL studio) 데이터가 그대로: 브라우저 보관함·설정 이름, 드라이브 폴더, .dlstudio 파일."""
     store = (STATIC / "store.js").read_text(encoding="utf-8")
