@@ -114,6 +114,7 @@ function trainWorker() {
         if (E().tf.getBackend() !== "cpu" && m.backend === "cpu") { w.terminate(); return no(new Error("일꾼 GPU 없음")); }
         return ok({ w, runs });
       }
+      if (m.type === "error" && !m.id) { w.terminate(); return no(new Error(m.message)); }   // 준비 실패 (TF.js를 못 받음 등) → 화면 스레드로
       const r = runs.get(m.id);
       if (!r) return;
       if (m.type === "epoch") { if (r.onEpoch(m.p)) w.postMessage({ type: "cancel", id: m.id }); }
