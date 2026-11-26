@@ -41,18 +41,6 @@ blocklearning               # 또는 python -m blocklearning
 NVIDIA GPU로 학습하려면 [pytorch.org](https://pytorch.org/get-started/locally/)에서 고른 GPU용 `pip install torch ...`를 먼저 실행하세요
 (그냥 설치하면 Windows에서는 CPU용 torch가 깔립니다). 소스에서 설치하려면 저장소에서 `pip install -e .`.
 
-이미 설치했는데 학습 화면의 '장치'에 GPU가 없다고 나오면 (실행할 때 명령창에도 안내가 나옵니다), BlockLearning을 끄고 PyTorch만 GPU용으로 바꾸세요.
-GPU용 PyTorch로도 '장치'에서 CPU를 고르면 CPU로 학습합니다.
-
-```
-pip uninstall -y torch
-pip install torch --index-url https://download.pytorch.org/whl/cu126
-python -c "import torch; print(torch.cuda.is_available())"
-```
-
-마지막 줄이 `True`면 됩니다. `False`면 NVIDIA 드라이버를 업데이트하거나 pytorch.org에서 내 PC에 맞는 명령을 고르세요.
-NVIDIA 그래픽카드만 쓸 수 있습니다 (AMD·Intel 내장 그래픽, Mac은 CPU로 학습).
-
 브라우저에 `http://127.0.0.1:8765/?token=…`이 열립니다. `--port 8800`으로 포트를, `--no-browser`로 브라우저 자동 열기를 바꿀 수 있습니다.
 애플리케이션 제어 정책이 실행 파일(`blocklearning.exe`)을 막는 PC에서는 `python -m blocklearning`을 쓰세요.
 학습 화면의 '장치' 칸에 학습에 쓸 GPU 이름(없으면 CPU)이 나옵니다. GPU가 여럿이면 번호마다 쓰이는 메모리가 나와 고를 수 있고, '자동'은 가장 덜 쓰는 GPU를 고릅니다. 데이터는 경로를 넣거나 [파일 고르기]·[폴더 고르기]로 브라우저에서 고릅니다

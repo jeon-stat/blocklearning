@@ -31,16 +31,3 @@ def test_device_names():
         assert _device("auto") is None
     with pytest.raises(ValueError, match="GPU 99번이 없음"):
         _device("cuda:99")
-
-
-def test_cpu_torch_hint_only_when_nvidia_gpu_but_cpu_torch(monkeypatch):
-    import torch
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(devices, "smi_used", lambda text=None: {"6e4a": 1.0})      # nvidia-smi는 GPU를 봄
-    h = devices.cpu_torch_hint()
-    assert "CPU용" in h and "pip uninstall -y torch" in h and "download.pytorch.org/whl/cu" in h
-    monkeypatch.setattr(devices, "smi_used", lambda text=None: {})                # NVIDIA GPU 없음
-    assert devices.cpu_torch_hint() == ""
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)                  # 이미 GPU용
-    monkeypatch.setattr(devices, "smi_used", lambda text=None: {"6e4a": 1.0})
-    assert devices.cpu_torch_hint() == ""
