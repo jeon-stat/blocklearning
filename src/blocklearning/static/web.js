@@ -6,7 +6,7 @@
 "use strict";
 const PY_VERSION = "0.27.7";
 const BASE = "src/blocklearning/";
-const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "graph.py", "jobs.py", "layers.py", "losses.py", "nn_extra.py",
+const PY_FILES = ["__init__.py", "analysis.py", "anomaly.py", "blocks.py", "codegen.py", "core.py", "data.py", "detect.py", "forecast.py", "generate.py", "graph.py", "jobs.py", "layers.py", "losses.py", "nn_extra.py", "optim.py",
   "labeling.py", "labeling_sources.py", "predict.py", "pretrained.py", "project.py", "multi.py", "segment.py", "tasks.py", "web.py", "weblabel.py"];
 const PRETRAINED = BASE + "pretrained/";                 // 사전학습 가중치 (그 블록을 쓸 때만 받음)
 const gotData = new Set();                               // 받아 둔 예시 데이터 파일 (예시를 누를 때만 받음)
@@ -155,6 +155,12 @@ function startTrain(body) {
   if (W.running) W.running.cancelled = true;
   const ls = wrapped(W.mod.loss_setup(W.studio, JSON.stringify(body.settings || {})));    // 조립한 손실 검사 (기본이면 spec 없음)
   const s = Object.assign({ epochs: 30, lr: 1e-3, batch_size: 32, seed: 0 }, body.settings || {}, { loss: ls.spec, class_weights: ls.class_weights });
+  if (body.resume) {                                    // 이어 학습: 지금 모델의 가중치에서 (블록 구성이 같을 때만)
+    const shapes = (p) => JSON.stringify(p.steps.map((st) => st.params || []));
+    if (!W.trained) throw { message: "이어서 학습할 모델이 없음", hint: "먼저 [학습 시작]으로 학습하세요" };
+    if (shapes(W.trained.plan) !== shapes(plan)) throw { message: "지금 모델과 블록 구성이 달라 이어서 학습할 수 없음", hint: "블록을 바꿨다면 [학습 시작]으로 처음부터 학습하세요" };
+    s.init_state = W.trained.net.state();
+  }
   const job = { id: "w" + (++W.n), kind: "train", state: "running", progress: [], result: null, error: null, cancelled: false };
   W.jobs[job.id] = job;
   W.running = job;
@@ -166,9 +172,10 @@ function startTrain(body) {
     result.stopped = !!job.stopped;
     if (out) Object.assign(result, wrapped(W.mod.task_result(W.studio, new Uint8Array(out.buffer), new Uint8Array(outTr.buffer))));   // 예측·이상 탐지
     if (W.trained) W.trained.net.dispose();
-    W.trained = { net, plan, graph: body.graph, settings: body.settings || {}, results: result };
+    const runSettings = Object.assign({}, body.settings || {}, body.resume ? { resume: true } : {});
+    W.trained = { net, plan, graph: body.graph, settings: runSettings, results: result };
     const st = stateForPython(net);
-    try { W.mod.set_trained(W.studio, JSON.stringify(body.graph), JSON.stringify(body.settings || {}), JSON.stringify(result), st); }
+    try { W.mod.set_trained(W.studio, JSON.stringify(body.graph), JSON.stringify(runSettings), JSON.stringify(result), st); }
     finally { st.destroy(); }
     job.result = result;
     job.state = "done";
@@ -197,6 +204,23 @@ function jobView(path) {
   if (!job) throw { message: "작업을 찾을 수 없음" };
   if (path.endsWith("/cancel")) { job.cancelled = job.stopped = true; return { ok: true }; }   // [멈추기]: 거기까지 학습한 것은 남김
   return { id: job.id, kind: job.kind, state: job.state, progress: job.progress.slice(), result: job.result, error: job.error };
+}
+
+// ------------------------------------------------------------ 생성: 정규분포에서 뽑은 잠재 값 → 디코더 (core.api_generate)
+function generateNew(body) {
+  if (!W.trained) throw { message: "학습된 모델이 없음", hint: "④ 학습 단계에서 먼저 학습하세요" };
+  if (getData().task !== "generation") throw { message: "생성 과제로 학습한 모델이 아님", hint: "① 과제에서 '생성'을 고르고 학습하세요" };
+  const lat = W.trained.plan.steps.find((st) => st.type === "vae_latent");
+  if (!lat) throw { message: "모델에 VAE 잠재 공간 블록이 없음", hint: "모델에 'VAE 잠재 공간' 블록을 두세요" };
+  const n = Math.max(1, Math.min(64, Number(body.n) || 16)), seed = Number(body.seed) || 0, scale = body.scale === undefined ? 1 : Number(body.scale);
+  const dim = lat.cfg.dim || 16, z = new Float32Array(n * dim);
+  let s = (seed * 2654435761 + 12345) >>> 0;
+  const u = () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (((t ^ (t >>> 14)) >>> 0) + 1) / 4294967297; };
+  for (let i = 0; i < z.length; i++) z[i] = Math.sqrt(-2 * Math.log(u())) * Math.cos(2 * Math.PI * u()) * scale;
+  let out;
+  try { out = E().tf.tidy(() => W.trained.net.generate(E().tf.tensor2d(z, [n, dim]))).dataSync().slice(); }
+  catch (e) { throw { message: String(e.message || e), hint: "모델에 'VAE 잠재 공간' 블록을 두고, 그 뒤 블록이 앞쪽 블록을 쓰지 않게 하세요" }; }
+  return wrapped(W.mod.gen_view(W.studio, new Uint8Array(out.buffer), n, seed));
 }
 
 // ------------------------------------------------------------ 샘플 따라가기
@@ -482,6 +506,7 @@ async function api(path, body) {
     if (path === "/api/project/open") return await projectOpen(body);
     if (path === "/api/runs/restore") return await runRestore(body);
     if (path === "/api/predict") return await predictNew(body);
+    if (path === "/api/generate") return generateNew(body || {});
     if (path === "/api/preview") return await preview(body);
     if (path === "/api/anomaly/threshold") {                // 이상 탐지 기준값: Python 결과와 엔진 쪽 결과 둘 다
       const r = pyCall(method, path, body);

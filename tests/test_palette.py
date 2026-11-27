@@ -10,6 +10,7 @@ import pytest
 
 from blocklearning.blocks import to_model_input
 from blocklearning.graph import build_graph_model, check_graph
+from blocklearning.layers import tv_unavailable
 
 GRAPH_JS = Path(__file__).resolve().parents[1] / "src" / "blocklearning" / "static" / "graph.js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node 없음")
@@ -73,6 +74,8 @@ def test_every_palette_block_checks_somewhere():
     for pid, cat, node in items:
         if node["type"] in ("add", "concat", "multiply", "average", "maximum", "cross_attn"):
             continue                                           # 입력 둘 이상 (다른 시험에서)
+        if node["type"] == "tv_backbone" and tv_unavailable():
+            continue                                           # torchvision이 없는 환경 (test_tv_backbone에서)
         ok = False
         for kind in ("s", "i", "v"):
             g = _base(kind)

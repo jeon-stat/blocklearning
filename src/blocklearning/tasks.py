@@ -194,6 +194,23 @@ T_AE_TAB = {"id": "ae_tab_dense", "name": "오토인코더",
             "when": "열이 수십 개 이하인 표 데이터",
             "blocks": [_dense(16), P2, _dense(4), P2, _dense(16), P2, OUT]}
 
+# 생성 (VAE): 줄였다가 되살리면서 가운데 잠재 공간을 정규분포에 맞춤 → 정규분포에서 뽑아 디코더로 새 샘플
+LATENT = {"type": "vae_latent", "dim": 16, "beta": 1.0}
+T_VAE_DENSE = {"id": "vae_dense", "name": "VAE (Dense)",
+               "desc": "입력을 Dense 층으로 줄여 잠재 값 16개(정규분포 위의 점)로 요약하고, 거기서 다시 입력 전체를 되살리는 모델. "
+                       "학습 뒤 정규분포에서 뽑은 점을 뒷부분(디코더)에 넣어 새 샘플을 만듦",
+               "when": "처음 시작할 때. 시계열·작은 그림·표 데이터 모두",
+               "blocks": [{"type": "flatten"}, _dense(256), P2, _dense(64), P2, LATENT, _dense(64), P2, _dense(256), P2, OUT]}
+T_VAE_CONV = {"id": "vae_conv", "name": "VAE (Conv)",
+              "desc": "Conv2D로 그림을 4분의 1 크기로 줄여 잠재 값 16개로 요약하고, Reshape로 (16, 8, 8) 그림 모양을 만든 뒤 "
+                      "ConvTranspose2D로 32×32까지 키워 되살리는 모델. 그림의 모양을 더 잘 살림",
+              "when": "그림 데이터 (32×32 안팎)",
+              "blocks": [{"type": "conv2d", "channels": 16, "kernel": 3, "stride": 2}, P2,
+                         {"type": "conv2d", "channels": 32, "kernel": 3, "stride": 2}, P2, {"type": "flatten"}, LATENT,
+                         _dense(1024), P2, {"type": "reshape", "channels": 16, "height": 8},
+                         {"type": "conv_t2d", "channels": 16, "kernel": 2, "stride": 2}, P2,
+                         {"type": "conv_t2d", "channels": 1, "kernel": 2, "stride": 2}, OUT]}
+
 # 구간 분할: 길이를 줄이지 않고 시점마다 상태를 맞힘 (출력 블록이 시점마다 1×1 필터)
 T_SEG_TCN = {"id": "seg_tcn", "name": "TCN (팽창 합성곱)",
              "desc": "칸을 1·2·4·8·16칸씩 건너뛰며 보는 필터를 겹쳐, 길이를 그대로 둔 채 시점마다 앞뒤 약 2초를 보고 상태를 맞힘",
@@ -312,6 +329,20 @@ CATALOG = [
           "example_data": [["pneumatic_seg", "출하 검사 기계 전류 — 시점마다 공정 단계 5묶음 (제조, 100Hz)"],
                            ["pneumatic_seg2", "같은 기계 전류 + 공압 압력 (두 채널) — 시점마다 공정 단계 (제조, 100Hz)"]],
           "templates": [T_SEG_TCN, T_SEG_UNET, T_SEG_GRU]},
+     ]},
+    {"id": "generation", "name": "생성 (새 샘플 만들기)", "icon": "✨",
+     "desc": "데이터를 닮은 새 샘플을 만들어 냅니다 (VAE)",
+     "subtasks": [
+         {"id": "gen_img", "name": "그림 생성", "input": "image", "available": True, "task": "generation",
+          "desc": "그림들을 줄였다가 되살리도록 학습하고, 잠재 공간에서 뽑은 점으로 새 그림을 만듦. 정답은 필요 없음 (그림만 든 폴더도 됨)",
+          "examples_text": "부족한 불량 사진 늘려 보기, 손글씨·부품 그림의 변형 만들기, 데이터가 어떤 모양들로 이뤄졌는지 보기",
+          "example_data": [["digits_gen", "손글씨 숫자 — 새 숫자 그림 만들기 (32×32)"]],
+          "templates": [T_VAE_CONV, T_VAE_DENSE]},
+         {"id": "gen_ts", "name": "시계열 생성", "input": "timeseries", "available": True, "task": "generation",
+          "desc": "신호들을 줄였다가 되살리도록 학습하고, 잠재 공간에서 뽑은 점으로 새 신호를 만듦. 정답 열은 쓰지 않음",
+          "examples_text": "모의 센서 신호 만들기, 정상 신호의 변형 만들기",
+          "example_data": [["ecg_gen", "심전도 박동 — 새 박동 모양 만들기 (의료, 진단용 아님)"]],
+          "templates": [T_VAE_DENSE]},
      ]},
     {"id": "multi", "name": "여러 정답 동시에", "icon": "🧩",
      "desc": "한 입력으로 여러 정답(분류·숫자 섞어서)을 함께 맞힙니다",

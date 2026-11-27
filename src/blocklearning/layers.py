@@ -37,8 +37,14 @@ EXTRA_TYPES = (
     # 입력 변환·증강
     "embedding", "spectrogram", "rand_flip", "rand_rotate", "rand_shift", "rand_zoom", "rand_scale", "rand_stretch",
     # 사전학습 (가중치 고정)
-    "mnv3s",
+    "mnv3s", "tv_backbone",
+    # 생성 (VAE)
+    "vae_latent",
 )
+# torchvision이 ImageNet으로 미리 학습한 그림 모델 (설치형 전용, nn_extra.TorchvisionBackbone): 이름 → 특징 수
+TV_ARCHS = {"resnet18": 512, "resnet50": 2048, "efficientnet_b0": 1280, "convnext_tiny": 768, "mobilenet_v3_large": 960,
+            "vit_b_16": 768}
+TV_TUNES = ("frozen", "last", "all")
 PRETRAINED_TYPES = ("mnv3s",)                               # 가중치를 pretrained/<종류>.bin에서 읽고 학습하지 않음
 # Google MobileNetV3-Small 특징 추출기 (nn_extra.MobileNetV3Small.CFG와 같음): (들어옴, kernel, 넓힘, 나감, SE 채널, HardSwish인지, stride)
 MNV3S_CFG = ((16, 3, 16, 16, 8, 0, 2), (16, 3, 72, 24, 0, 0, 2), (24, 3, 88, 24, 0, 0, 1), (24, 5, 96, 40, 24, 1, 2),
@@ -71,6 +77,8 @@ EXTRA_NAMES = {
     "embedding": "Embedding", "spectrogram": "Spectrogram", "rand_flip": "RandomFlip", "rand_rotate": "RandomRotation",
     "rand_shift": "RandomShift", "rand_zoom": "RandomZoom", "rand_scale": "RandomScale", "rand_stretch": "RandomStretch",
     "multiply": "Multiply", "average": "Average", "maximum": "Maximum", "mnv3s": "MobileNetV3-Small (사전학습)",
+    "tv_backbone": "사전학습 CNN (torchvision)",
+    "vae_latent": "VAE 잠재 공간",
 }
 
 # 정수 설정: (키, 최소, 최대, 기본값, 허용 값, 설명) — blocks.PARAMS와 같은 꼴
@@ -110,6 +118,8 @@ EXTRA_PARAMS = {
                     ("hop", 1, 128, 8, (1, 2, 4, 8, 16, 32, 64, 128), "hop은 1·2·4·…·128"),
                     ("n_mels", 4, 64, 16, (8, 16, 32, 64), "mel 칸 수는 8·16·32·64"),
                     ("n_mfcc", 4, 40, 13, (8, 13, 20, 40), "MFCC 개수는 8·13·20·40")],
+    "vae_latent": [("dim", 1, 256, 16, None, "잠재 차원은 1–256")],
+    "tv_backbone": [("size", 64, 384, 224, (64, 96, 128, 160, 224, 256, 384), "크기는 64·96·128·160·224·256·384")],
     "mnv3s": [("size", 64, 224, 128, (64, 96, 128, 160, 224), "크기는 64·96·128·160·224"),
               ("train_last", 0, 3, 0, (0, 1, 2, 3), "학습할 끝 블록 수는 0–3 (0이면 모두 고정)")],
 }
@@ -122,6 +132,7 @@ FLOAT_PARAMS = {
     "rand_zoom": [("frac", 0.0, 0.5, 0.1, "비율은 0 이상 0.5 미만")],
     "rand_scale": [("frac", 0.0, 0.9, 0.2, "비율은 0 이상 0.9 미만")],
     "rand_stretch": [("frac", 0.0, 0.5, 0.1, "비율은 0 이상 0.5 미만")],
+    "vae_latent": [("beta", 0.0, 10.0, 1.0, "β는 0 이상 10 미만")],
 }
 # 글자·참거짓 설정: 키 → (허용 값, 기본값, 설명)
 STR_PARAMS = {
@@ -132,6 +143,8 @@ STR_PARAMS = {
     "pos_enc": {"mode": (("sin", "learned"), "sin", "mode는 sin 또는 learned")},
     "rand_flip": {"dir": (("h", "v", "hv"), "h", "방향은 h·v·hv")},
     "mnv3s": {"out": (("vector", "map"), "vector", "출력은 vector(특징 1024개) 또는 map(특징 지도)")},
+    "tv_backbone": {"arch": (tuple(TV_ARCHS), "resnet18", "모델은 " + "·".join(TV_ARCHS)),
+                    "tune": (TV_TUNES, "frozen", "학습은 frozen(고정)·last(마지막 단계만)·all(전체)")},
     "spectrogram": {"mode": (("log", "mel", "mfcc"), "log", "mode는 log·mel·mfcc")},
 }
 
@@ -243,6 +256,24 @@ def shape(w, b: dict, shape_in, path, ctx):
             w.issue(path, f"Embedding은 채널이 1개인 값에만 (지금 {C}개)", "Input 바로 뒤에 두세요")
             return None
         return (o("dim"),) + s[1:]
+    if t == "vae_latent":
+        if not _need(w, t, s, (1,), path):
+            return None
+        return (o("dim"),)
+    if t == "tv_backbone":
+        if not _need(w, t, s, (3,), path):
+            return None
+        if C not in (1, 3):
+            w.issue(path, f"사전학습 CNN은 흑백(채널 1)이나 컬러(채널 3) 그림에만 (지금 채널 {C}개)", "Input 바로 뒤에 두세요")
+            return None
+        if o("arch") == "vit_b_16" and o("size") != 224:
+            w.issue(path, "ViT-B/16은 크기 224에서만", "크기를 224로 고르세요")
+            return None
+        why = tv_unavailable()
+        if why:
+            w.issue(path, why[0], why[1])
+            return None
+        return (TV_ARCHS[o("arch")],)
     if t == "mnv3s":
         if not _need(w, t, s, (3,), path):
             return None
@@ -437,7 +468,21 @@ def params(t: str, b: dict, ins, out, k: str, ins2=None) -> list:
         return [(f"{k}.weight", [o("bins"), o("dim")], "weight", "normal1")]
     if t == "mnv3s":
         return mnv3s_params(k, o("train_last"), o("out"))
+    if t == "vae_latent":
+        d = o("dim")
+        return [W("mu.weight", d, C), W("mu.bias", d), W("logvar.weight", d, C), W("logvar.bias", d)]
     return []
+
+
+def tv_unavailable():
+    """사전학습 CNN(torchvision)을 쓸 수 없는 까닭 (쓸 수 있으면 None): 웹 버전이거나 torchvision이 없음."""
+    import importlib.util
+    import sys
+    if sys.platform == "emscripten":
+        return ("사전학습 CNN(torchvision)은 설치형에서만 쓸 수 있음", "웹에서는 MobileNetV3-Small(사전학습)을 쓰세요")
+    if importlib.util.find_spec("torchvision") is None:
+        return ("사전학습 CNN을 쓰려면 torchvision이 필요함", "명령창에서 pip install torchvision 을 실행한 뒤 BlockLearning을 다시 켜세요")
+    return None
 
 
 def mnv3s_params(k: str, train_last: int = 0, out_kind: str = "vector") -> list:
@@ -573,6 +618,10 @@ def torch_args(t: str, b: dict, ins, ins2=None):
         return "RandomScale", {"frac": float(o("frac"))}
     if t == "rand_stretch":
         return "RandomStretch", {"frac": float(o("frac"))}
+    if t == "vae_latent":
+        return "VAELatent", {"c": C, "dim": o("dim"), "beta": float(o("beta"))}
+    if t == "tv_backbone":
+        return "TorchvisionBackbone", {"arch": o("arch"), "size": o("size"), "tune": o("tune")}
     if t == "mnv3s":
         return "MobileNetV3Small", dict({"size": o("size")}, **({"train_last": o("train_last")} if o("train_last") else {}),
                                         **({"out": "map"} if o("out") == "map" else {}))

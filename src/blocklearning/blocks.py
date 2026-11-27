@@ -368,7 +368,7 @@ def check(blocks: list, length: int, n_out: int, image: tuple = None) -> Checked
         kind = "image"
     else:
         kind = "rnn" if isinstance(blocks[0], dict) and blocks[0].get("type") in RNN_TYPES else "cnn"
-    w.walk(blocks, (1,) + tuple(image) if image else (channels_of(length), int(length)), (), "top")
+    w.walk(blocks, (channels_of(length),) + tuple(image) if image else (channels_of(length), int(length)), (), "top")
     for i, b in enumerate(blocks):                          # 증강은 맨 앞(증강끼리)에만
         if isinstance(b, dict) and b.get("type") in X.AUG_TYPES and any(
                 not (isinstance(p, dict) and p.get("type") in X.AUG_TYPES) for p in blocks[:i]):
@@ -400,7 +400,7 @@ def to_model_input(kind: str, X, image: tuple = None, channels: int = 1):
     import numpy as np
     X = np.asarray(X)
     if kind == "image":
-        return X.reshape(len(X), 1, image[0], image[1])
+        return X.reshape(len(X), channels, image[0], image[1])
     x = X.reshape(len(X), channels, -1)
     return x if kind == "cnn" else x.transpose(0, 2, 1)
 
@@ -597,5 +597,5 @@ def build_model(blocks: list, length: int, n_out: int, seed: int = 0, image: tup
             shape = shapes[path]
         return nn.Sequential(*mods), shape
 
-    seq, _ = build(blocks, (1,) + tuple(image) if image else (channels_of(length), int(length)), (), c.shapes)
+    seq, _ = build(blocks, (channels_of(length),) + tuple(image) if image else (channels_of(length), int(length)), (), c.shapes)
     return StudioNet(list(seq), c.kind, paths).float()

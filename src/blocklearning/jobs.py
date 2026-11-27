@@ -13,6 +13,8 @@ import numpy as np
 MAX_PROGRESS = 100
 VAL_FRAC = 0.1             # 가장 좋은 epoch·조기 종료: 학습 몫에서 떼어 쓰는 검증 몫 (시험 몫은 고르는 데 쓰지 않음)
 MIN_VAL_SPLIT = 20         # 학습 샘플이 이보다 적으면 검증 몫을 떼지 않음
+GPU_RESIDENT_BYTES = 1 << 30   # 학습 데이터가 이보다 작으면 GPU에 통째로 (빠름), 크면 CPU에 두고 묶음만 GPU로
+EVAL_BATCH = 512           # 채점할 때 한 번에 모델에 넣는 샘플 수 (큰 시험 데이터도 GPU 메모리에 맞게)
 JOIN_SECONDS = 60          # 같은 종류의 새 작업을 시작할 때 앞 작업이 멈추기를 기다리는 시간
 
 
@@ -111,6 +113,15 @@ class TrainSettings:
     keep_best: bool = False       # 검증 손실이 가장 낮았던 epoch의 모델을 남김
     early_stop: int = 0           # 검증 손실이 이 epoch 수 동안 나아지지 않으면 멈춤 (0이면 안 멈춤)
     loss: Optional[list] = None   # 손실 조립 [{"term", "w", ...}] (없으면 과제의 기본, losses.py)
+    optimizer: str = "adam"       # 학습 방법 (optim.py): adam·adamw·sgd
+    weight_decay: float = 0.0
+    schedule: str = "constant"    # constant·cosine·warmup_cosine
+    grad_clip: float = 0.0        # 기울기 전체 크기 상한 (0이면 안 자름)
+    amp: str = "off"              # auto: NVIDIA GPU면 혼합 정밀도
+
+    def optim(self) -> dict:
+        from blocklearning.optim import DEFAULTS
+        return {k: getattr(self, k) for k in DEFAULTS}
 
     @classmethod
     def from_dict(cls, d: Optional[dict]) -> "TrainSettings":
@@ -133,6 +144,9 @@ def metric(out: np.ndarray, y: np.ndarray, task: str, X: Optional[np.ndarray] = 
     if task == "anomaly":
         from blocklearning.anomaly import metric as ae_metric
         return ae_metric(out, X, y)
+    if task == "generation":
+        from blocklearning.generate import metric as gen_metric
+        return gen_metric(out, X)
     if task == "segmentation":
         from blocklearning.segment import metric as seg_metric
         return seg_metric(out, y, np.asarray(out).reshape(len(y), -1).shape[1] // np.asarray(y).shape[1])
@@ -178,6 +192,17 @@ def _device(name: str):
     return name
 
 
+def predict_np(net, X, dev=None, batch: int = EVAL_BATCH) -> np.ndarray:
+    """모델 출력 (numpy float64): 묶음으로 나눠 dev에서 계산. X는 numpy나 CPU 텐서."""
+    import torch
+    out = []
+    with torch.no_grad():
+        for i in range(0, len(X), batch):
+            xb = torch.as_tensor(np.asarray(X[i:i + batch]) if not torch.is_tensor(X) else X[i:i + batch], dtype=torch.float32)
+            out.append(net(xb.to(dev or "cpu")).double().cpu().numpy())
+    return np.concatenate(out) if out else np.zeros((0,))
+
+
 def _fold_target_scale(net, mu, sd) -> None:
     """정규화한 정답으로 학습한 출력층에 되돌림(× sd + mu, 출력마다)을 접어 넣음: 모델이 원래 단위로 냄."""
     import torch
@@ -190,6 +215,18 @@ def _fold_target_scale(net, mu, sd) -> None:
         lin.bias.mul_(sd_t).add_(mu_t)
 
 
+def _unfold_target_scale(net, mu, sd) -> None:
+    """_fold_target_scale의 반대: 원래 단위로 내던 출력층을 정규화한 단위로."""
+    import torch
+    from blocklearning.graph import output_linear
+    lin = output_linear(net)
+    mu_t = torch.as_tensor(np.asarray(mu, dtype=np.float64).reshape(-1), dtype=lin.weight.dtype)
+    sd_t = torch.as_tensor(np.asarray(sd, dtype=np.float64).reshape(-1), dtype=lin.weight.dtype)
+    with torch.no_grad():
+        lin.bias.sub_(mu_t).div_(sd_t)
+        lin.weight.div_(sd_t[:, None])
+
+
 def target_scale(Y: np.ndarray) -> tuple:
     """맞힐 값 (샘플, 출력 수)의 출력마다 평균·표준편차 (표준편차 0이면 1)."""
     Y = np.asarray(Y, dtype=np.float64).reshape(len(Y), -1)
@@ -199,8 +236,8 @@ def target_scale(Y: np.ndarray) -> tuple:
 
 def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None,
         det=None, keep_best: bool = False, early_stop: int = 0, val_score=None, loss_spec=None, n_cls: int = 0,
-        class_w=None, should_stop=None):
-    """평범한 torch 학습: Adam, 분류는 교차 엔트로피, 회귀는 MSE, 탐지는 YOLO식 손실 (det: DetOut). 반복마다
+        class_w=None, should_stop=None, optim=None):
+    """평범한 torch 학습: optim(옵티마이저·학습률 스케줄·weight decay·기울기 자르기·혼합 정밀도, 기본 Adam), 분류는 교차 엔트로피, 회귀는 MSE, 탐지는 YOLO식 손실 (det: DetOut). 반복마다
     callback({"epoch", "loss", "val_loss", "best_epoch", "model"}), True를 돌려주면 멈춤. 돌려주는 모델은 CPU.
     keep_best·early_stop: 학습 몫의 VAL_FRAC를 검증 몫으로 떼어 epoch마다 검증 손실을 재고, 가장 낮았던 epoch의 모델을
     남기거나(keep_best) early_stop epoch 동안 나아지지 않으면 멈춤. 결과는 net.fit_info {best_epoch, early_stopped, n_val}.
@@ -211,23 +248,25 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
     torch.manual_seed(seed)
     dev = torch.device(device) if device else torch.device("cpu")
     net = net.to(dev)
-    Xt = torch.as_tensor(np.asarray(X), dtype=torch.float32, device=dev)
+    X = np.asarray(X)
+    home = dev if dev.type == "cpu" or X.size * 4 <= GPU_RESIDENT_BYTES else torch.device("cpu")   # 크면 CPU에 두고 묶음만 GPU로
+    Xt = torch.as_tensor(X, dtype=torch.float32, device=home)
     if task == "detection":
         from blocklearning.detect import torch_loss
-        yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev)
+        yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=home)
         loss_fn = lambda out, t: torch_loss(out, t, det.grid, det.per_cell)
     elif task == "segmentation":                           # 시점마다 교차 엔트로피 (det = SegOut: 상태 수)
         from blocklearning.segment import torch_loss as seg_loss
-        yt = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev)
+        yt = torch.as_tensor(np.asarray(y), dtype=torch.long, device=home)
         loss_fn = lambda out, t: seg_loss(out, t, det.n_cls)
     elif task == "multi":                                  # 정답 여러 개 (det = MultiOut: 머리 목록)
         from blocklearning.multi import torch_loss as multi_loss
-        yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(len(Xt), -1)
+        yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=home).reshape(len(Xt), -1)
         loss_fn = lambda out, t: multi_loss(out, t, det.heads)
     elif task == "classification":
-        yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.long, device=dev), nn.CrossEntropyLoss()
+        yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.long, device=home), nn.CrossEntropyLoss()
     else:
-        yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=dev).reshape(len(Xt), -1), nn.MSELoss()
+        yt, loss_fn = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=home).reshape(len(Xt), -1), nn.MSELoss()
     parts_fn = None
     if loss_spec is not None:                                # 조립한 손실: 전체 = Σ 가중치 × 항
         from blocklearning import losses
@@ -238,34 +277,62 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         loss_fn = lambda out, t: parts_fn(out, t, net)[0]
         if any(t["term"] == "act_l1" for t in loss_spec):
             net.capture = {}
-    opt = torch.optim.Adam(net.parameters(), lr=lr)
+    from blocklearning import optim as O
+    oc = O.normalize(optim)
+    opt = O.make_optimizer(net.parameters(), oc, lr)
+    trainable = [p for p in net.parameters() if p.requires_grad]
+    amp = O.amp_dtype(oc, dev)
+    scaler = torch.amp.GradScaler("cuda") if amp == torch.float16 else None
     Xv = yv = None
     if (keep_best or early_stop) and len(Xt) >= MIN_VAL_SPLIT:
-        perm = torch.randperm(len(Xt), generator=torch.Generator().manual_seed(seed + 1)).to(dev)
+        perm = torch.randperm(len(Xt), generator=torch.Generator().manual_seed(seed + 1)).to(home)
         nv = max(2, int(round(len(Xt) * VAL_FRAC)))
         Xv, yv, Xt, yt = Xt[perm[:nv]], yt[perm[:nv]], Xt[perm[nv:]], yt[perm[nv:]]
         val_idx = perm[:nv].cpu().numpy()
     n = len(Xt)
     best, best_ep, since, best_state, early = float("inf"), None, 0, None, False
     halted = False
+    bs = max(1, batch_size)
+    step, total = 0, epochs * -(-n // bs)                    # 학습률 스케줄: 묶음마다
     for epoch in range(1, epochs + 1):
         net.train()
         losses, terms = [], {}
-        for idx in torch.randperm(n, device=dev).split(max(1, batch_size)):
+        for idx in torch.randperm(n, device=dev).split(bs):
             if should_stop is not None and should_stop():  # 묶음마다 확인: [멈추기]를 누르면 바로 (그 epoch는 기록하지 않음)
                 halted = True
                 break
+            step += 1
             if len(idx) == 1 and n > 1:                    # BatchNorm은 학습 때 샘플 하나짜리 묶음을 못 받음
                 continue
+            if oc["schedule"] != "constant":
+                for g in opt.param_groups:
+                    g["lr"] = O.lr_at(step - 1, total, lr, oc["schedule"])
             opt.zero_grad()
-            if parts_fn is not None:
-                loss, parts = parts_fn(net(Xt[idx]), yt[idx], net)
-                for k, v in parts.items():
-                    terms[k] = terms.get(k, 0.0) + float(v.detach())
+            ix = idx.to(home)
+            xb, yb = Xt[ix].to(dev, non_blocking=True), yt[ix].to(dev, non_blocking=True)
+            with torch.autocast("cuda", dtype=amp, enabled=amp is not None):
+                if parts_fn is not None:
+                    loss, parts = parts_fn(net(xb), yb, net)
+                    for k, v in parts.items():
+                        terms[k] = terms.get(k, 0.0) + float(v.detach())
+                else:
+                    loss = loss_fn(net(xb), yb)
+                if task == "generation" and hasattr(net, "vae_kl"):   # VAE: β·KL ÷ 출력 수 (복원 MSE와 같은 눈금)
+                    kl = net.vae_kl()
+                    if kl is not None:
+                        loss = loss + kl / yb.shape[1]
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.unscale_(opt)
             else:
-                loss = loss_fn(net(Xt[idx]), yt[idx])
-            loss.backward()
-            opt.step()
+                loss.backward()
+            if oc["grad_clip"]:
+                torch.nn.utils.clip_grad_norm_(trainable, oc["grad_clip"])
+            if scaler is not None:
+                scaler.step(opt)
+                scaler.update()
+            else:
+                opt.step()
             losses.append(float(loss.detach()))
         if halted:
             break
@@ -277,9 +344,9 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
             with torch.no_grad():                            # 묶음마다 출력 → 바로 손실 (블록 출력 L1이 그 묶음의 값을 씀)
                 outs, tot = [], 0.0
                 for i in range(0, len(Xv), 256):
-                    o = net(Xv[i:i + 256])
+                    o = net(Xv[i:i + 256].to(dev))
                     outs.append(o)
-                    tot += float(loss_fn(o, yv[i:i + 256])) * len(o)
+                    tot += float(loss_fn(o, yv[i:i + 256].to(dev))) * len(o)
             val_loss = tot / len(Xv)
             key = val_loss if val_score is None else -val_score(torch.cat(outs).double().cpu().numpy(), val_idx)
             if key < best:
@@ -333,8 +400,9 @@ def _fit_result(net) -> dict:
     return {"best_epoch": fi.get("best_epoch"), "early_stopped": bool(fi.get("early_stopped")), "n_val": fi.get("n_val", 0)}
 
 
-def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
-    """그래프 → 모델 → 처음부터 학습 → 시험 지표 (분류: 정확도·혼동 행렬, 회귀: R²·MAE·산점도)."""
+def train_job(job: Job, graph: dict, data, settings: TrainSettings, init_state: Optional[dict] = None) -> dict:
+    """그래프 → 모델 → 학습 → 시험 지표 (분류: 정확도·혼동 행렬, 회귀: R²·MAE·산점도).
+    init_state: 이어 학습할 가중치 (같은 그래프·같은 데이터로 학습한 모델의 state_dict). 없으면 처음부터."""
     import torch
     from blocklearning.blocks import to_model_input
     from blocklearning.graph import build_graph_model
@@ -343,11 +411,13 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     model = build_graph_model(graph, data.length, data.n_out, seed=settings.seed, image=img)
     kind = model.kind
     C = getattr(data.length, "channels", 1)
-    Xtr, Xte = to_model_input(kind, data.X_train, image=img, channels=C), to_model_input(kind, data.X_test, image=img, channels=C)
+    Xtr, Xte = (to_model_input(kind, X, image=img, channels=C).astype(np.float32, copy=False) for X in (data.X_train, data.X_test))
+    if init_state is not None:
+        model.load_state_dict(init_state)
     dev = _device(settings.device)
     if dev and dev.startswith("cuda:"):
         torch.cuda.set_device(dev)             # 이 학습 스레드의 기본 GPU도 고른 GPU로 (0번 GPU에 메모리를 잡지 않게)
-    Xte_t = torch.as_tensor(Xte, dtype=torch.float32, device=dev)
+    Xte_t = Xte
     done = []
     if data.task == "detection":
         return _train_det(job, model, Xtr, Xte, Xte_t, data, settings, dev)
@@ -356,7 +426,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     Xfit, head = Xtr, model.frozen_head()
     if head is not None:                                 # 고정한 사전학습 블록: 특징을 한 번만 뽑고 뒷부분만 학습
         Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
-        Xte_t = torch.as_tensor(Fte, dtype=torch.float32, device=dev)
+        Xte_t = Fte
         model.start = head
     reg = data.task not in ("classification", "segmentation", "multi")   # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
     Y = np.asarray(data.target_train, dtype=np.float64).reshape(len(data.X_train), -1)
@@ -366,12 +436,13 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
     if heads:                                              # 정답 여러 개: 값 정답만 정규화 (출력 칸마다 되돌림)
         from blocklearning import multi
         mu, sd, y_fit = multi.target_scale(data.y_train, heads)
+    if init_state is not None and (reg or heads):            # 이어 학습: 출력층에 접어 넣었던 되돌림을 풀고 정규화한 단위로
+        _unfold_target_scale(model, mu, sd)
 
     def cb(info):
         net = info["model"]
         net.eval()
-        with torch.no_grad():
-            out = net(Xte_t).detach().double().cpu().numpy() * sd + mu
+        out = predict_np(net, Xte_t, dev) * sd + mu
         done.append(info["epoch"])
         job.report(_progress(info, metric(out, data.y_test, data.task, data.X_test, heads)))
         return job.cancelled
@@ -382,19 +453,16 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings) -> dict:
             net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
                       device=dev, callback=cb, det=data.n_out if data.task in ("segmentation", "multi") else None,
                       keep_best=settings.keep_best, early_stop=settings.early_stop, should_stop=lambda: job.cancelled,
-                      **loss_args(data, settings))
+                      optim=settings.optim(), **loss_args(data, settings))
         finally:
             model.start = None
     if reg or heads:
         _fold_target_scale(net, mu, sd)
-    with torch.no_grad():
-        out = net(torch.as_tensor(Xte, dtype=torch.float32)).double().numpy()
+    out = predict_np(net, Xte)
     result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task, data.X_test, heads),
               "metric_name": metric_name(data), "warnings": [], "confusion": None, "recall": None, **_fit_result(net)}
-    with torch.no_grad():                                   # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
-        Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
-        out_tr = np.concatenate([net(Xtr_t[i:i + 1024]).double().numpy() for i in range(0, len(Xtr_t), 1024)])
-    if data.task in ("forecast", "anomaly", "segmentation", "multi"):
+    out_tr = predict_np(net, Xtr)                           # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+    if data.task in ("forecast", "anomaly", "segmentation", "multi", "generation"):
         return dict(result, **task_result(data, out, out_tr))
     result["train_metric"] = metric(out_tr, data.y_train, data.task)
     if data.task == "classification":
@@ -454,6 +522,8 @@ def metric_name(data) -> str:
         return ae_name(data)
     if data.task == "multi":
         return "mean"
+    if data.task == "generation":
+        return "recon"
     return "accuracy" if data.task in ("classification", "segmentation") else "r2"
 
 
@@ -468,6 +538,9 @@ def task_result(data, out: np.ndarray, out_tr: np.ndarray) -> dict:
     if data.task == "forecast":
         from blocklearning import forecast
         return dict(forecast.result(out, data), train_metric=forecast.metric(out_tr, data.y_train))
+    if data.task == "generation":
+        from blocklearning import generate
+        return generate.result(out, out_tr, data)
     from blocklearning import anomaly
     r = anomaly.result(out, out_tr, data)
     tr = anomaly.scores(out_tr, data.X_train)
@@ -483,14 +556,13 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
     Xfit, head = Xtr, model.frozen_head()
     if head is not None:                                 # 고정한 사전학습 블록: 특징 지도를 한 번만 뽑고 뒷부분만 학습
         Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
-        Xte_t = torch.as_tensor(Fte, dtype=torch.float32, device=dev)
+        Xte_t = Fte
         model.start = head
 
     def cb(info):
         net = info["model"]
         net.eval()
-        with torch.no_grad():
-            out = net(Xte_t).detach().double().cpu().numpy()
+        out = predict_np(net, Xte_t, dev)
         done.append(info["epoch"])
         job.report(_progress(info, detect.metric(out, data.det["test"], G, K)))
         return job.cancelled
@@ -501,13 +573,11 @@ def _train_det(job: Job, model, Xtr, Xte, Xte_t, data, settings: TrainSettings, 
             net = fit(model, Xfit, data.y_train, "detection", settings.epochs, settings.lr, settings.batch_size,
                       seed=settings.seed, device=dev, callback=cb, det=det, keep_best=settings.keep_best,
                       early_stop=settings.early_stop, **loss_args(data, settings), should_stop=lambda: job.cancelled,
+                      optim=settings.optim(),
                       val_score=lambda o, idx: detect.metric(o, [data.det["train"][i] for i in idx], G, K))
         finally:
             model.start = None
-    with torch.no_grad():
-        out = net(torch.as_tensor(Xte, dtype=torch.float32)).double().numpy()
-        Xtr_t = torch.as_tensor(Xtr, dtype=torch.float32)
-        out_tr = np.concatenate([net(Xtr_t[i:i + 512]).double().numpy() for i in range(0, len(Xtr_t), 512)])
+    out, out_tr = predict_np(net, Xte), predict_np(net, Xtr)
     r = detect.result(out, data.det["test"], G, K)
     return dict(r, model=net, epochs_done=len(done), metric_name="map50", warnings=[], confusion=None, recall=None, **_fit_result(net),
                 train_metric=detect.metric(out_tr, data.det["train"], G, K))

@@ -18,7 +18,8 @@ from blocklearning.graph import build_graph_model
 from tests.test_codegen import CASES
 
 JS = Path(__file__).parent / "js"
-pytestmark = pytest.mark.skipif(shutil.which("node") is None or not (JS / "node_modules" / "@tensorflow" / "tfjs").exists(),
+HAS_NODE = shutil.which("node") is not None and (JS / "node_modules" / "@tensorflow" / "tfjs").exists()
+pytestmark = pytest.mark.skipif(not HAS_NODE,
                                 reason="node 또는 tests/js/node_modules 없음")
 
 
@@ -34,7 +35,7 @@ def _fixture(case, seed=1):
                 m.weight.uniform_(0.5, 1.5)
                 m.bias.uniform_(-0.3, 0.3)
     C = getattr(L, "channels", 1)
-    X = np.random.default_rng(seed).normal(size=(4, image[0] * image[1] if image else int(L) * C))
+    X = np.random.default_rng(seed).normal(size=(4, (image[0] * image[1] if image else int(L)) * C))
     x = torch.as_tensor(to_model_input(net.kind, X, image=image, channels=C), dtype=torch.float32)
     net.eval()
     with torch.no_grad():

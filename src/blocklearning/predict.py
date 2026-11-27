@@ -15,7 +15,7 @@ import csv
 
 import numpy as np
 
-from blocklearning.data import (IMAGE_EXTS, MAX_ISSUES, DataError, Issue, _num, _read_rows, image_files,
+from blocklearning.data import (IMAGE_EXTS, MAX_ISSUES, DataError, Issue, _num, _pixels01, _read_rows, image_files,
                            read_series_folder)
 
 MAX_ROWS = 20000           # 한 번에 예측하는 샘플 수 상한
@@ -145,6 +145,7 @@ def _read_images(d, folder: str) -> tuple:
     if not d.image:
         raise _err("이 모델은 그림으로 학습하지 않았음", "학습 때와 같은 모양의 CSV로 예측하세요")
     H, W = d.image
+    color = getattr(d.length, "channels", 1) == 3
     try:
         from PIL import Image
     except ImportError:
@@ -157,6 +158,11 @@ def _read_images(d, folder: str) -> tuple:
     for name, f, sub in files:
         try:
             with Image.open(f) as im:
+                if color:                                  # 컬러로 학습한 모델: 학습 때와 같은 RGB (채널이 먼저)
+                    X.append(_pixels01(im, H, Image, True))
+                    names.append(name)
+                    labels.append(sub)
+                    continue
                 if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
                     rgba = im.convert("RGBA")
                     im = Image.alpha_composite(Image.new("RGBA", rgba.size, (255, 255, 255, 255)), rgba)
@@ -330,6 +336,8 @@ def new_data_kinds(d) -> list:
     """이 모델에 넣을 수 있는 새 데이터 종류 (화면이 단추를 고름): series(시계열 폴더) · folder(그림 폴더) · csv · rows(직접)."""
     if d.task == "detection":
         return ["example", "folder"] if (d.source or {}).get("example") else ["folder"]
+    if d.task == "generation":                              # 생성은 새 데이터를 넣지 않음 (④ 결과에서 새 샘플을 만듦)
+        return []
     ex = ["example"] if (d.source or {}).get("example") else []   # 예시 데이터: 학습·시험에 쓰지 않은 10개
     if d.task == "forecast":
         return ex + ["csv"]

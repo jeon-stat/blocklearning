@@ -67,7 +67,7 @@ PREFIX = {"conv": "conv", "conv2d": "conv", "pool": "pool", "pool2d": "pool", "g
           "reshape": "reshape", "permute": "transpose", "to_seq": "seq", "crop": "crop", "pad": "pad", "embedding": "emb",
           "spectrogram": "spec", "rand_flip": "flip", "rand_rotate": "rotate", "rand_shift": "shift", "rand_zoom": "zoom",
           "rand_scale": "scale", "rand_stretch": "stretch", "multiply": "mul", "average": "avg", "maximum": "max",
-          "mnv3s": "mnv3"}
+          "mnv3s": "mnv3", "tv_backbone": "backbone"}
 
 
 def _pretty(t: str, cfg: dict, counts: dict) -> str:
@@ -86,7 +86,7 @@ def make_plan(graph: dict, length: int, n_out: int, image: tuple = None) -> Plan
         raise ValueError(checked.issues[0].message)
     c = _Checker(length, n_out, image)
     sc = c.scope(c.form(graph), INPUT)
-    start = (1,) + tuple(image) if image else (channels_of(length), int(length))
+    start = (channels_of(length),) + tuple(image) if image else (channels_of(length), int(length))
     plan = Plan(kind=checked.kind, in_shape=start, n_out=n_out)
     used: set = set()
     counts: dict = {}
@@ -159,8 +159,8 @@ def _io_doc(plan: Plan, data_info: Optional[dict], channels_last: bool) -> list:
     """파일 머리 설명: 입력·출력 모양과 데이터 준비."""
     L = plan.in_shape
     if plan.kind == "image":
-        shape = f"(샘플 수, {L[1]}, {L[2]}, 1)" if channels_last else f"(샘플 수, 1, {L[1]}, {L[2]})"
-        what = "흑백 그림 (높이 × 너비)"
+        shape = f"(샘플 수, {L[1]}, {L[2]}, {L[0]})" if channels_last else f"(샘플 수, {L[0]}, {L[1]}, {L[2]})"
+        what = "컬러 그림 (RGB, 높이 × 너비)" if L[0] == 3 else "흑백 그림 (높이 × 너비)"
     elif plan.kind == "rnn":
         shape, what = f"(샘플 수, {L[1]}, {L[0]})", ("시점마다 값 하나" if L[0] == 1 else f"시점마다 채널 {L[0]}개의 값") + " (순환 층은 시점이 먼저)"
     elif L[0] > 1:
@@ -348,6 +348,49 @@ def _key_map(plan: Plan) -> list:
     return out
 
 
+def _optim_mod():
+    from blocklearning import optim
+    return optim
+
+
+def _optim(tr: dict) -> dict:
+    """학습 설정 → 학습 방법 (맞지 않는 값이면 기본)."""
+    try:
+        return _optim_mod().normalize(tr)
+    except ValueError:
+        return dict(_optim_mod().DEFAULTS)
+
+
+def _optim_doc(oc: dict) -> str:
+    return _optim_mod().describe(oc) + "으로 학습."
+
+
+def _lr_at_code(oc: dict) -> list:
+    """학습률 스케줄 함수 (고정이면 없음)."""
+    if oc["schedule"] == "constant":
+        return []
+    O = _optim_mod()
+    body = ["def lr_at(step, total, lr):", '    """묶음 번호 step에서의 학습률 (BlockLearning과 같은 스케줄)."""']
+    if oc["schedule"] == "warmup_cosine":
+        body += [f"    warm = max(1, math.floor(total * {O.WARMUP} + 0.5))", "    if step < warm:", "        return lr * (step + 1) / warm",
+                 "    t = (step - warm) / max(1, total - warm)"]
+    else:
+        body += ["    t = step / total"]
+    return body + ["    return lr * 0.5 * (1 + math.cos(math.pi * min(1.0, t)))", "", ""]
+
+
+def _train_loop(oc: dict, loss_expr: str) -> list:
+    sched = oc["schedule"] != "constant"
+    out = (["    step, total = 0, epochs * -(-len(X) // batch_size)"] if sched else []) + [
+        "    for epoch in range(epochs):", "        model.train()", "        for idx in torch.randperm(len(X)).split(batch_size):"]
+    if sched:
+        out += ["            for g in opt.param_groups:", "                g[\"lr\"] = lr_at(step, total, lr)", "            step += 1"]
+    out += ["            opt.zero_grad()", f"            loss = {loss_expr}", "            loss.backward()"]
+    if oc["grad_clip"]:
+        out += [f"            torch.nn.utils.clip_grad_norm_(model.parameters(), {oc['grad_clip']!r})"]
+    return out + ["            opt.step()", '        print(f"epoch {epoch + 1}: loss {loss.item():.4f}")']
+
+
 def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_info: Optional[dict] = None,
                train: Optional[dict] = None, weights_file: Optional[str] = None) -> str:
     """PyTorch 코드 (모델 클래스 StudioModel + 학습 함수 + 실행 예). weights_file: 함께 저장한 가중치 파일 이름."""
@@ -376,13 +419,26 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
         lines.insert(lines.index("import torch"), "import math")
         for src in _class_sources(used):
             lines += ["", ""] + src.split("\n")
+    if _optim(tr)["schedule"] != "constant" and "import math" not in lines:
+        lines.insert(lines.index("import torch"), "import math")
     lines += ["", "", "class StudioModel(nn.Module):", "    def __init__(self):", "        super().__init__()"]
     lines += init or ["        pass"]
     first = ["        x = x.transpose(1, 2)            # 순환 모델: (샘플 수, 길이, 1) → 층들이 쓰는 (샘플 수, 1, 길이)"] if plan.kind == "rnn" else []
     act_nodes = sorted({t["node"] for t in (tr.get("loss") or []) if t["term"] == "act_l1"})
     names = dict({s.node: s.name for s in plan.steps}, **plan.aliases)
     keep = [f"        self.acts = {{{', '.join(f'{k!r}: {names[k]}' for k in act_nodes if k in names)}}}   # 손실 '블록 출력 L1'이 씀"] if act_nodes else []
-    lines += ["", "    def forward(self, x):"] + first + fwd_lines + keep + [f"        return {plan.out}", "", ""]
+    lines += ["", "    def forward(self, x):"] + first + fwd_lines + keep + [f"        return {plan.out}"]
+    lat = next((s for s in plan.steps if s.type == "vae_latent"), None)
+    if lat is not None:                                        # 생성 (VAE): 잠재 값 z → 디코더만 (GraphNet.generate)
+        have, dec = {lat.name}, []
+        for s, line in zip(plan.steps, fwd_lines):
+            if s is not lat and all(i in have for i in s.inputs):
+                dec.append(line)
+                have.add(s.name)
+        if plan.out in have:
+            lines += ["", "    def decode(self, z):", f'        """잠재 값 z (샘플 수, {lat.cfg.get("dim", 16)}) → 새 샘플 (VAE 잠재 공간 뒤만)."""',
+                      f"        {lat.name} = z"] + dec + [f"        return {plan.out}"]
+    lines += ["", ""]
     head = next((s.cfg for s in plan.steps if s.type == "output" and s.cfg.get("head") == "grid"), None)
     if head:
         return "\n".join(lines + _torch_det(head, tr, weights_file, plan))
@@ -393,30 +449,31 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
                                   tr.get("class_weights"), (data_info or {}).get("heads"))
     if seq:                                                    # 구간 분할: 시점마다 교차 엔트로피
         loss, ytype = f"lambda out, t: F.cross_entropy(out.reshape(len(t), {seq['n_cls']}, -1), t)", "torch.long"
-    elif task in ("regression", "forecast", "anomaly", "multi"):   # 이상 탐지는 y = X (입력을 되살림)
+    elif task in ("regression", "forecast", "anomaly", "multi", "generation"):   # 이상 탐지·생성은 y = X (입력을 되살림)
         loss, ytype = "nn.MSELoss()", "torch.float32"
     else:
         loss, ytype = "nn.CrossEntropyLoss()", "torch.long"
-    lines += [
+    oc = _optim(tr)
+    lines += _lr_at_code(oc) + [
         f"def train(model, X, y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
-        f'    """X: 위 입력 모양의 배열, y: {_y_doc(task)}. Adam으로 학습."""',
+        f'    """X: 위 입력 모양의 배열, y: {_y_doc(task)}. {_optim_doc(oc)}"""',
         "    X = torch.as_tensor(X, dtype=torch.float32)",
-        f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(len(X), -1)" if task in ("regression", "forecast", "anomaly", "multi") else ""),
-        f"    opt, loss_fn = torch.optim.Adam(model.parameters(), lr=lr), {'lambda out, t: studio_loss(out, t, model)' if custom else loss}",
-        "    for epoch in range(epochs):",
-        "        model.train()",
-        "        for idx in torch.randperm(len(X)).split(batch_size):",
-        "            opt.zero_grad()",
-        "            loss = loss_fn(model(X[idx]), y[idx])",
-        "            loss.backward()",
-        "            opt.step()",
-        f"        print(f\"epoch {{epoch + 1}}: loss {{loss.item():.4f}}\")",
+        f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(len(X), -1)" if task in ("regression", "forecast", "anomaly", "multi", "generation") else ""),
+        *_optim_mod().code_lines(oc),
+        f"    loss_fn = {'lambda out, t: studio_loss(out, t, model)' if custom else loss}",
+        *_train_loop(oc, "loss_fn(model(X[idx]), y[idx])" + (" + vae_kl(model) / y.shape[1]" if lat is not None else "")),
         "    return model.eval()",
         "", "",
     ]
+    if lat is not None:
+        lines += ["def vae_kl(model):", '    """학습 중 VAE 잠재 공간 블록들의 β·KL (손실에 출력 수로 나눠 더함)."""',
+                  "    return sum(m.beta * m.kl for m in model.modules() if isinstance(m, VAELatent) and m.kl is not None)", "", "",
+                  "def generate(model, n=16):", '    """정규분포에서 뽑은 잠재 값 n개 → 새 샘플 (학습할 때와 같은 정규화한 값)."""', "    model.eval()",
+                  "    with torch.no_grad():", f"        return model.decode(torch.randn(n, {lat.cfg.get('dim', 16)}))", "", ""]
     if weights_file:
         if plan.kind == "image":
-            shape, n_feat = f"-1, 1, {plan.in_shape[1]}, {plan.in_shape[2]}", plan.in_shape[1] * plan.in_shape[2]
+            C_, H_, W_ = plan.in_shape
+            shape, n_feat = f"-1, {C_}, {H_}, {W_}", C_ * H_ * W_
         elif plan.kind == "rnn":
             shape, n_feat = f"-1, {plan.in_shape[1]}, 1", plan.in_shape[1]
         else:
@@ -460,6 +517,7 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
 
 def _y_doc(task: str) -> str:
     return {"regression": "정답 값", "forecast": "다음 값들 (샘플, 예측 길이)", "anomaly": "X를 펼친 것 (샘플, 값 수) — 정상만 넣으세요",
+            "generation": "X를 펼친 것 (샘플, 값 수) — 입력을 되살리도록 학습",
             "multi": "정답 표 (샘플, 정답 수): 분류 정답은 클래스 번호, 값 정답은 숫자",
             "segmentation": "시점마다 상태 번호 (샘플, 길이)"}.get(task, "정답 클래스 번호")
 
@@ -577,18 +635,12 @@ def _torch_det(head: dict, tr: dict, weights_file: Optional[str], plan: Plan) ->
         "    union = a[2] * a[3] + b[2] * b[3] - inter",
         "    return inter / union if union > 0 else 0.0",
         "", "",
+        *_lr_at_code(_optim(tr)),
         f"def train(model, X, Y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
-        '    """X: 위 입력 모양의 그림, Y: 그림마다 목표값 (샘플 수, %d). Adam으로 학습."""' % (G * G * A),
+        '    """X: 위 입력 모양의 그림, Y: 그림마다 목표값 (샘플 수, %d). %s"""' % (G * G * A, _optim_doc(_optim(tr))),
         "    X, Y = torch.as_tensor(X, dtype=torch.float32), torch.as_tensor(Y, dtype=torch.float32)",
-        "    opt = torch.optim.Adam(model.parameters(), lr=lr)",
-        "    for epoch in range(epochs):",
-        "        model.train()",
-        "        for idx in torch.randperm(len(X)).split(batch_size):",
-        "            opt.zero_grad()",
-        "            loss = det_loss(model(X[idx]), Y[idx])",
-        "            loss.backward()",
-        "            opt.step()",
-        '        print(f"epoch {epoch + 1}: loss {loss.item():.4f}")',
+        *_optim_mod().code_lines(_optim(tr)),
+        *_train_loop(_optim(tr), "det_loss(model(X[idx]), Y[idx])"),
         "    return model.eval()",
         "", "",
     ]
@@ -811,7 +863,7 @@ def _keras_lines(s: Step, n_out: int) -> list:
     raise ValueError(f"코드로 바꿀 수 없는 층: {t}")
 
 
-KERAS_UNSUPPORTED = ("mnv3s", "adaptive_pool", "attn_pool", "rmsnorm", "eca", "cbam", "spatial_attn", "linear_attn", "nonlocal",
+KERAS_UNSUPPORTED = ("mnv3s", "tv_backbone", "vae_latent", "adaptive_pool", "attn_pool", "rmsnorm", "eca", "cbam", "spatial_attn", "linear_attn", "nonlocal",
                      "cross_attn", "pos_enc", "cls_token", "embedding", "spectrogram", "rand_scale", "rand_stretch", "drop_path")
 
 

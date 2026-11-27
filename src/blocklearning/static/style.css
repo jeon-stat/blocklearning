@@ -842,3 +842,11 @@ td.seg-cell { text-align: left; }
 .csv-pick .pick-head { margin-bottom: 8px; }
 .csv-pick .row { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .csv-pick .role { background: var(--card, #fff); }
+
+/* 생성: 새 샘플·되살린 것 격자 */
+.gen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin: 8px 0 14px; }
+.gen-grid.wide { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+.gen-grid.pair { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.gen-grid.pair.wide { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.gen-cell { display: flex; gap: 4px; justify-content: center; align-items: center; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
+.gen-cell svg, .gen-cell img { max-width: 100%; height: auto; }

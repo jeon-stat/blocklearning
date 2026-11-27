@@ -73,8 +73,9 @@ def _export_module(model, data):
     from torch import nn
 
     class StudioExport(nn.Module):
-        def __init__(self, net, mean, std, kind: str, image):
+        def __init__(self, net, mean, std, kind: str, image, channels: int = 1):
             super().__init__()
+            self.channels = int(channels)
             self.net = net
             self.register_buffer("mean", torch.as_tensor(np.asarray(mean), dtype=torch.float32))
             self.register_buffer("std", torch.as_tensor(np.asarray(std), dtype=torch.float32))
@@ -83,10 +84,10 @@ def _export_module(model, data):
         def forward(self, x):                                  # x: (샘플 수, 특징 수) 원래 값
             z = (x - self.mean) / self.std
             if self.kind == "image":
-                return self.net(z.reshape(-1, 1, self.image[0], self.image[1]))
+                return self.net(z.reshape(-1, self.channels, self.image[0], self.image[1]))
             return self.net(z.unsqueeze(1) if self.kind == "cnn" else z.unsqueeze(2))
 
-    return StudioExport(model, data.mean, data.std, model.kind, data.image).eval()
+    return StudioExport(model, data.mean, data.std, model.kind, data.image, getattr(data.length, "channels", 1)).eval()
 
 
 def export_torch(model, data, path: str) -> dict:

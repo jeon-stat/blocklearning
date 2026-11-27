@@ -145,7 +145,8 @@ class Studio:
             lf = _path(b.get("label_file")) or None
             col = b.get("column", "")
             d = load_series_folder(_path(b["series_folder"]), [str(c) for c in col] if isinstance(col, list) else str(col), int(b.get("length", 0)),
-                                   resample=b.get("resample", "interp"), label_file=lf, task=b.get("task", "auto"),
+                                   resample=b.get("resample", "interp"), label_file=lf,
+                                   task="auto" if b.get("task") == "generation" else b.get("task", "auto"),
                                    only_labeled=bool(b.get("only_labeled")), **opts)
         elif b.get("folder") and b.get("det_file"):                # 탐지: 그림 폴더 + 탐지 정답 파일 (라벨링에서 만듦)
             folder = _path(b.get("folder"))
@@ -158,18 +159,23 @@ class Studio:
             if not os.path.isdir(folder):
                 raise UserError(f"폴더를 찾을 수 없음: {folder}", "클래스별 하위 폴더가 든 폴더의 전체 경로를 넣으세요")
             d = load_image_folder(folder, size=int(b.get("size", 28)), label_file=_path(b.get("label_file")) or None,
-                                  only_labeled=bool(b.get("only_labeled")), task=b.get("task", "auto"), **opts)
+                                  only_labeled=bool(b.get("only_labeled")),
+                                  task="anomaly" if b.get("task") == "generation" and not b.get("label_file") else b.get("task", "auto"),
+                                  color=bool(b.get("color")), **opts)
         else:
             path = _path(b.get("path"))
             if not os.path.isfile(path):
                 raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
             iw = b.get("image_width")
-            d = load_csv(path, label_col=b.get("label_col"), task="auto" if b.get("task") == "multi" else b.get("task", "auto"),
+            d = load_csv(path, label_col=b.get("label_col"), task="auto" if b.get("task") in ("multi", "generation") else b.get("task", "auto"),
                          image_width=None if iw is None or iw == "" else int(iw), targets=b.get("targets") or None,
                          skip=b.get("skip") or None, channels=int(b.get("channels") or 1), **opts)
         if b.get("task") == "anomaly" and d.task != "anomaly":       # 분류처럼 읽은 것 → 정상만 학습하는 이상 탐지로
             from blocklearning.anomaly import to_anomaly
             d = to_anomaly(d, b.get("normal"))
+        if b.get("task") == "generation" and d.task != "generation":   # 읽은 것의 입력만으로 새 샘플 만들기 (정답은 쓰지 않음)
+            from blocklearning.generate import to_generation
+            d = to_generation(d)
         self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
         return {"summary": d.summary(), "source": d.source}
 
@@ -396,18 +402,49 @@ class Studio:
                 raise ValueError(f"블록 출력 L1의 블록 '{bad[0]}'이(가) 모델에 없음")
         except ValueError as e:
             raise UserError(str(e), "④ 학습 → 더 보기의 손실을 고치세요") from None
+        from blocklearning.optim import OptimError, normalize as optim_check
+        try:
+            optim_check(settings.optim())
+        except OptimError as e:
+            raise UserError(str(e), "④ 학습의 학습 방법 설정을 고치세요") from None
+        init = self._resume_state(graph, d) if b.get("resume") else None
 
         def run(job):
-            r = train_job(job, graph, d, settings)
+            r = train_job(job, graph, d, settings, init_state=init)
             r["stopped"] = job.stopped                            # [멈추기]: 거기까지 학습한 모델을 남김
             if (not job.cancelled or job.stopped) and self.data is d:   # 그사이 데이터가 바뀌었거나 다시 시작했으면 버림
-                self.model, self.model_graph, self.train_settings = r["model"], graph, dict(b.get("settings") or {})
+                self.model, self.model_graph = r["model"], graph
+                self.train_settings = dict(b.get("settings") or {}, **({"resume": True} if init is not None else {}))
                 self.results = {k: v for k, v in r.items() if k != "model"}
                 self.add_run(graph, self.train_settings, self.results,
                              {k: v.detach().cpu().numpy() for k, v in r["model"].state_dict().items()})
             return r
 
         return {"id": self.jobs.start("train", run)}
+
+    def api_generate(self, b: dict) -> dict:
+        """생성: 학습한 VAE의 디코더로 새 샘플 n개 (seed가 같으면 같은 샘플, scale은 뽑는 폭)."""
+        from blocklearning import generate
+        d, m = self.need_data(), self.need_model()
+        if d.task != "generation":
+            raise UserError("생성 과제로 학습한 모델이 아님", "① 과제에서 '생성'을 고르고 학습하세요")
+        seed = int(b.get("seed", 0))
+        try:
+            X = generate.sample(m, d, int(b.get("n", 16)), seed, float(b.get("scale", 1.0)))
+        except ValueError as e:
+            raise UserError(str(e), "모델에 'VAE 잠재 공간' 블록을 두고, 그 뒤 블록이 앞쪽 블록을 쓰지 않게 하세요") from None
+        return generate.view(d, X, seed)
+
+    def _resume_state(self, graph: dict, d) -> dict:
+        """이어 학습: 지금 모델의 가중치 (같은 데이터·같은 모양의 모델일 때만)."""
+        from blocklearning.graph import build_graph_model
+        if self.model is None:
+            raise UserError("이어서 학습할 모델이 없음", "먼저 [학습 시작]으로 학습하세요")
+        want = {k: tuple(v.shape) for k, v in build_graph_model(graph, d.length, d.n_out, image=d.image).state_dict().items()}
+        have = self.model.state_dict()
+        if want != {k: tuple(v.shape) for k, v in have.items()}:
+            raise UserError("지금 모델과 블록 구성이 달라 이어서 학습할 수 없음", "블록을 바꿨다면 [학습 시작]으로 처음부터 학습하세요")
+        return {k: v.detach().clone() for k, v in have.items()}
 
     def api_activations(self, b: dict) -> dict:
         from blocklearning.analysis import activations, attention
@@ -644,7 +681,7 @@ class Studio:
         if src.get("folder") and src.get("det_file"):
             return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 64), det_file=src["det_file"]))["summary"]
         if src.get("folder"):
-            return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 28), task=src.get("task", "auto"),
+            return self.api_data_load(dict(load, folder=src["folder"], size=src.get("size", 28), task=src.get("task", "auto"), color=src.get("color", False),
                                            label_file=src.get("label_file"), only_labeled=src.get("only_labeled")))["summary"]
         if src.get("series_folder"):
             return self.api_data_load(dict(load, task=src.get("task", "auto"),
@@ -807,7 +844,7 @@ ROUTES = {
     "/api/project/save": "api_project_save", "/api/project/open": "api_project_open",
     "/api/project/export": "api_project_export", "/api/task/select": "api_task_select",
     "/api/data/scan_folder": "api_data_scan_folder", "/api/data/columns": "api_data_columns", "/api/code": "api_code", "/api/code/save": "api_code_save",
-    "/api/runs/restore": "api_runs_restore", "/api/runs/delete": "api_runs_delete", "/api/predict": "api_predict",
+    "/api/runs/restore": "api_runs_restore", "/api/runs/delete": "api_runs_delete", "/api/predict": "api_predict", "/api/generate": "api_generate",
     "/api/samples": "api_samples", "/api/preview": "api_preview",
 }
 MAX_RUNS = 20             # 학습 기록은 최근 이만큼 (가중치까지 프로젝트 파일에 들어감)

@@ -15,7 +15,9 @@ import numpy as np
 MAX_CLASSES = 20          # 정답이 정수이고 종류가 이 이하면 분류로 봄
 MIN_SAMPLES = 10
 MAX_ISSUES = 20           # 오류는 이만큼만 보여 줌
-IMAGE_SIZES = (8, 16, 28, 32)   # 폴더 이미지를 맞출 크기 (정사각형)
+IMAGE_SIZES = (8, 16, 28, 32, 48, 64, 96, 128, 160, 224)   # 폴더 이미지를 맞출 크기 (정사각형)
+MAX_IMAGE_BYTES = 6 * 1024 ** 3   # 그림 폴더를 메모리에 올릴 때 한도 (그림 수 × 채널 × 크기² × 4바이트)
+BIG_FLOAT32 = 512 * 1024 ** 2    # 데이터가 이보다 크면 실수 32비트로 보관 (메모리 절반)
 MAX_IMAGES = 20000        # 폴더 이미지 한도 (메모리에 한 번에 올림)
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
 SERIES_MAX_FILES = 20000  # 시계열 폴더: 파일(샘플) 한도
@@ -91,7 +93,7 @@ class Dataset:
             return DetOut(self.det["grid"], len(self.classes))
         if self.task == "forecast":
             return int(self.y_train.shape[1])
-        if self.task == "anomaly":
+        if self.task in ("anomaly", "generation"):
             return int(self.X_train.shape[1])
         if self.task == "segmentation":
             from blocklearning.segment import SegOut
@@ -104,7 +106,7 @@ class Dataset:
     @property
     def target_train(self) -> np.ndarray:
         """학습의 맞힐 값: 이상 탐지는 입력 그대로 (정규화한 값), 나머지는 정답."""
-        return self.X_train if self.task == "anomaly" else self.y_train
+        return self.X_train if self.task in ("anomaly", "generation") else self.y_train
 
     def label_text(self, part: str, i: int):
         """샘플 i의 정답 (화면용): 분류·이상 탐지는 클래스 이름, 회귀는 값, 탐지는 상자 수, 예측은 다음 값들."""
@@ -115,6 +117,8 @@ class Dataset:
             return f"다음 {y.shape[1]}개 (첫 값 {float(y[i][0]):.4g})"
         if self.task == "anomaly":
             return self.classes[int(y[i])]
+        if self.task == "generation":
+            return "-"
         if self.task == "segmentation":
             from blocklearning.segment import states_text
             return states_text(y[i], self.classes)
@@ -176,9 +180,9 @@ class Dataset:
         else:
             counts = {}
             picks = list(range(min(6, len(self.y_train))))
-            label = lambda i: f"{float(self.y_train[i]):.4g}"
+            label = (lambda i: "") if self.task == "generation" else (lambda i: f"{float(self.y_train[i]):.4g}")
         raw = self.raw(self.X_train)
-        y_range = None if self.task == "classification" else [float(np.min(y_all)), float(np.max(y_all))]
+        y_range = None if self.task in ("classification", "generation") else [float(np.min(y_all)), float(np.max(y_all))]
         return {**self._channel_info(), "n_train": int(len(self.y_train)), "n_test": int(len(self.y_test)), "length": int(self.length),
                 "task": self.task, "classes": list(self.classes), "class_counts": counts, "target_range": y_range,
                 "features": [] if self.image else (list(self.features) or [f"열 {i}" for i in range(1, self.length + 1)]),
@@ -488,6 +492,26 @@ def _csv_image_shape(n: int, width: int) -> tuple:
     return n // width, width
 
 
+def _pixels01(im, size: int, Image, color: bool = False) -> np.ndarray:
+    """그림 → 펼친 0–1 값: 흑백이면 (size²), 컬러면 채널이 먼저 (R 전체, G 전체, B 전체 = 3·size²)."""
+    if not color:
+        return _gray01(im, size, Image).reshape(-1)
+    if im.mode in ("I;16", "I;16B", "I;16L", "I", "F"):          # 흑백 고비트 그림: 세 채널에 같은 값
+        return np.tile(_gray01(im, size, Image).reshape(-1), 3)
+    if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
+        rgba = im.convert("RGBA")
+        im = Image.alpha_composite(Image.new("RGBA", rgba.size, (255, 255, 255, 255)), rgba)
+    a = np.asarray(im.convert("RGB").resize((size, size)), dtype=np.float32) / 255.0
+    return a.transpose(2, 0, 1).reshape(-1)
+
+
+def _check_image_memory(n: int, size: int, color: bool) -> None:
+    need = n * (3 if color else 1) * size * size * 4
+    if need > MAX_IMAGE_BYTES:
+        raise DataError([Issue(None, None, f"그림 {n:,}장을 {size}×{size}{' 컬러' if color else ''}로 올리면 메모리가 약 {need / 1024 ** 3:.1f}GB 필요 "
+                               f"(한도 {MAX_IMAGE_BYTES / 1024 ** 3:.0f}GB)", "크기를 줄이거나 흑백으로 하거나 그림 수를 줄이세요")])
+
+
 def _gray01(im, size: int, Image) -> np.ndarray:
     """그림 → 흑백 0–1 (size×size). 16비트·실수 그림은 비트 수에 맞춰 나누고, 투명한 곳은 흰 배경으로."""
     if im.mode in ("I;16", "I;16B", "I;16L", "I", "F"):
@@ -723,12 +747,12 @@ def image_files(path: str) -> list:
 
 def load_image_folder(path: str, size: int = 28, normalize: bool = True, test_ratio: float = 0.2,
                       seed: int = 0, label_file: Optional[str] = None, only_labeled: bool = False,
-                      task: str = "auto") -> Dataset:
-    """이미지 폴더 → Dataset. 폴더/클래스이름/*.png·jpg·jpeg·bmp. 흑백으로 바꾸고 size×size로 맞춤, 픽셀 0–1.
+                      task: str = "auto", color: bool = False) -> Dataset:
+    """이미지 폴더 → Dataset. 폴더/클래스이름/*.png·jpg·jpeg·bmp. 흑백(color면 RGB 3채널)으로 size×size에 맞춤, 픽셀 0–1.
     클래스는 하위 폴더 이름 순서. 이미지가 아닌 파일(Thumbs.db 등)은 건너뜀.
     label_file(정답 표: 파일 이름, 정답)을 주면 하위 폴더 대신 표의 정답을 씀 (라벨링 작업실). only_labeled면 표에 있는 그림만."""
     if label_file:
-        return _load_image_folder_table(path, size, normalize, test_ratio, seed, label_file, only_labeled, task)
+        return _load_image_folder_table(path, size, normalize, test_ratio, seed, label_file, only_labeled, task, color)
     if size not in IMAGE_SIZES:
         raise DataError([Issue(None, None, f"크기 {size}는 쓸 수 없음", f"{', '.join(map(str, IMAGE_SIZES))} 중에서 고르세요")])
     try:
@@ -742,7 +766,12 @@ def load_image_folder(path: str, size: int = 28, normalize: bool = True, test_ra
     files = {c: sorted(f for f in (root / c).iterdir()
                        if f.is_file() and not junk(f.name) and f.suffix.lower() in IMAGE_EXTS) for c in classes}
     classes = [c for c in classes if files[c]]
-    if len(classes) < 2:
+    single = task in ("anomaly", "generation")           # 정답이 필요 없는 과제: 클래스 폴더 하나, 또는 그림만 든 폴더도
+    if single and not classes:
+        flat = sorted(f for f in root.iterdir() if f.is_file() and not junk(f.name) and f.suffix.lower() in IMAGE_EXTS)
+        if flat:
+            classes, files = ["전체"], {"전체": flat}
+    if len(classes) < (1 if single else 2):
         raise DataError([Issue(None, None, f"이미지가 든 클래스 폴더가 {len(classes)}개뿐임",
                                "폴더 안에 클래스마다 하위 폴더(예: 양품, 불량)를 두고 그림을 넣으세요")])
     few = [c for c in classes if len(files[c]) < 2]
@@ -751,12 +780,13 @@ def load_image_folder(path: str, size: int = 28, normalize: bool = True, test_ra
     total = sum(len(v) for v in files.values())
     if total > MAX_IMAGES:
         raise DataError([Issue(None, None, f"그림이 {total:,}장 (한도 {MAX_IMAGES:,}장)", "그림 수를 줄이거나 나눠서 쓰세요")])
+    _check_image_memory(total, size, color)
     X, y, issues = [], [], []
     for k, c in enumerate(classes):
         for f in files[c]:
             try:
                 with Image.open(f) as im:
-                    X.append(_gray01(im, size, Image).reshape(-1))
+                    X.append(_pixels01(im, size, Image, color))
                     y.append(k)
             except Exception:
                 issues.append(Issue(None, None, f"그림을 읽을 수 없음: {c}/{f.name}", "깨진 파일이면 지우거나 다시 저장하세요"))
@@ -764,12 +794,12 @@ def load_image_folder(path: str, size: int = 28, normalize: bool = True, test_ra
                     raise DataError(issues)
     if issues:
         raise DataError(issues)
-    src = {"folder": str(path), "size": size, "normalize": normalize, "test_ratio": test_ratio, "seed": seed}
-    return make_dataset(np.asarray(X), np.asarray(y), task="classification", normalize=normalize, test_ratio=test_ratio,
-                        seed=seed, classes=classes, source=src, image=(size, size))
+    src = {"folder": str(path), "size": size, "normalize": normalize, "test_ratio": test_ratio, "seed": seed, **({"color": True} if color else {})}
+    return make_dataset(np.asarray(X), np.asarray(y), task="anomaly" if single else "classification", normalize=normalize,
+                        test_ratio=test_ratio, seed=seed, classes=classes, source=src, image=(size, size), channels=3 if color else 1)
 
 
-def _load_image_folder_table(path, size, normalize, test_ratio, seed, label_file, only_labeled, task="auto") -> Dataset:
+def _load_image_folder_table(path, size, normalize, test_ratio, seed, label_file, only_labeled, task="auto", color=False) -> Dataset:
     if size not in IMAGE_SIZES:
         raise DataError([Issue(None, None, f"크기 {size}는 쓸 수 없음", f"{', '.join(map(str, IMAGE_SIZES))} 중에서 고르세요")])
     try:
@@ -795,18 +825,19 @@ def _load_image_folder_table(path, size, normalize, test_ratio, seed, label_file
         raise DataError([Issue(None, None, f"정답 표에 없는 그림 {len(missing)}개: {shown}", "정답 표에 그 그림들의 행을 더하세요")])
     if len(files) > MAX_IMAGES:
         raise DataError([Issue(None, None, f"그림이 {len(files):,}장 (한도 {MAX_IMAGES:,}장)", "그림 수를 줄이거나 나눠서 쓰세요")])
+    _check_image_memory(len(files), size, color)
     X, y = [], []
     for n, f in files:
         try:
             with Image.open(f) as im:
-                X.append(_gray01(im, size, Image).reshape(-1))
+                X.append(_pixels01(im, size, Image, color))
                 y.append(pick(n, f))
         except Exception:
             raise DataError([Issue(None, None, f"그림을 읽을 수 없음: {n}", "깨진 파일이면 지우거나 정답 표에서 빼세요")])
     src = {"folder": str(path), "size": size, "normalize": normalize, "test_ratio": test_ratio, "seed": seed,
-           "label_file": label_file, "only_labeled": only_labeled, "task": task}
+           "label_file": label_file, "only_labeled": only_labeled, "task": task, **({"color": True} if color else {})}
     return make_dataset(np.asarray(X), np.asarray(y, dtype=object), task=task, normalize=normalize,
-                        test_ratio=test_ratio, seed=seed, source=src, image=(size, size))
+                        test_ratio=test_ratio, seed=seed, source=src, image=(size, size), channels=3 if color else 1)
 
 
 def make_det_dataset(X: np.ndarray, boxes: list, classes: list, size: int, normalize: bool = True,
@@ -921,7 +952,8 @@ def make_dataset(X: np.ndarray, y: np.ndarray, task: str = "auto", normalize: bo
     one_ok = task == "anomaly"
     if one_ok:
         task = "classification"
-    X = np.asarray(X, dtype=np.float64)
+    X = np.asarray(X)
+    X = X.astype(np.float32 if X.size * 8 > BIG_FLOAT32 else np.float64, copy=False)   # 큰 데이터는 32비트로 (메모리 절반)
     if X.ndim != 2:
         raise ValueError(f"X는 (샘플, 길이) 2차원이어야 함: {X.shape}")
     n = len(X)
@@ -944,8 +976,8 @@ def make_dataset(X: np.ndarray, y: np.ndarray, task: str = "auto", normalize: bo
     train = np.setdiff1d(np.arange(n), test)
     Xtr, Xte = X[train], X[test]
     if normalize and image:                            # 이미지: 픽셀 전체에 평균·표준편차 하나 (늘 0인 테두리도 그대로)
-        m, s = float(Xtr.mean()), float(Xtr.std()) or 1.0
-        mean, std = np.full(X.shape[1], m), np.full(X.shape[1], s)
+        m, s = float(Xtr.mean(dtype=np.float64)), float(Xtr.std(dtype=np.float64)) or 1.0
+        mean, std = np.full(X.shape[1], m, dtype=X.dtype), np.full(X.shape[1], s, dtype=X.dtype)
     elif normalize:
         mean, std = Xtr.mean(0), Xtr.std(0)
         std = np.where(std > 0, std, 1.0)
@@ -1039,6 +1071,7 @@ def _fc_times(kind: str, start: int, n: int) -> np.ndarray:
     return np.datetime64(t0, "s") + (start + np.arange(n)) * np.timedelta64(step, "s")
 AE_EXAMPLES = {"bearing_ae": "bearing", "hydraulic_ae": "hydraulic", "steelblast_ae": "steelblast",
                "pneumonia_ae": "pneumonia"}         # 이상 탐지: 분류 예시를 정상만 학습으로
+GEN_EXAMPLES = {"digits_gen": "digits", "ecg_gen": "ecg"}   # 생성: 분류 예시의 입력만 (정답은 쓰지 않음)
 DET_EXAMPLES = {"pcb_det": ("pcb_det", 64)}                                    # 탐지: 종류 → (파일, 그림 크기)
 SEG_EXAMPLES = {"pneumatic_seg": ("pneumatic_seg", ["X"]),                       # 구간 분할: 종류 → (파일, 채널 배열들) (창·시점마다 상태 y)
                 "pneumatic_seg2": ("pneumatic_seg", ["X", "P"])}
@@ -1048,7 +1081,7 @@ ALIASES = {"vibration": "bearing", "process_cls": "steel_plates", "process_reg":
            "surface": "steelblast", "parts_det": "pcb_det", "factory_power": "steel_power", "vibration_ae": "bearing_ae",
            "process_ae": "hydraulic_ae"}                                       # 예전(합성) 예시 이름 → 바꾼 실제 데이터
 EXAMPLE_KINDS = sorted(set(EXAMPLES) | set(FC_EXAMPLES) | set(AE_EXAMPLES) | set(DET_EXAMPLES) | set(SEG_EXAMPLES)
-                       | set(MULTI_EXAMPLES))
+                       | set(MULTI_EXAMPLES) | set(GEN_EXAMPLES))
 
 
 def example_files(kind: str) -> list:
@@ -1062,7 +1095,7 @@ def example_files(kind: str) -> list:
         return [SEG_EXAMPLES[kind][0] + ".npz"]
     if kind in MULTI_EXAMPLES:
         return [MULTI_EXAMPLES[kind][0] + ".npz"]
-    kind = AE_EXAMPLES.get(kind, kind)
+    kind = AE_EXAMPLES.get(kind, GEN_EXAMPLES.get(kind, kind))
     return [EXAMPLES[kind][0] + ".npz"] if kind in EXAMPLES else []
 
 
@@ -1146,6 +1179,11 @@ def load_example(kind: str = "ecg", normalize: bool = True, test_ratio: float = 
         d = load_example(AE_EXAMPLES[kind], normalize=normalize, test_ratio=test_ratio, seed=seed)
         d.source = dict(d.source, example=kind)
         return to_anomaly(d)
+    if kind in GEN_EXAMPLES:
+        from blocklearning.generate import to_generation
+        d = load_example(GEN_EXAMPLES[kind], normalize=normalize, test_ratio=test_ratio, seed=seed)
+        d.source = dict(d.source, example=kind)
+        return to_generation(d)
     if kind in DET_EXAMPLES:
         f, size = DET_EXAMPLES[kind]
         X, boxes, names = _det_arrays(_npz(f))

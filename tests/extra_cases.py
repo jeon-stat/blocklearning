@@ -46,6 +46,13 @@ def cross_case():
     return ("x_cross_attn", _g(nodes), 24, 3, None)
 
 
+def rgb_case():
+    """컬러 그림 (3, 8, 8): 길이 64에 채널 3을 지님 (data.seq_length)."""
+    from blocklearning.data import seq_length
+    g = chain("i", [("conv2d", {"channels": 4, "kernel": 3, "stride": 1}), ("mha", {"heads": 2})], pre=False)
+    return ("x_rgb_image", g, seq_length(64, 3), 3, (8, 8))
+
+
 def extra_cases():
     c = [
         case("glu", "s", [("glu", {"units": 6})]),
@@ -115,6 +122,8 @@ def extra_cases():
         case("reshape", "s", [("reshape", {"channels": 8})]),
         case("reshape_img", "s", [("reshape", {"channels": 2, "height": 6}), ("conv2d", {"channels": 3, "kernel": 3, "stride": 1})]),
         case("reshape_img2d", "i", [("reshape", {"channels": 2, "height": 4})]),
+        rgb_case(),
+        case("vae_latent", "s", [("flatten", {}), ("vae_latent", {"dim": 4, "beta": 0.5}), ("dense", {"units": 6})]),
         case("permute", "s", [("permute", {})]),
         case("permute2d", "i", [("permute", {})]),
         case("to_seq", "i", [("to_seq", {}), ("conv", {"channels": 3, "kernel": 3, "stride": 1})]),

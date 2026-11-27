@@ -126,7 +126,7 @@ def saliency(model, x, d) -> list:
     if getattr(model, "kind", "") == "rnn":
         g = g.transpose(0, 1)
     g = g.abs().double().cpu().numpy()
-    if not d.image and g.ndim == 2 and g.shape[0] > 1:          # 여러 채널: 시점마다 더함
+    if g.ndim >= 2 and g.shape[0] > 1:                          # 여러 채널 (시계열·컬러 그림): 시점·픽셀마다 더함
         g = g.sum(0)
     g = g.reshape(-1)
     hi = float(g.max()) or 1.0

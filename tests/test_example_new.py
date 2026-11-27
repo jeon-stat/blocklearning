@@ -6,14 +6,16 @@ import numpy as np
 import pytest
 
 from blocklearning import tasks
-from blocklearning.data import EXAMPLE_KINDS, example_new, load_example
+from blocklearning.data import EXAMPLE_KINDS, GEN_EXAMPLES, example_new, load_example
+
+KINDS = [k for k in EXAMPLE_KINDS if k not in GEN_EXAMPLES]      # 생성 예시는 새 데이터로 예측하지 않음
 from blocklearning.graph import build_graph_model, from_blocks
 
 T = {t["id"]: t for f in tasks.CATALOG for s in f["subtasks"] for t in s.get("templates", [])}
 FIRST = {e[0]: s["templates"][0] for f in tasks.CATALOG for s in f["subtasks"] if s["available"] for e in s["example_data"]}
 
 
-@pytest.mark.parametrize("kind", EXAMPLE_KINDS)
+@pytest.mark.parametrize("kind", KINDS)
 def test_example_new_is_held_out(kind):
     d = load_example(kind)
     e = example_new(d)
@@ -34,7 +36,7 @@ def test_example_new_is_held_out(kind):
         assert len(e["labels"]) == 10
 
 
-@pytest.mark.parametrize("kind", EXAMPLE_KINDS)
+@pytest.mark.parametrize("kind", KINDS)
 def test_predict_with_example_new(kind):
     from blocklearning.core import Studio
     s = Studio()

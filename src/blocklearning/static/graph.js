@@ -11,9 +11,9 @@ const BOX_W = 236, BOX_H = 50, MERGE_W = 104, MERGE_H = 30, GAP_Y = 34, GAP_X = 
 const CATS = [["dense", "완전연결 (Dense)"], ["conv", "합성곱 (Conv)"], ["pool", "줄이기·모으기 (Pooling)"], ["up", "키우기 (Upsampling)"],
   ["rnn", "순환 (RNN)"], ["attn", "어텐션 (Attention)"], ["tf", "Transformer 부품"], ["norm", "정규화 (Normalization)"],
   ["act", "활성화 (Activation)"], ["reg", "과적합 막기 (Regularization)"], ["merge", "합치기·나누기"], ["shape", "모양 바꾸기"],
-  ["prep", "입력 변환"], ["aug", "증강 (학습 때만)"], ["pre", "사전학습 (고정)"], ["pack", "묶음 (자주 쓰는 조합)"]];
+  ["prep", "입력 변환"], ["aug", "증강 (학습 때만)"], ["pre", "사전학습 (고정)"], ["gen", "생성 (VAE)"], ["pack", "묶음 (자주 쓰는 조합)"]];
 const COLORS = { input: "gray", dense: "gray", conv: "teal", pool: "teal", up: "teal", rnn: "coral", attn: "blue", tf: "blue", norm: "amber",
-  act: "purple", reg: "gray", merge: "add", shape: "gray", prep: "pink", aug: "pink", pre: "blue", out: "coral", pack: "gray" };
+  act: "purple", reg: "gray", merge: "add", shape: "gray", prep: "pink", aug: "pink", pre: "blue", gen: "purple", out: "coral", pack: "gray" };
 // 블록이 받는 모양: seq (채널, 길이) · img (채널, 높이, 너비) · sp (둘 다) · any
 const RANK = { conv: "seq", pool: "seq", global_avg: "seq", last_step: "seq", conv2d: "img", pool2d: "img", global_avg2d: "img",
   lstm: "seq", gru: "seq", simple_rnn: "seq", se: "sp", dw_conv: "seq", sep_conv: "seq", max_pool: "seq", global_max: "seq", first_step: "seq",
@@ -21,7 +21,7 @@ const RANK = { conv: "seq", pool: "seq", global_avg: "seq", last_step: "seq", co
   patch_embed: "img", to_seq: "img", rand_rotate: "img", rand_zoom: "img", rand_stretch: "seq", spectrogram: "seq",
   adaptive_pool: "sp", attn_pool: "sp", upsample: "sp", pixel_shuffle: "sp", eca: "sp", cbam: "sp", spatial_attn: "sp", mha: "sp",
   linear_attn: "sp", nonlocal: "sp", cross_attn: "sp", pos_enc: "sp", groupnorm: "sp", instancenorm: "sp", spatial_dropout: "sp",
-  permute: "sp", crop: "sp", pad: "sp", rand_flip: "sp", rand_shift: "sp", embedding: "sp", mnv3s: "img" };
+  permute: "sp", crop: "sp", pad: "sp", rand_flip: "sp", rand_shift: "sp", embedding: "sp", mnv3s: "img", tv_backbone: "img" };
 const TWO_D = { conv: "conv2d", pool: "pool2d", global_avg: "global_avg2d", dw_conv: "dw_conv2d", sep_conv: "sep_conv2d", max_pool: "max_pool2d",
   global_max: "global_max2d", conv_t: "conv_t2d" };
 const ONE_D = Object.fromEntries(Object.entries(TWO_D).map(([a, b]) => [b, a]));
@@ -104,7 +104,16 @@ const PALETTE = {
   rand_scale: P("aug", "RandomScale", "학습 때 값 전체 세기를 조금 바꿈", () => ({ type: "rand_scale", frac: 0.2 })),
   rand_stretch: P("aug", "RandomStretch", "학습 때 신호를 시간 방향으로 늘이고 줄임", () => ({ type: "rand_stretch", frac: 0.1 })),
   mnv3s: P("pre", "MobileNetV3-Small", "ImageNet으로 미리 학습한 특징 1024개 (가중치 고정)", () => ({ type: "mnv3s", size: 128 })),
+  vae_latent: P("gen", "VAE 잠재 공간", "숫자 묶음 → 정규분포 위의 점 (앞은 인코더, 뒤는 디코더). 생성 과제에서 새 샘플을 만드는 자리", () => ({ type: "vae_latent", dim: 16, beta: 1 })),
+  tv_backbone: P("pre", "ResNet18", "ImageNet 사전학습 특징 512개 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "resnet18", size: 224, tune: "frozen" })),
+  "tv_backbone:resnet50": P("pre", "ResNet50", "ImageNet 사전학습 특징 2048개 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "resnet50", size: 224, tune: "frozen" })),
+  "tv_backbone:efficientnet_b0": P("pre", "EfficientNet-B0", "ImageNet 사전학습 특징 1280개, 가볍고 정확 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "efficientnet_b0", size: 224, tune: "frozen" })),
+  "tv_backbone:convnext_tiny": P("pre", "ConvNeXt-Tiny", "ImageNet 사전학습 특징 768개 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "convnext_tiny", size: 224, tune: "frozen" })),
+  "tv_backbone:mobilenet_v3_large": P("pre", "MobileNetV3-Large", "ImageNet 사전학습 특징 960개, 빠름 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "mobilenet_v3_large", size: 224, tune: "frozen" })),
+  "tv_backbone:vit_b_16": P("pre", "ViT-B/16", "ImageNet 사전학습 Vision Transformer 특징 768개 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "vit_b_16", size: 224, tune: "frozen" })),
 };
+const TV_NAMES = { resnet18: "ResNet18", resnet50: "ResNet50", efficientnet_b0: "EfficientNet-B0", convnext_tiny: "ConvNeXt-Tiny",
+  mobilenet_v3_large: "MobileNetV3-Large", vit_b_16: "ViT-B/16" };
 const ACT_LIST = [["relu", "ReLU", "음수는 0 (가장 많이 씀)"], ["leaky_relu", "LeakyReLU", "음수도 조금 흘림"], ["gelu", "GELU", "부드러운 ReLU (Transformer)"],
   ["silu", "SiLU / Swish", "x·σ(x) (EfficientNet·LLM)"], ["elu", "ELU", "음수 쪽이 부드럽게 −1로"], ["mish", "Mish", "부드럽고 매끈한 ReLU 계열"],
   ["softplus", "Softplus", "부드러운 ReLU"], ["sigmoid", "Sigmoid", "0~1로"], ["tanh", "Tanh", "−1~1로"], ["selu", "SELU", "스스로 정규화되는 활성화"],
@@ -627,6 +636,8 @@ const LABELS = {
   rand_rotate: (b) => `RandomRotation · ±${b.degrees || 15}°`, rand_shift: (b) => `RandomShift · ±${b.frac ?? 0.1}`,
   rand_zoom: (b) => `RandomZoom · ±${b.frac ?? 0.1}`, rand_scale: (b) => `RandomScale · ±${b.frac ?? 0.2}`,
   rand_stretch: (b) => `RandomStretch · ±${b.frac ?? 0.1}`,
+  vae_latent: (b) => `VAE 잠재 공간 · ${b.dim || 16}차원` + ((b.beta ?? 1) !== 1 ? ` · β ${b.beta}` : ""),
+  tv_backbone: (b) => `${TV_NAMES[b.arch] || b.arch} · ${b.size || 224}×${b.size || 224} · ${{ frozen: "고정", last: "마지막 단계 학습", all: "전체 학습" }[b.tune || "frozen"]}`,
   mnv3s: (b) => `MobileNetV3-Small · ${b.out === "map" ? "특징 지도" : `${b.size || 128}×${b.size || 128}`} · ${b.train_last ? `끝 ${b.train_last}블록 학습` : "고정"}`,
 };
 // 설정 칸: [종류, 키, 이름, …]
@@ -667,6 +678,10 @@ const FIELDS = {
     sel("n_mels", "mel 칸 수", vals(8, 16, 32, 64)), sel("n_mfcc", "MFCC 개수", vals(8, 13, 20, 40))],
   rand_flip: [sel("dir", "방향 (그림)", [["h", "좌우"], ["v", "상하"], ["hv", "좌우·상하"]])],
   rand_rotate: [num("degrees", "최대 각도 (±도)", 1, 180)],
+  vae_latent: [num("dim", "잠재 차원 (요약할 값 수)", 1, 256), sel("beta", "β (KL 무게: 크면 뽑은 샘플이 고르고, 작으면 되살림이 정확)", vals(0.1, 0.5, 1, 2, 4))],
+  tv_backbone: [sel("arch", "모델", Object.entries(TV_NAMES)),
+    sel("size", "입력 크기", [64, 96, 128, 160, 224, 256, 384].map((v) => [v, `${v}×${v}`])),
+    sel("tune", "함께 학습 (미세조정)", [["frozen", "없음 (고정, 빠름)"], ["last", "마지막 단계"], ["all", "전체 (느림, 데이터 많을 때)"]])],
   mnv3s: [sel("out", "출력", [["vector", "특징 1024개 (분류·이상 탐지)"], ["map", "특징 지도 (탐지: 8픽셀마다 한 칸)"]]),
     sel("size", "입력 크기 (특징 1024개일 때)", [64, 96, 128, 160, 224].map((v) => [v, `${v}×${v}`])),
     sel("train_last", "함께 학습할 끝 블록 (미세조정)", [[0, "없음 (모두 고정, 빠름)"], [1, "끝 1개"], [2, "끝 2개"], [3, "끝 3개"]])],

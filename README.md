@@ -1,7 +1,7 @@
 # BlockLearning
 
 파이썬·딥러닝 코드를 몰라도 브라우저 화면에서 **블록(층)을 선으로 이어** 딥러닝 모델을 만들고, 학습하고, 결과를 보는 도구입니다.
-센서·설비·심전도 같은 시계열, 표 데이터, 흑백 이미지를 다룹니다.
+센서·설비·심전도 같은 시계열, 표 데이터, 이미지(흑백·컬러)를 다룹니다.
 
 ### 👉 [사용 설명서 (설치부터 학습까지)](https://jeon-stat.github.io/blocklearning/guide.html)
 
@@ -44,6 +44,8 @@ python -m blocklearning        # 실행: 브라우저가 열립니다 (끝내려
 
 학습한 모델은 PyTorch·TensorFlow 코드나 TorchScript(`.pt`) 파일로 내보낼 수 있습니다.
 
+큰 작업용으로 AdamW·SGD, 학습률 스케줄(cosine·warmup), gradient clipping, 혼합 정밀도(AMP), 이어서 학습, 컬러·224×224 그림, torchvision 사전학습 CNN(ResNet·EfficientNet·ConvNeXt·ViT, 설치형)을 씁니다 ([자세히](https://jeon-stat.github.io/blocklearning/guide.html#heavy)).
+
 ## 할 수 있는 과제와 예시 데이터
 
 모두 공개된 실제 데이터입니다 (출처·라이선스는 `src/blocklearning/data/*.SOURCE.txt`).
@@ -59,6 +61,7 @@ python -m blocklearning        # 실행: 브라우저가 열립니다 (끝내려
 | 예측 · 시계열 | 철강 공장 전력 사용량 다음 하루 ([UCI](https://archive.ics.uci.edu/dataset/851)) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
 | 구간 분할 · 시계열 | 검사 기계 전류·압력의 시점마다 공정 단계 ([Mendeley](https://doi.org/10.17632/ypzswhhzh9.3)) | TCN, U-Net식, 양방향 GRU |
 | 여러 정답 · 표 | 유압 시스템 상태(분류)와 밸브 %·압력(숫자)을 한 번에 | MLP (몸통 함께 쓰기) |
+| 생성 · 이미지·시계열 | 손글씨 숫자 새 그림 / 심전도 새 박동 (진단용 아님) | VAE (Conv), VAE (Dense) |
 
 ## 더 보기
 

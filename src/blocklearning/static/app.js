@@ -9,22 +9,29 @@ const st = { step: "data", summary: null, ed: null, graph: null, checked: null, 
   trained: false, trainJob: null, checkTimer: null, checkSeq: 0,
   catalog: [], fam: null, sub: null, tpl: null };
 const inputKind = () => (st.summary && st.summary.image ? "image" : st.sub ? st.sub.input : "timeseries");
-// 흑백 그림: 펼친 값(또는 [H][W]) → SVG 칸. 밝기는 그림 안의 최소~최대
-function svgImage(vals, H, W, cell = 6) {
-  const flat = Array.isArray(vals[0]) ? vals.flat() : vals;
-  let lo = Math.min(...flat), hi = Math.max(...flat);
+// 그림: 펼친 값(또는 [H][W]) → 칸마다 색. 흑백은 H·W개, 컬러는 채널이 먼저 (R 전체, G 전체, B 전체). 밝기는 그림 안의 최소~최대
+function pixelRGB(vals, H, W) {
+  const flat = Array.isArray(vals[0]) ? vals.flat(Infinity) : vals, n = H * W, color = flat.length >= 3 * n;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < (color ? 3 * n : n); i++) { if (flat[i] < lo) lo = flat[i]; if (flat[i] > hi) hi = flat[i]; }
   if (hi - lo < 1e-12) hi = lo + 1;
+  const v = (i) => Math.round((255 * (flat[i] - lo)) / (hi - lo));          // 실제 밝기 그대로 (값이 클수록 밝게)
+  return (i) => (color ? [v(i), v(n + i), v(2 * n + i)] : [v(i), v(i), v(i)]);
+}
+function svgImage(vals, H, W, cell = 6) {
+  if (H * W > 1024) return `<img src="${grayURL(vals, H, W)}" width="${W * cell}" height="${H * cell}" class="img" style="image-rendering:pixelated" alt="">`;
+  const px = pixelRGB(vals, H, W);
   let s = `<svg viewBox="0 0 ${W} ${H}" width="${W * cell}" height="${H * cell}" class="img" shape-rendering="crispEdges">`;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const g = Math.round(255 * (flat[y * W + x] - lo) / (hi - lo));           // 실제 밝기 그대로 (값이 클수록 밝게)
-    s += `<rect x="${x}" y="${y}" width="1" height="1" fill="rgb(${g},${g},${g})"/>`;
+    const [r, g, b] = px(y * W + x);
+    s += `<rect x="${x}" y="${y}" width="1" height="1" fill="rgb(${r},${g},${b})"/>`;
   }
   return s + `</svg>`;
 }
 
 // 객체 탐지 그림: 흑백 그림 위에 정답(점선)·모델이 찾은 상자(실선, 점수) — 상자는 [클래스 번호, (점수,) x, y, w, h] 0–1 비율
 const DET_COLORS = ["#e11d48", "#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
-const TASK_NAME = { multi: "여러 정답", classification: "분류", regression: "회귀", detection: "객체 탐지", forecast: "시계열 예측", anomaly: "이상 탐지",
+const TASK_NAME = { generation: "생성", multi: "여러 정답", classification: "분류", regression: "회귀", detection: "객체 탐지", forecast: "시계열 예측", anomaly: "이상 탐지",
   segmentation: "구간 분할" };
 const SEG_COLORS = ["#94a3b8", "#4f46e5", "#14b8a6", "#f97316", "#e11d48", "#a855f7", "#22c55e", "#eab308", "#0ea5e9", "#78716c"];
 function segStrip(states, w = 240, h = 9) {              // 시점마다 상태 → 색 띠 (같은 상태가 이어지면 한 칸)
@@ -62,17 +69,14 @@ function svgSeries(series, w = 300, h = 90, cut = null, bands = null, bandMax = 
   return s + `</svg>`;
 }
 const FC_COLORS = { hist: "#64748b", y: "#0f172a", pred: "#4f46e5", naive: "#f97316" };
-function grayURL(vals, H, W) {                          // 펼친 값 → PNG 주소 (칸마다 rect보다 훨씬 가벼움)
-  const flat = Array.isArray(vals[0]) ? vals.flat() : vals;
-  let lo = Infinity, hi = -Infinity;
-  for (const v of flat) { if (v < lo) lo = v; if (v > hi) hi = v; }
-  if (hi - lo < 1e-12) hi = lo + 1;
+function grayURL(vals, H, W) {                          // 펼친 값(흑백·컬러) → PNG 주소 (칸마다 rect보다 훨씬 가벼움)
+  const px = pixelRGB(vals, H, W);
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d"), im = g.createImageData(W, H);
   for (let i = 0; i < W * H; i++) {
-    const v = Math.round((255 * (flat[i] - lo)) / (hi - lo));
-    im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v;
+    const [r, gg, b] = px(i);
+    im.data[i * 4] = r; im.data[i * 4 + 1] = gg; im.data[i * 4 + 2] = b;
     im.data[i * 4 + 3] = 255;
   }
   g.putImageData(im, 0, 0);
@@ -180,6 +184,7 @@ function localSetup() {
     };
     el.after(b);
   }
+  $("amp-wrap").hidden = false;                           // 혼합 정밀도는 설치형(NVIDIA GPU)에서만
   api("/api/device").then((d) => {                       // 학습 장치: GPU 이름 또는 CPU
     REMOTE = !!d.remote;
     const sel = $("device");
@@ -326,6 +331,7 @@ window.addEventListener("popstate", (e) => {
   go(step, true);
 });
 function markSteps() {
+  $("btn-train-more").hidden = !st.trained;                   // 이어서 학습: 학습한 모델이 있을 때만
   const mark = (name, done, stale) => {
     const b = document.querySelector(`.step[data-step="${name}"]`);
     b.classList.toggle("done", !!done && !stale);
@@ -663,7 +669,7 @@ function onData(s) {
   const det = s.task === "detection", fc = s.forecast, ae = s.anomaly;
   const seg = s.task === "segmentation", multi = s.task === "multi";
   const task = multi ? `여러 정답 (${s.targets.length}개)` : s.task === "classification" ? `분류 (${s.classes.length}클래스)` : det ? `객체 탐지 (${s.classes.length}클래스)`
-    : fc ? "시계열 예측" : ae ? "이상 탐지" : seg ? `구간 분할 (${s.classes.length}상태)` : "회귀";
+    : fc ? "시계열 예측" : ae ? "이상 탐지" : seg ? `구간 분할 (${s.classes.length}상태)` : s.task === "generation" ? "생성" : "회귀";
   const tab = inputKind() === "tabular" && !s.image;
   const cards = fc ? [["학습 창", s.n_train], ["시험 창 (뒤쪽 구간)", s.n_test], ["입력 길이", `지난 ${s.length}개`], ["예측 길이", `다음 ${fc.horizon}개`],
     ["맞힐 값 열", esc(fc.column)], ["점 수", fc.n_points]]
@@ -877,7 +883,7 @@ $("btn-series-load").onclick = async () => {
 };
 $("btn-folder").onclick = () => {
   if (!pathVal("folder-path")) return showMessage("이미지 폴더 경로를 넣으세요", "예: C:\\data\\사진 (안에 클래스별 하위 폴더)");
-  loadData(Object.assign(dataOptions(), { folder: pathVal("folder-path"), size: Number($("folder-size").value) }));
+  loadData(Object.assign(dataOptions(), { folder: pathVal("folder-path"), size: Number($("folder-size").value), ...($("folder-color").value === "rgb" ? { color: true } : {}) }));
 };
 
 // ------------------------------------------------------------ ② 모델
@@ -1059,7 +1065,18 @@ function trainSettings() {
   lossTerms();                                              // 맞지 않는 손실 설정은 여기서 기본으로
   return { epochs: Number($("epochs").value) || 30, lr: Number($("lr").value) || 0.001, batch_size: Number($("batch").value) || 32,
     device: $("device").value, keep_best: $("keep-best").checked, early_stop: Number($("early-stop").value) || 0,
+    optimizer: $("optimizer").value, weight_decay: Number($("weight-decay").value) || 0, schedule: $("schedule").value,
+    grad_clip: Number($("grad-clip").value) || 0, amp: WEB ? "off" : $("amp").value,
     ...(st.loss ? { loss: st.loss } : {}) };
+}
+function optimText(s) {                                     // 학습 기록 비교: 'AdamW (wd 0.01) · cosine' (optim.describe)
+  const o = { adam: "Adam", adamw: "AdamW", sgd: "SGD" }[s.optimizer || "adam"] || s.optimizer;
+  const parts = [o + (Number(s.weight_decay) ? ` (wd ${s.weight_decay})` : "")];
+  if (s.schedule && s.schedule !== "constant") parts.push({ cosine: "cosine", warmup_cosine: "warmup+cosine" }[s.schedule] || s.schedule);
+  if (Number(s.grad_clip)) parts.push(`clip ${s.grad_clip}`);
+  if (s.amp === "auto") parts.push("AMP");
+  if (s.resume) parts.push("이어서 학습");
+  return parts.join(" · ");
 }
 async function pollJob(id, onTick) {
   for (;;) {
@@ -1114,7 +1131,7 @@ function drawCurve(progress, metricName) {           // 왼쪽 축 = 시험 성�
   }
   $("curve").innerHTML = s;
 }
-$("btn-train").onclick = async () => {
+async function runTrain(resume) {                           // resume: 지금 모델의 가중치에서 이어 학습
   if (!st.summary) return showMessage("데이터가 없음", "② 데이터 단계에서 먼저 불러오세요");
   ensureEditor();
   const graph = st.graph;
@@ -1125,14 +1142,14 @@ $("btn-train").onclick = async () => {
   st.training = true;
   const epochs = trainSettings().epochs;
   trainBusy(true);
-  $("btn-train").disabled = true;                              // 두 번 눌러 두 학습이 돌지 않게
+  $("btn-train").disabled = $("btn-train-more").disabled = true;   // 두 번 눌러 두 학습이 돌지 않게
   try {
-    const { id } = await api("/api/train", { graph, settings: trainSettings() });
+    const { id } = await api("/api/train", { graph, settings: trainSettings(), ...(resume ? { resume: true } : {}) });
     st.trainJob = id;
     const json = sig(graph);
     $("train-status").textContent = "학습 중…";
     const ae = st.summary.anomaly;                              // 이상 탐지: 이상 샘플이 있으면 AUC, 없으면 복원 오차
-    const metric = { classification: "accuracy", detection: "map50", segmentation: "accuracy", multi: "mean" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
+    const metric = { classification: "accuracy", detection: "map50", segmentation: "accuracy", multi: "mean", generation: "recon" }[st.summary.task] || (ae ? (ae.n_anomaly ? "auc" : "recon") : "r2");
     const t0 = performance.now();
     const j = await pollJob(id, (j) => {
       drawCurve(j.progress, metric);
@@ -1159,8 +1176,11 @@ $("btn-train").onclick = async () => {
   } catch (e) { $("train-status").textContent = ""; showError(e); }
   st.training = false;
   trainBusy(false);
+  $("btn-train-more").disabled = false;
   markSteps();
-};
+}
+$("btn-train").onclick = () => runTrain(false);
+$("btn-train-more").onclick = () => runTrain(true);
 function trainBusy(on, frac = null) {                         // 학습 중: 도는 표시 + epoch 막대 (첫 epoch 전에는 흐르는 막대)
   $("train-status").classList.toggle("busy", on);
   const bar = $("train-bar");
@@ -1216,6 +1236,7 @@ function renderTrainResult(r) {
   if (r.metric_name === "map50") return renderDetResult(r);
   if (r.fc_samples) return renderFcResult(r);
   if (r.ae_samples) return renderAeResult(r);
+  if (r.recon) return renderGenResult(r);
   $("det-box").hidden = true;
   const isAcc = r.metric_name === "accuracy";
   const f = (v) => (v === null ? "-" : isAcc ? pct(v) : v.toFixed(3));
@@ -1231,6 +1252,44 @@ function renderTrainResult(r) {
   renderWarnings("train-warnings", r.warnings);
   renderConfusion("train-confusion", r.confusion, r.recall, "시험 데이터", Array.isArray(r.pred));
   renderScatter("train-scatter", r.scatter, r.mae, "시험 데이터");
+}
+// ---------------- 생성 결과: 복원 오차, 시험 샘플과 되살린 것, 새 샘플 만들기 (정규분포에서 뽑아 디코더로)
+function genPic(v, w = 150) {                              // 샘플 하나 → 그림·신호·표 한 줄
+  const s = st.summary, im = s.image;
+  if (im) return svgImage(v, im[0], im[1], Math.max(2, Math.round(w / 1.6 / im[1])));
+  if (inputKind() === "tabular") return `<span class="mono">${v.slice(0, 6).map((x) => Number(x.toPrecision(4))).join(", ")}${v.length > 6 ? " …" : ""}</span>`;
+  return (s.channels || 1) > 1 ? svgChannels(v, s.channels, w, 50) : svgSeries([{ v, color: FC_COLORS.pred }], w, 50);
+}
+function renderGenResult(r) {
+  const wide = st.summary.image ? "" : " wide";               // 신호·표는 칸을 넓게
+  const m = (v) => (v === null || v === undefined ? "-" : Number(v.toPrecision(4)));
+  $("train-result").innerHTML = kv([["Epochs", epochsText(r)], ["시험 복원 오차", `<b>${m(r.test_metric)}</b>`], ["학습 복원 오차", m(r.train_metric)]]);
+  renderWarnings("train-warnings", r.warnings);
+  $("train-confusion").innerHTML = $("train-scatter").innerHTML = "";
+  $("det-box").hidden = false;
+  $("det-box").innerHTML = `<h3>새 샘플</h3><div class="row"><button id="gen-make" class="primary">새 샘플 만들기</button>` +
+    `<label class="inline">폭 <select id="gen-scale"><option value="0.5">0.5</option><option value="1" selected>1</option><option value="1.5">1.5</option></select></label>` +
+    `<button id="gen-csv" disabled>CSV 받기</button></div><div id="gen-out" class="gen-grid${wide}"></div>` +
+    `<h3>시험 샘플 → 되살린 것</h3><div class="gen-grid pair${wide}">` +
+    r.recon.map((p) => `<div class="gen-cell">${genPic(p.input, 110)}${genPic(p.output, 110)}</div>`).join("") + `</div>`;
+  let seed = 0, csv = "";
+  const make = async () => {
+    try {
+      const g = await api("/api/generate", { n: 16, seed: seed++, scale: Number($("gen-scale").value) });
+      csv = g.csv;
+      $("gen-csv").disabled = false;
+      $("gen-out").innerHTML = g.samples.map((v) => `<div class="gen-cell">${genPic(v, 110)}</div>`).join("");
+    } catch (e) { showError(e); }
+  };
+  $("gen-make").onclick = make;
+  $("gen-csv").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = "generated.csv";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  make();
 }
 // ---------------- 시계열 예측 결과: MAE (원래 단위)·단순 예측과 비교·몇 칸 뒤까지 맞히는지·시험 창 예시
 function fcVerdict(r) {
@@ -1583,6 +1642,7 @@ function renderCompare() {                                  // 학습 기록 둘
     ["Epochs", a.results.epochs_done ?? "-", b.results.epochs_done ?? "-"],
     ["Learning rate", a.settings.lr ?? "-", b.settings.lr ?? "-"],
     ["Batch size", a.settings.batch_size ?? "-", b.settings.batch_size ?? "-"],
+    ["학습 방법", optimText(a.settings), optimText(b.settings)],
     ["가장 좋은 epoch 남기기", a.settings.keep_best ? "예" : "아니오", b.settings.keep_best ? "예" : "아니오"],
     ["손실", esc(lossText(a.settings)), esc(lossText(b.settings))],
     ["시험", f(a, a.results.test_metric), f(b, b.results.test_metric)],
@@ -1620,6 +1680,11 @@ function applySettings(s) {                              // 학습 설정 칸에
   if (s.batch_size) $("batch").value = s.batch_size;
   if (s.keep_best !== undefined) $("keep-best").checked = !!s.keep_best;
   if (s.early_stop !== undefined) $("early-stop").value = String(s.early_stop || 0);
+  $("optimizer").value = s.optimizer || "adam";
+  $("weight-decay").value = String(Number(s.weight_decay) || 0);
+  $("schedule").value = s.schedule || "constant";
+  $("grad-clip").value = String(Number(s.grad_clip) || 0);
+  $("amp").value = s.amp === "auto" ? "auto" : "off";
   st.loss = s.loss || null;
   renderLoss();
 }
@@ -1765,7 +1830,7 @@ const PREDICT_FORMAT = {
     : s.anomaly ? `CSV: 한 행 = 샘플 하나, 값 열 ${s.length}개. 상태 열이 있으면 맞았는지도 봅니다.`
     : `CSV: 한 행 = 샘플 하나, 값 열 ${s.image ? s.image[0] * s.image[1] : s.length}개. 정답 열이 있으면 맞았는지도 봅니다.`,
   folder: (s) => s.task === "detection" ? `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백 ${s.image[0]}×${s.image[1]}로 맞추고 그림마다 사물을 찾아 상자로 표시합니다. CSV에는 상자마다 한 줄 (위치는 그림 크기에 대한 0–1 비율).`
-    : `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. 흑백으로 바꾸고 ${s.image[0]}×${s.image[1]}로 맞춥니다. 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.`,
+    : `그림 폴더: 그림 파일(png·jpg·bmp)을 넣은 폴더. ${(s.channels || 1) === 3 ? "컬러(RGB)" : "흑백"}으로 바꾸고 ${s.image[0]}×${s.image[1]}로 맞춥니다. 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.`,
   series: () => "시계열 폴더: 샘플마다 CSV 하나 (학습 때와 같은 값 열·길이 맞추기). 클래스 이름 하위 폴더에 나눠 넣으면 그것을 정답으로 봅니다.",
 };
 function renderPredictStep() {

@@ -104,6 +104,16 @@ def task_result(studio: Studio, out_bytes, out_tr_bytes) -> dict:
     return _clean(tr(d, out, out_tr))
 
 
+@_wrap
+def gen_view(studio: Studio, out_bytes, n: int, seed: int) -> dict:
+    """생성: 화면(엔진)이 디코더로 만든 출력(float32, 정규화한 값) → 원래 단위의 새 샘플과 CSV (generate.view)."""
+    from blocklearning import generate
+    d = studio.need_data()
+    raw = out_bytes.to_bytes() if hasattr(out_bytes, "to_bytes") else bytes(out_bytes)
+    out = np.frombuffer(raw, dtype=np.float32).reshape(int(n), -1).astype(np.float64)
+    return _clean(generate.view(d, d.raw(out), int(seed)))
+
+
 def set_trained(studio: Studio, graph_json: str, settings_json: str, results_json: str, state=None) -> None:
     """화면에서 학습이 끝났음을 기록 (코드·프로젝트 저장이 학습한 그래프를 알게). state가 있으면 학습 기록에도 더함."""
     studio.model_graph = json.loads(graph_json)

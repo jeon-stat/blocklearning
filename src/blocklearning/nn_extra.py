@@ -545,6 +545,72 @@ class CausalConv1d(nn.Conv1d):
         return F.conv1d(F.pad(x, (pad, 0)), self.weight, self.bias, self.stride, 0, self.dilation, self.groups)
 
 
+class VAELatent(nn.Module):
+    """VAE 잠재 공간: 들어온 벡터 → 평균 μ와 로그 분산 log σ² (각 dim개). 학습 때는 z = μ + σ·ε (ε ~ N(0, 1)), 평가 때는 z = μ.
+    학습 때 KL(N(μ, σ²) ‖ N(0, 1))의 샘플 평균을 self.kl에 남김 → 손실에 β·KL ÷ 출력 수를 더함 (jobs.fit).
+    새 샘플 만들기: z ~ N(0, 1)을 이 블록의 출력 자리에 넣고 뒤(디코더)만 실행 (GraphNet.generate)."""
+
+    def __init__(self, c, dim, beta=1.0):
+        super().__init__()
+        self.mu, self.logvar = nn.Linear(c, dim), nn.Linear(c, dim)
+        self.beta, self.kl = float(beta), None
+
+    def forward(self, x):
+        mu, lv = self.mu(x), self.logvar(x).clamp(-10.0, 10.0)
+        if not self.training:
+            self.kl = None
+            return mu
+        self.kl = -0.5 * torch.mean(torch.sum(1 + lv - mu * mu - lv.exp(), dim=1))
+        return mu + torch.exp(0.5 * lv) * torch.randn_like(mu)
+
+
+class TorchvisionBackbone(nn.Module):
+    """torchvision이 ImageNet으로 미리 학습한 그림 모델의 특징 추출기 (설치형). 가중치는 처음 쓸 때 torchvision이 내려받아 둠.
+    그림 (N, 1 또는 3, H, W) → 그림마다 0~1로 → size×size (bilinear) → ImageNet 평균·표준편차로 정규화 → 특징 벡터.
+    tune: frozen(학습하지 않음) · last(마지막 단계만 함께 학습) · all(전체 미세조정). 고정한 부분의 BatchNorm 통계는 바꾸지 않음."""
+
+    WEIGHTS = "DEFAULT"                                   # 시험에서는 None (내려받지 않음)
+
+    def __init__(self, arch="resnet18", size=224, tune="frozen"):
+        super().__init__()
+        import torchvision.models as tvm
+        m = getattr(tvm, arch)(weights=self.WEIGHTS)
+        if arch.startswith("resnet"):
+            m.fc, last = nn.Identity(), m.layer4
+        elif arch == "convnext_tiny":
+            m.classifier[2], last = nn.Identity(), m.features[-1]
+        elif arch == "vit_b_16":
+            m.heads, last = nn.Identity(), m.encoder.layers[-1]
+        else:                                             # efficientnet_b0 · mobilenet_v3_large
+            m.classifier, last = nn.Identity(), m.features[-1]
+        self.net, self.size, self.tune = m, size, tune
+        self._last = [last]                               # 목록에 넣어 둠 (모듈로 두 번 등록되지 않게)
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1), persistent=False)
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1), persistent=False)
+        self.requires_grad_(tune == "all")
+        if tune == "last":
+            last.requires_grad_(True)
+
+    def train(self, mode=True):
+        super().train(mode)
+        if mode and self.tune != "all":                  # 고정한 부분은 늘 평가 모드 (BatchNorm 통계 그대로)
+            self.net.eval()
+            if self.tune == "last":
+                self._last[0].train(True)
+        return self
+
+    def forward(self, x):
+        n = x.shape[0]
+        flat = x.reshape(n, -1)
+        lo, hi = flat.min(1)[0].view(n, 1, 1, 1), flat.max(1)[0].view(n, 1, 1, 1)
+        x = (x - lo) / (hi - lo).clamp_min(1e-6)
+        if x.shape[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+        if x.shape[2] != self.size or x.shape[3] != self.size:
+            x = F.interpolate(x, size=(self.size, self.size), mode="bilinear", align_corners=False)
+        return self.net((x - self.mean) / self.std)
+
+
 class MobileNetV3Small(nn.Module):
     """Google이 ImageNet으로 미리 학습한 MobileNetV3-Small 특징 추출기 (TF Hub mobilenet_v3_small_100_224/feature_vector,
     Apache 2.0, BatchNorm은 합성곱에 접혀 있음). 학습하지 않음(고정).
@@ -640,4 +706,4 @@ class NormalDistance(nn.Module):
         return (s / d.shape[1]).unsqueeze(1)
 
 
-RANDOM_MODULES = (DropPath, GaussianNoise, RandomFlip, RandomRotation, RandomShift, RandomZoom, RandomScale, RandomStretch)
+RANDOM_MODULES = (DropPath, GaussianNoise, RandomFlip, RandomRotation, RandomShift, RandomZoom, RandomScale, RandomStretch, VAELatent)

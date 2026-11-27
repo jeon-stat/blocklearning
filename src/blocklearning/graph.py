@@ -312,7 +312,7 @@ def check_graph(graph, length: int, n_out: int, image: tuple = None, rules: bool
     sc = c.scope(top, INPUT)
     if not image and any(sc.nodes[k]["type"] in RNN_TYPES and INPUT in (sc.nodes[k].get("inputs") or []) for k in sc.nodes):
         kind = "rnn"
-    start = (1,) + tuple(image) if image else (channels_of(length), int(length))
+    start = (channels_of(length),) + tuple(image) if image else (channels_of(length), int(length))
     c.shapes[INPUT] = start
     c.shape_pass(sc, start)
     if rules and not c.issues:                             # 모양이 다 맞을 때만 (계획을 만들어 봄)
@@ -334,7 +334,7 @@ def _distance_rule(c, sc, graph, length, n_out, image) -> None:
 
 # ---------------------------------------------------------------- torch 모델 만들기
 
-FROZEN_MODULES = ("MobileNetV3Small",)                     # 학습하지 않는 사전학습 모듈 (nn_extra)
+FROZEN_MODULES = ("MobileNetV3Small", "TorchvisionBackbone")                     # 학습하지 않는 사전학습 모듈 (nn_extra)
 
 
 def _key(nid: str) -> str:
@@ -416,6 +416,33 @@ def _graph_net_class():
                 x = x.transpose(1, 2)
             return self._exec(self.plan, {INPUT: x}, self.mods, rec)[self.output_id]
 
+        def latent(self):
+            """VAE 잠재 공간 블록의 (노드 id, 모듈), 없으면 None."""
+            for st in self.plan:
+                m = self.mods[_key(st[1])] if _key(st[1]) in self.mods else None
+                if type(m).__name__ == "VAELatent":
+                    return st[1], m
+            return None
+
+        def vae_kl(self):
+            """학습 중 잠재 공간 블록들의 β·KL 합 (없으면 None)."""
+            ks = [m.beta * m.kl for m in self.modules() if type(m).__name__ == "VAELatent" and m.kl is not None]
+            return sum(ks) if ks else None
+
+        def generate(self, z):
+            """잠재 값 z (N, dim) → 디코더(잠재 공간 블록 뒤)만 실행한 출력. 디코더가 앞쪽 블록을 쓰면 ValueError."""
+            lat = self.latent()
+            if lat is None:
+                raise ValueError("모델에 VAE 잠재 공간 블록이 없음")
+            have, steps = {lat[0]}, []
+            for st in self.plan:
+                if st[1] != lat[0] and all(i in have for i in st[2]):
+                    steps.append(st)
+                    have.add(st[1])
+            if self.output_id not in have:
+                raise ValueError("디코더(잠재 공간 뒤)가 잠재 공간 앞의 블록을 씀")
+            return self._exec(steps, {lat[0]: z}, self.mods, None)[self.output_id]
+
         def trace(self, x) -> dict:
             """모든 노드의 출력 (Repeat 안은 마지막 반복). 샘플 따라가기용."""
             rec: dict = {INPUT: x}
@@ -471,7 +498,7 @@ def build_graph_model(graph: dict, length: int, n_out: int, seed: int = 0, image
             plan.append(("layer2" if t in X.TWO_INPUT else "layer", k, ins))
         return plan, mods
 
-    plan, mods = build(sc, (1,) + tuple(image) if image else (channels_of(length), int(length)))
+    plan, mods = build(sc, (channels_of(length),) + tuple(image) if image else (channels_of(length), int(length)))
     return _graph_net_class()(plan, mods, checked.kind, sc.exit, block_modules).float()
 
 

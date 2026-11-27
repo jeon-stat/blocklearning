@@ -39,7 +39,22 @@ def frozen_names(graph: dict, length: int, n_out, image: tuple = None) -> set:
     """그래프의 고정 가중치 이름 (모델 state_dict 이름). 프로젝트·학습 기록에서 빼는 것."""
     from blocklearning.codegen import make_plan, param_specs
     plan = make_plan(graph, length, n_out, image)
-    return {p[0] for s in plan.steps for p in param_specs(s) if p[2] == "frozen"}
+    out = {p[0] for s in plan.steps for p in param_specs(s) if p[2] == "frozen"}
+    for s in plan.steps:                                  # 사전학습 CNN(torchvision): 학습하지 않는 가중치 (만들 때 torchvision이 채움)
+        if s.type == "tv_backbone" and s.cfg.get("tune", "frozen") != "all":
+            out |= {f"{s.key}.{n}" for n in _tv_frozen(s.cfg.get("arch", "resnet18"), s.cfg.get("tune", "frozen"))}
+    return out
+
+
+def _tv_frozen(arch: str, tune: str) -> set:
+    from blocklearning import nn_extra
+    cls = nn_extra.TorchvisionBackbone
+    keep, cls.WEIGHTS = cls.WEIGHTS, None                 # 이름만 알면 되므로 내려받지 않음
+    try:
+        m = cls(arch, 224, tune)
+    finally:
+        cls.WEIGHTS = keep
+    return {n for n, p in m.named_parameters() if not p.requires_grad}
 
 
 def strip(state: dict, frozen: set) -> dict:

@@ -295,6 +295,7 @@ function rope(x) {                                     // (N, heads, T, d): 짝 
 }
 // 샘플 따라가기의 어텐션 지도: trace(x, attn)가 도는 동안만 블록마다 softmax 가중치(head 평균)를 받아 둠
 let ATT = null, ATT_NODE = null;
+let VAE_KL = null;                                       // 학습 중 forward: VAE 잠재 공간 블록마다 [β, KL] (손실에 더함)
 const keepAttn = (w) => { if (ATT && ATT_NODE) ATT[ATT_NODE] = w.slice([0], [1]).squeeze([0]); };   // 배치 첫 샘플
 function attend(q, k, v, causal) {                    // (N, h, T, d) → softmax(QKᵀ/√d)V
   let att = tf.matMul(q, k, false, true).mul(1 / Math.sqrt(q.shape[3]));
@@ -338,14 +339,14 @@ function alongLast(x, M) { const sh = x.shape; return tf.matMul(x.reshape([-1, s
 function convT(x, W, b, cfg, two) {                   // ConvTranspose: 입력 칸 사이에 0 (stride−1개) → 양쪽 채움 → 뒤집은 커널로 보통 Conv
   const k = cfg.kernel, s = cfg.stride || 2;
   const [p, op] = s === 2 ? ({ 1: [0, 1], 2: [0, 0], 3: [1, 1], 4: [1, 0], 5: [2, 1] })[k] : [(k - 1) / 2, 0];
-  const dil = (t, ax) => {                             // ax 축에 0 끼우기
-    if (s === 1) return t;
-    const sh = t.shape, n = sh[ax];
-    const e = t.expandDims(ax + 1), padv = new Array(e.rank).fill([0, 0]);
-    padv[ax + 1] = [0, s - 1];
-    const r = e.pad(padv), ns = sh.slice(); ns[ax] = n * s;
-    const begin = new Array(sh.length).fill(0), size = ns.slice(); size[ax] = (n - 1) * s + 1;
-    return r.reshape(ns).slice(begin, size);
+  const dil = (t, ax) => {                             // ax 축(마지막 또는 높이)에 0 끼우기: 0·1 행렬을 곱함 (값은 그대로)
+    if (s === 1) return t;                             // (5차원 pad를 쓰면 브라우저 GPU(WebGL)가 계산 프로그램을 만들지 못함)
+    const last = ax === t.rank - 1, u = last ? t : t.transpose([0, 1, 3, 2]);
+    const sh = u.shape, n = sh[sh.length - 1], nd = (n - 1) * s + 1;
+    const E = new Float32Array(n * nd);
+    for (let i = 0; i < n; i++) E[i * nd + i * s] = 1;
+    const r = tf.matMul(u.reshape([-1, n]), tf.tensor2d(E, [n, nd])).reshape(sh.slice(0, -1).concat([nd]));
+    return last ? r : r.transpose([0, 1, 3, 2]);
   };
   let h = dil(x, 2);
   if (two) h = dil(h, 3);
@@ -386,6 +387,13 @@ function imgTransform(x, mats) {                      // 그림 (N, C, H, W)에 
   return tf.transpose(tf.image.transform(tf.transpose(x, [0, 2, 3, 1]), tf.tensor2d(mats), "bilinear", "constant"), [0, 3, 1, 2]);
 }
 const EXTRA = {
+  vae_latent: (x, st, P, k, training) => {               // nn_extra.VAELatent: 학습 때 z = μ + σ·ε 와 KL, 평가 때 z = μ
+    const mu = linear(x, P[k + ".mu.weight"], P[k + ".mu.bias"]);
+    if (!training) return mu;
+    const lv = linear(x, P[k + ".logvar.weight"], P[k + ".logvar.bias"]).clipByValue(-10, 10);
+    if (VAE_KL) VAE_KL.push([st.cfg.beta ?? 1, tf.scalar(-0.5).mul(tf.add(1, lv).sub(mu.square()).sub(lv.exp()).sum(1).mean())]);
+    return mu.add(lv.mul(0.5).exp().mul(tf.randomNormal(mu.shape)));
+  },
   glu: (x, st, P, k) => {
     const h = linearCh(x, P[k + ".proj.weight"], P[k + ".proj.bias"]);
     const [a, g] = tf.split(h, 2, 1);
@@ -662,6 +670,8 @@ class Net {
 
   forward(x, training = false, pending = [], record = null) {
     const vals = this.start ? { [this.start]: x } : { x: this.kind === "rnn" ? tf.transpose(x, [0, 2, 1]) : x };   // 순환 모델 입력 (N, L, 1) → 층들이 쓰는 (N, 1, L)
+    VAE_KL = training ? [] : null;
+    this.kl = VAE_KL;
     for (const st of this.plan.steps) {
       if (st.name in vals) continue;                      // 미리 뽑아 둔 특징
       ATT_NODE = st.node;
@@ -672,6 +682,18 @@ class Net {
     if (record) {
       for (const [rid, nm] of Object.entries(this.plan.aliases || {})) record[rid] = vals[nm];
     }
+    return vals[this.plan.out];
+  }
+
+  generate(z) {                                          // GraphNet.generate: 잠재 값 z → 잠재 공간 블록 뒤(디코더)만
+    const lat = this.plan.steps.find((st) => st.type === "vae_latent");
+    if (!lat) throw new Error("모델에 VAE 잠재 공간 블록이 없음");
+    const vals = { [lat.name]: z };
+    for (const st of this.plan.steps) {
+      if (st.name === lat.name || !st.inputs.every((n) => n in vals)) continue;
+      vals[st.name] = layer(st, st.inputs.map((n) => vals[n]), this.P, false, []);
+    }
+    if (!(this.plan.out in vals)) throw new Error("디코더(잠재 공간 뒤)가 잠재 공간 앞의 블록을 씀");
     return vals[this.plan.out];
   }
 
@@ -797,7 +819,7 @@ async function fitDistance(plan, d, fit, onEpoch) {
 
 // ------------------------------------------------------------ 데이터 모양: (n, 특징) → 모델 입력
 function toInput(X, n, kind, length, image, channels = 1) {   // X: Float32Array (n × 특징), 여러 채널이면 채널이 먼저
-  if (kind === "image") return tf.tensor4d(X, [n, 1, image[0], image[1]]);
+  if (kind === "image") return tf.tensor4d(X, [n, channels || 1, image[0], image[1]]);
   const x = tf.tensor3d(X, [n, channels || 1, length]);
   if (kind !== "rnn") return x;
   const t = x.transpose([0, 2, 1]);                        // 순환 모델: (n, L, C)
@@ -809,7 +831,7 @@ function toInput(X, n, kind, length, image, channels = 1) {   // X: Float32Array
 // X: 샘플 하나의 정규화한 값 (데이터 순서), d: 데이터 정보 (task, length, channels, image, seg, multi, det)
 function saliency(net, X, d) {
   const C = d.channels || 1, L = d.length;
-  const shape = (xf) => (net.kind === "image" ? xf.reshape([1, 1, d.image[0], d.image[1]])
+  const shape = (xf) => (net.kind === "image" ? xf.reshape([1, C, d.image[0], d.image[1]])
     : net.kind === "rnn" ? xf.reshape([1, C, L]).transpose([0, 2, 1]) : xf.reshape([1, C, L]));
   const score = (o, xf) => {
     if (d.task === "classification") return o.max();
@@ -825,13 +847,20 @@ function saliency(net, X, d) {
   });
   let v = g.dataSync().slice();
   g.dispose();
-  if (!d.image && C > 1) {                                   // 여러 채널: 시점마다 더함
+  if (C > 1) {                                               // 여러 채널 (시계열·컬러 그림): 시점·픽셀마다 더함
     const s = new Float32Array(L);
     for (let c = 0; c < C; c++) for (let t = 0; t < L; t++) s[t] += v[c * L + t];
     v = s;
   }
   const hi = v.reduce((a, b) => Math.max(a, b), 0) || 1;
   return Array.from(v, (x) => Math.round((x / hi) * 1e4) / 1e4);
+}
+
+// 생성: 복원 오차 (generate.metric과 같음) — 정규화한 값의 평균 제곱 오차
+function genMetric(out, X) {
+  let s = 0;
+  for (let i = 0; i < X.length; i++) s += (out[i] - X[i]) ** 2;
+  return s / Math.max(1, X.length);
 }
 
 // ------------------------------------------------------------ 지표 (jobs.py와 같음)
@@ -998,6 +1027,39 @@ function regressionView(out, y, nOut) {
   return [mae / y.length, { y: ys, pred: ps }];
 }
 
+// ------------------------------------------------------------ 학습 방법 (optim.py와 같음)
+const OPT_MOMENTUM = 0.9, OPT_WARMUP = 0.05;
+function optimConfig(s) {
+  return { optimizer: s.optimizer || "adam", weight_decay: Number(s.weight_decay) || 0, schedule: s.schedule || "constant",
+    grad_clip: Number(s.grad_clip) || 0 };
+}
+function lrAt(step, total, lr, schedule) {                 // optim.lr_at
+  if (schedule === "constant" || total <= 1) return lr;
+  let t;
+  if (schedule === "warmup_cosine") {
+    const warm = Math.max(1, Math.round(total * OPT_WARMUP));
+    if (step < warm) return lr * (step + 1) / warm;
+    t = (step - warm) / Math.max(1, total - warm);
+  } else t = step / total;
+  return lr * 0.5 * (1 + Math.cos(Math.PI * Math.min(1, t)));
+}
+// 한 묶음 갱신 (torch와 같은 순서): 기울기 → 전체 크기 자르기 → weight decay (AdamW는 가중치를 줄인 뒤) → 옵티마이저
+function optimStep(opt, oc, vars, lr, f) {
+  const { value, grads } = tf.variableGrads(f, vars);
+  const byName = Object.fromEntries(vars.map((v) => [v.name, v]));
+  const names = Object.keys(grads);
+  if (oc.grad_clip) {
+    const norm = Math.sqrt(tf.addN(names.map((k) => grads[k].square().sum())).dataSync()[0]);
+    const c = oc.grad_clip / (norm + 1e-6);
+    if (c < 1) for (const k of names) grads[k] = grads[k].mul(c);
+  }
+  if (oc.weight_decay && oc.optimizer !== "adamw") for (const k of names) grads[k] = grads[k].add(byName[k].mul(oc.weight_decay));
+  if (oc.optimizer === "sgd") opt.setLearningRate(lr); else opt.learningRate = lr;
+  if (oc.weight_decay && oc.optimizer === "adamw") for (const k of names) byName[k].assign(byName[k].mul(1 - lr * oc.weight_decay));
+  opt.applyGradients(grads);
+  return value;
+}
+
 // ------------------------------------------------------------ 학습 (jobs.fit·train_job과 같은 흐름)
 // d: {X_train, X_test (Float32Array), y_train, y_test (Float32Array·Int32Array), n_train, n_test, task, n_out, length, image}
 // s: {epochs, lr, batch_size, seed}. onEpoch({epoch, loss, test_metric}) → true면 멈춤.
@@ -1007,14 +1069,15 @@ async function train(plan, d, s, onEpoch, isCancelled) {
   const seg = d.task === "segmentation" ? d.seg : null;    // 구간 분할: {n_cls, length}, 정답은 시점마다 상태 번호
   const multi = d.task === "multi" ? d.multi : null;      // 정답 여러 개: {heads}, 정답은 (샘플, 정답 수)
   const reg = !det && !seg && !multi && d.task !== "classification";   // 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화 (jobs.target_scale)
-  const ae = d.task === "anomaly", fc = d.task === "forecast";
-  const nY = ae || fc || multi ? d.n_out : 1;
-  const target = ae ? d.X_train : d.y_train;              // 이상 탐지는 입력을 되살림
+  const ae = d.task === "anomaly", fc = d.task === "forecast", gen = d.task === "generation";
+  const nY = ae || fc || multi || gen ? d.n_out : 1;
+  const target = ae || gen ? d.X_train : d.y_train;       // 이상 탐지·생성은 입력을 되살림
   const score = (out, which) => {
     const y = which === "test" ? d.y_test : d.y_train;
     if (det) return detMetric(out, det[which], det);
     if (fc) return fcMetric(out, y);
     if (ae) return aeMetric(out, which === "test" ? d.X_test : d.X_train, y);
+    if (gen) return genMetric(out, which === "test" ? d.X_test : d.X_train);
     if (seg) return segMetric(out, y, seg.n_cls, seg.length);
     if (multi) return multiMetric(out, y, multi.heads, d.n_out);
     return metric(out, y, d.task, d.n_out);
@@ -1035,6 +1098,18 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     mu[h.start] = m; sd[h.start] = Math.sqrt(q / d.n_train) || 1;
   });
   const back = (out) => (reg || multi ? out.map((v, i) => v * sd[i % nY] + mu[i % nY]) : out);
+  const outLayer = () => {                                 // 출력층 (정규화 되돌림을 접어 넣는 곳)
+    const last = plan.steps.find((st) => st.name === plan.out), kk = last.key + (last.in_shape.length >= 2 ? ".1" : "");
+    return [net.P[kk + ".weight"], net.P[kk + ".bias"]];
+  };
+  if (s.init_state) {                                      // 이어 학습: 지금 모델의 가중치에서 (jobs.train_job init_state)
+    net.load(s.init_state);
+    if (reg || multi) {                                    // 원래 단위로 접어 넣었던 되돌림을 풂 (_unfold_target_scale)
+      const [W, b] = outLayer(), sdT = tf.tensor1d(Float32Array.from(sd)), muT = tf.tensor1d(Float32Array.from(mu));
+      tf.tidy(() => { b.assign(b.sub(muT).div(sdT)); W.assign(W.div(sdT.reshape([-1, 1]))); });
+      sdT.dispose(); muT.dispose();
+    }
+  }
   const Xtr = toInput(d.X_train, d.n_train, plan.kind, d.length, d.image, d.channels);
   const Xte = toInput(d.X_test, d.n_test, plan.kind, d.length, d.image, d.channels);
   const head = frozenHead(plan);                           // 고정한 사전학습 층: 특징을 한 번만 뽑고 뒷부분만 학습
@@ -1048,10 +1123,13 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     : multi ? tf.tensor2d(Float32Array.from(d.y_train, (v, i) => { const h = multi.heads[i % T]; return h.kind === "value" ? (v - mu[h.start]) / sd[h.start] : v; }), [d.n_train, T])
     : reg ? tf.tensor2d(Float32Array.from(target, (v, i) => (v - mu[i % nY]) / sd[i % nY]), [d.n_train, nY])
     : tf.oneHot(tf.tensor1d(Int32Array.from(d.y_train), "int32"), d.n_out).toFloat();
-  const opt = tf.train.adam(s.lr || 1e-3, 0.9, 0.999, 1e-8);
+  const oc = optimConfig(s), lr0 = s.lr || 1e-3;
+  const opt = oc.optimizer === "sgd" ? tf.train.momentum(lr0, OPT_MOMENTUM, true) : tf.train.adam(lr0, 0.9, 0.999, 1e-8);
   const rand = rng((s.seed || 0) * 104729 + 3);
   const spec = s.loss || (multi ? multi.heads.map((h) => ({ term: h.kind === "class" ? "ce" : "mse", w: 1, head: h.name, label: h.name })) : null);
   const custom = spec ? buildLoss(spec, { seg, det, cw: s.class_weights, reg, heads: multi && multi.heads }) : null;   // 조립한 손실 (없으면 과제의 기본)
+  const vaeKL = (loss, yb) => (gen && net.kl && net.kl.length       // 생성 (VAE): + β·KL ÷ 출력 수 (jobs.fit)
+    ? net.kl.reduce((a, [b, k]) => a.add(k.mul(b / yb.shape[1])), loss) : loss);
   const lossOf = (out, yb, rec) => (custom ? custom(out, yb, net, rec).total
     : det ? detLoss(out, yb, det.grid, det.per_cell)
     : seg ? tf.losses.softmaxCrossEntropy(yb, out.reshape([-1, seg.n_cls, seg.length]).transpose([0, 2, 1]))   // 시점마다
@@ -1068,6 +1146,8 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     vi.dispose(); ti.dispose();
   }
   const bs = Math.max(1, s.batch_size || 32), n = Xfit.shape[0];
+  const total = (s.epochs || 30) * Math.ceil(n / bs);
+  let step = 0;
   let halted = false, done = 0, bestKey = Infinity, bestEpoch = null, since = 0, early = false, bestState = null, kept = [];
   const dropBest = () => { if (bestState) Object.values(bestState).forEach((t) => t.dispose()); bestState = null; };
   net.start = head;
@@ -1080,20 +1160,21 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       for (let i = 0; i < n; i += bs) {
         if (Date.now() - lastYield > 50) { await yieldNow(); lastYield = Date.now(); }   // 화면이 멈추지 않게 · [멈추기]를 받음
         if (isCancelled && isCancelled()) { halted = true; break; }                        // 묶음마다 확인: 바로 멈춤
+        step++;
         const idx = perm.slice(i, i + bs);
         if (idx.length === 1 && n > 1) continue;            // BatchNorm은 학습 때 샘플 하나짜리 묶음을 못 받음
         const pending = [];
         const loss = tf.tidy(() => {
           const ii = tf.tensor1d(idx, "int32");
           const xb = tf.gather(Xfit, ii), yb = tf.gather(yfit, ii);
-          return opt.minimize(() => {
+          return optimStep(opt, oc, net.trainable, lrAt(step - 1, total, lr0, oc.schedule), () => {
             const rec = custom && custom.needsRecord ? {} : null;
             const out = net.forward(xb, true, pending, rec);
-            if (!custom) return lossOf(out, yb);
-            const { total, parts } = custom(out, yb, net, rec);
+            if (!custom) return vaeKL(lossOf(out, yb), yb);
+            const { total: tot, parts } = custom(out, yb, net, rec);
             kept = parts.map(([k, v]) => [k, tf.keep(v)]);          // 항마다의 값 (학습 곡선)
-            return total;
-          }, true, net.trainable);
+            return vaeKL(tot, yb);
+          });
         });
         for (const [buf, val] of pending) {
           if (val) { buf.assign(val); val.dispose(); } else tf.tidy(() => buf.assign(buf.add(tf.scalar(1, "int32"))));   // 정수(int32) 그대로 +1 (숫자 1을 더하면 실수가 됨)
@@ -1130,9 +1211,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     }
     if (bestState) { for (const [k, v] of Object.entries(bestState)) net.P[k].assign(v); dropBest(); }   // 가장 좋았던 epoch로
     if (reg || multi) {                                     // 정규화한 정답으로 배운 출력층에 되돌림을 접어 넣음 (원래 단위로 냄)
-      const last = plan.steps.find((st) => st.name === plan.out);
-      const kk = last.key + (last.in_shape.length >= 2 ? ".1" : "");
-      const W = net.P[kk + ".weight"], b = net.P[kk + ".bias"];
+      const [W, b] = outLayer();
       const sdT = tf.tensor1d(Float32Array.from(sd)), muT = tf.tensor1d(Float32Array.from(mu));
       W.assign(W.mul(sdT.reshape([-1, 1]))); b.assign(b.mul(sdT).add(muT));
       sdT.dispose(); muT.dispose();
@@ -1141,11 +1220,11 @@ async function train(plan, d, s, onEpoch, isCancelled) {
     // 사전학습 층이 있으면 뽑아 둔 특징에서 (CPU로 그 큰 층을 다시 돌리지 않게)
     // [멈추기]로 중간에 멈추면 학습 데이터 채점과 CPU로 맞춰 보기는 건너뜀 (무거운 모델은 몇 분 걸림). 학습 출력이 결과에 꼭 필요한 과제(이상 탐지 기준값 등)는 그대로
     const chk = (n) => (halted ? 0 : n);
-    const te = await checkedPredict(net, Fte, chk(d.n_test)), tr = halted && !(ae || fc || seg || multi) ? null : await checkedPredict(net, Ftr, chk(d.n_train));
+    const te = await checkedPredict(net, Fte, chk(d.n_test)), tr = halted && !(ae || fc || seg || multi || gen) ? null : await checkedPredict(net, Ftr, chk(d.n_train));
     net.start = null;
     const out = te.out, outTr = tr ? tr.out : null;
     const r = { epochs_done: done, test_metric: score(out, "test"),
-      metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : multi ? "mean" : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
+      metric_name: det ? "map50" : ae ? (aeHasBoth(d.y_test) ? "auc" : "recon") : gen ? "recon" : multi ? "mean" : reg ? "r2" : "accuracy", warnings: [], confusion: null, recall: null,
       train_metric: outTr ? score(outTr, "train") : null,   // 학습 데이터 성적 (시험과 차이가 크면 외운 것)
       best_epoch: bestEpoch, early_stopped: early, n_val: vIdx ? vIdx.length : 0 };
     if (!te.ok || (tr && !tr.ok))
@@ -1153,7 +1232,7 @@ async function train(plan, d, s, onEpoch, isCancelled) {
       r.warnings.push({ message: "이 브라우저의 GPU가 결과 일부를 틀리게 내서, 아래 성적은 CPU로 다시 계산했습니다 (성적은 맞음)",
         hint: "브라우저 창이 가려져 있거나 다른 탭을 보는 동안 학습하면 생길 수 있습니다. 자주 나오면 이 탭을 띄워 둔 채 학습하세요" });
     if (det) Object.assign(r, detResult(out, det.test, det));
-    else if (ae || fc || seg || multi) return { net, result: r, out, outTr };   // 결과 화면 값은 Python (jobs.task_result)이 출력으로 만듦
+    else if (ae || fc || seg || multi || gen) return { net, result: r, out, outTr };   // 결과 화면 값은 Python (jobs.task_result)이 출력으로 만듦
     else if (reg) [r.mae, r.scatter] = regressionView(out, d.y_test, d.n_out);
     else {
       [r.confusion, r.recall] = confusion(out, d.y_test, d.n_out);
@@ -1327,7 +1406,7 @@ function thin(v) {
 }
 
 const API = { Net, train, fitDistance, segMetric, buildLoss, multiMetric, saliency, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
-  DET, detLoss, detDecode, detAP, detPR, detMetric, detResult };
+  DET, detLoss, detDecode, detAP, detPR, detMetric, detResult, genMetric, optimConfig, optimStep, lrAt, OPT_MOMENTUM };
 if (typeof module !== "undefined") module.exports = API;
 else globalThis.DLEngine = API;                       // 브라우저 화면(window)·학습 일꾼(train-worker.js)
 })();
