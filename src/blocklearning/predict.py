@@ -20,6 +20,60 @@ from blocklearning.data import (IMAGE_EXTS, MAX_ISSUES, DataError, Issue, _num, 
 
 MAX_ROWS = 20000           # 한 번에 예측하는 샘플 수 상한
 SHOW_ROWS = 500            # 화면 표에 보이는 행 수 (CSV에는 전부)
+PIC_ROWS = 60              # 화면 목록에 썸네일(입력 값)을 붙이는 행 수
+THUMB_PX = 64              # 썸네일 그림의 한 변 상한 (넘으면 건너뛰어 뽑음)
+THUMB_POINTS = 100         # 썸네일 선의 점 수 상한
+
+
+def top_probs(out, classes, k: int = 5) -> list:
+    """분류 출력(로짓) 한 줄 → softmax 확률 큰 순 k개 [{"name", "p"}] (같으면 앞 클래스 먼저). 웹 engine.js topProbs와 같은 식."""
+    o = np.asarray(out, dtype=np.float64).reshape(-1)
+    e = np.exp(o - o.max())
+    p = e / e.sum()
+    return [{"name": str(classes[j]), "p": round(float(p[j]), 6)} for j in np.argsort(-p, kind="stable")[:k]]
+
+
+def thumb(d, xn) -> dict:
+    """새 데이터 한 샘플(정규화한 값) → 목록 썸네일: 그림은 원래 값(한 변 THUMB_PX 이하로 건너뛰어 뽑음)과 그 크기,
+    그 밖은 원래 값 (첫 채널, 점이 많으면 고르게 THUMB_POINTS개)."""
+    raw = d.raw(np.asarray(xn, dtype=np.float64))
+    if d.image:
+        H, W = d.image
+        a = raw.reshape(-1, H, W)
+        s = int(np.ceil(max(H, W) / THUMB_PX))
+        a = a[:, ::s, ::s]
+        return {"input": np.round(a.reshape(-1), 3).tolist(), "input_hw": [int(a.shape[1]), int(a.shape[2])]}
+    from blocklearning.data import channels_of
+    v = raw.reshape(channels_of(d.length), -1)[0]
+    if len(v) > THUMB_POINTS:
+        v = v[np.round(np.linspace(0, len(v) - 1, THUMB_POINTS)).astype(int)]
+    return {"input": np.round(v, 5).tolist()}
+
+
+def new_label(d, new: dict, i: int):
+    """새 데이터 i의 정답 (화면용, 샘플 따라가기의 label과 같은 꼴). 없으면 None."""
+    labels, truth = new.get("labels"), new.get("truth")
+    if d.task == "regression" and labels is not None:
+        try:
+            return float(labels[i])
+        except ValueError:
+            return labels[i]
+    if labels is not None:
+        return labels[i]
+    if truth is None:
+        return None
+    t = truth[i]
+    if d.task == "detection":
+        return f"상자 {len(t)}개"
+    if d.task == "forecast":
+        return f"다음 {len(t)}개 (첫 값 {float(t[0]):.4g})"
+    if d.task == "segmentation":
+        from blocklearning.segment import states_text
+        return states_text(np.asarray(t), d.classes)
+    if d.task == "multi":
+        from blocklearning.multi import label_text
+        return label_text(t, d.n_out.heads)
+    return None
 
 
 def _err(msg: str, hint: str):
@@ -273,11 +327,20 @@ def _table_ae(d, names: list, out: np.ndarray, labels, X, results) -> dict:
 
 
 def table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=None) -> dict:
+    """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌, 이상 탐지는 점수에, 분류·회귀는 썸네일).
+    results: 학습 결과 (이상 탐지의 기준값). 행마다 index(새 데이터 번호: 그 샘플의 추론 과정을 볼 때 씀) — 시계열 예측 파일 하나는 빼고."""
+    if d.task == "forecast" and truth is None:
+        return _table_fc(d, np.asarray(out, dtype=np.float64).reshape(len(names), -1), X)
+    r = _table(d, names, out, labels, X, results, truth)
+    for i, row in enumerate(r["rows"]):
+        row["index"] = i
+    return r
+
+
+def _table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=None) -> dict:
     if d.task == "segmentation":
         from blocklearning import segment
         return segment.table(d, names, out, truth)
-    """모델 출력 (n, n_out) → 화면 표·요약·CSV 글자. X: 정규화한 입력 (탐지면 그림으로 보여 줌, 이상 탐지는 점수에).
-    results: 학습 결과 (이상 탐지의 기준값)."""
     out = np.asarray(out, dtype=np.float64).reshape(len(names), -1)
     if d.task == "multi":
         from blocklearning import multi
@@ -285,7 +348,7 @@ def table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=N
     if d.task == "detection":
         return _table_det(d, names, out, X, truth)
     if d.task == "forecast":
-        return _table_fc_many(d, names, out, X, truth) if truth is not None else _table_fc(d, out, X)
+        return _table_fc_many(d, names, out, X, truth)
     if d.task == "anomaly":
         return _table_ae(d, names, out, labels, X, results)
     cls = d.task == "classification"
@@ -305,7 +368,7 @@ def table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=N
                        ([labels[i], "O" if ok else "X"] if labels else []))
             if i < SHOW_ROWS:
                 rows.append({"name": nm, "pred": p, "conf": float(prob[i, pred[i]]),
-                             "label": None if labels is None else labels[i], "ok": ok})
+                             "label": None if labels is None else labels[i], "ok": ok, "probs": top_probs(out[i], names_c, 3)})
         summary["counts"] = {c: int((pred == k).sum()) for k, c in enumerate(names_c)}
         if labels is not None:
             summary["accuracy"] = float(np.mean([labels[i] == names_c[pred[i]] for i in range(len(names))]))
@@ -328,6 +391,9 @@ def table(d, names: list, out: np.ndarray, labels, X=None, results=None, truth=N
         summary["range"] = [float(pred.min()), float(pred.max())]
         if ys is not None:
             summary["mae"] = float(np.mean(np.abs(pred - ys)))
+    if X is not None:                                       # 목록 썸네일: 앞쪽 PIC_ROWS개만
+        for i, row in enumerate(rows[:PIC_ROWS]):
+            row.update(thumb(d, X[i]))
     return {"summary": summary, "rows": rows, "shown": min(len(names), SHOW_ROWS), "csv": "﻿" + buf.getvalue(),
             "has_label": labels is not None}
 

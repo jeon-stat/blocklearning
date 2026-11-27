@@ -174,3 +174,19 @@ def test_engine_stop_is_quick(tmp_path):
     r = out["result"]                                       # 이 설정의 한 epoch는 CPU(Node)로 2분 넘게 걸림
     assert r["epochs_done"] == len(out["progress"]) == 0 and r["train_metric"] is None and r["test_metric"] is not None
     assert out["stopMs"] < 5000
+
+
+def test_engine_top_probs_matches_python(tmp_path):
+    """⑤ 추론 과정의 분류 확률 상위 5개: 웹(engine.js topProbs)과 설치형(predict.top_probs)이 같은 순서·값 (같은 값이면 앞 클래스 먼저)."""
+    from blocklearning.predict import top_probs
+    rng = np.random.default_rng(0)
+    rows = (rng.normal(size=(20, 7)) * 3).astype(np.float32).tolist() + [[1.0, 1.0, 1.0], [5.0, -2.0, 5.0], [0.0] * 12]
+    classes = [f"c{j}" for j in range(12)]
+    f = tmp_path / "probs.json"
+    f.write_text(json.dumps({"rows": rows, "classes": classes, "k": 5}), encoding="utf-8")
+    r = subprocess.run(["node", str(JS / "run_probs.js"), str(f)], capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    for row, got in zip(rows, json.loads(r.stdout)):
+        want = top_probs(np.asarray(row, dtype=np.float32), classes, 5)
+        assert [q["name"] for q in got] == [q["name"] for q in want], (row, got, want)
+        assert np.allclose([q["p"] for q in got], [q["p"] for q in want], atol=2e-6)

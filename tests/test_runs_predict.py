@@ -1,4 +1,4 @@
-"""학습 기록(되돌리기·프로젝트 저장), 새 데이터로 예측, 틀린 샘플 모아 보기, 블록 미리보기."""
+"""학습 기록(되돌리기·프로젝트 저장), 새 데이터로 추론(샘플마다 추론 과정), 틀린 샘플 모아 보기, 블록 미리보기."""
 import json
 import time
 
@@ -137,3 +137,120 @@ def test_web_runs_and_predict_without_torch_engine():
         out = net(torch.as_tensor(X[:, None, :])).numpy().astype(np.float32)
     r = json.loads(web.predict_finish(s, out.tobytes()))
     assert r["status"] == 200 and [x["pred"] for x in r["body"]["rows"]] == [d.classes[i] for i in out.argmax(1)]
+
+
+# ------------------------------------------------------------ ⑤ 추론 과정: 새 데이터 한 샘플의 샘플 따라가기
+def _check_probs(probs, k=5):
+    ps = [q["p"] for q in probs]
+    assert 0 < len(ps) <= k and ps == sorted(ps, reverse=True) and sum(ps) <= 1 + 1e-5 and all(0 <= p <= 1 for p in ps)
+
+
+def test_activations_on_new_data(trained):
+    from blocklearning.predict import read_new
+    s = trained
+    d = s.data
+    c, r = s.call("POST", "/api/predict", {"example_new": True})
+    assert c == 200
+    new = read_new(d, {"example_new": True})
+    rows = r["rows"]
+    assert [x["index"] for x in rows] == list(range(len(rows)))
+    for x in rows:
+        _check_probs(x["probs"], 3)
+        assert x["probs"][0]["name"] == x["pred"] and abs(x["probs"][0]["p"] - x["conf"]) < 1e-5
+        assert len(x["input"]) == min(d.length, 100)             # 시계열 썸네일: 원래 값 (140점 → 고르게 100점)
+    c, a = s.call("POST", "/api/activations", {"new_index": 1})
+    assert c == 200 and a["index"] == 1 and a["name"] == new["names"][1] and a["label"] == new["labels"][1]
+    assert np.allclose(a["input"], d.raw(new["X"][1]), atol=1e-4)      # 시험 샘플이 아니라 새 데이터의 값
+    assert a["prediction"] == rows[1]["pred"]
+    _check_probs(a["probs"])
+    assert a["probs"][:3] == rows[1]["probs"]                       # 표와 같은 softmax
+    c, b = s.call("POST", "/api/activations", {"rows": a["input"]})    # 원래 단위 한 줄 (What-if)
+    assert c == 200 and b["label"] is None and b["index"] is None and b["prediction"] == a["prediction"]
+    assert np.allclose(b["input"], a["input"], atol=1e-4)
+    assert all(abs(p["p"] - q["p"]) < 1e-3 for p, q in zip(a["probs"], b["probs"]))
+    assert s.call("POST", "/api/activations", {"new_index": len(rows)})[0] == 400
+    assert s.call("POST", "/api/activations", {"rows": [1, 2]})[0] == 400
+    t = s.call("POST", "/api/activations", {"sample_index": 0})[1]       # ④ 시험 샘플은 그대로 (+ probs)
+    assert t["index"] == 0 and np.allclose(t["input"], d.raw(d.X_test[0]), atol=1e-4) and t["label"] == d.label_text("test", 0)
+    _check_probs(t["probs"])
+
+
+def test_new_data_is_cleared_when_data_changes():
+    s = Studio()
+    s.call("POST", "/api/data/load", {"example": "ecg"})
+    _train(s, 1)
+    assert s.call("POST", "/api/predict", {"example_new": True})[0] == 200 and s.new_data is not None
+    _train(s, 1)                                                    # 새 모델: 지난 추론 결과는 버림
+    assert s.new_data is None and s.call("POST", "/api/activations", {"new_index": 0})[0] == 400
+    s.call("POST", "/api/predict", {"example_new": True})
+    s.call("POST", "/api/data/load", {"example": "ecg"})
+    assert s.new_data is None
+
+
+def test_regression_table_thumbs_and_rows():
+    from blocklearning import predict
+    from blocklearning.data import load_example
+    d = load_example("concrete")
+    new = predict.read_new(d, {"example_new": True})
+    out = np.arange(len(new["names"]), dtype=np.float64)[:, None]
+    r = predict.table(d, new["names"], out, new["labels"], new["X"])
+    x = r["rows"][0]
+    assert x["index"] == 0 and "probs" not in x and np.allclose(x["input"], d.raw(new["X"][0]), atol=1e-4)
+    d = load_example("digits")                                       # 그림: 원래 값 그대로 (32×32는 64 이하)
+    new = predict.read_new(d, {"example_new": True})
+    r = predict.table(d, new["names"], np.zeros((len(new["names"]), len(d.classes))), new["labels"], new["X"])
+    assert r["rows"][0]["input_hw"] == list(d.image) and len(r["rows"][0]["input"]) == d.image[0] * d.image[1]
+
+
+def test_thumb_shrinks_big_pictures():
+    from types import SimpleNamespace
+    from blocklearning.predict import PIC_ROWS, THUMB_PX, thumb
+    d = SimpleNamespace(image=(150, 100), length=150 * 100, raw=lambda x: x)
+    t = thumb(d, np.arange(150 * 100, dtype=np.float64))
+    assert max(t["input_hw"]) <= THUMB_PX and len(t["input"]) == t["input_hw"][0] * t["input_hw"][1]
+    assert t["input"][1] == 3.0                                     # 세 칸마다 하나 (건너뛰어 뽑기)
+    assert PIC_ROWS == 60
+
+
+@pytest.mark.parametrize("kind", ["bearing_ae", "hydraulic_multi", "pneumatic_seg2", "steel_power", "pcb_det"])
+def test_other_tasks_rows_have_index(kind):
+    from blocklearning import predict
+    from blocklearning.data import load_example
+    d = load_example(kind)
+    new = predict.read_new(d, {"example_new": True})
+    out = np.zeros((len(new["names"]), int(d.n_out)), dtype=np.float32)
+    r = predict.table(d, new["names"], out, new["labels"], new["X"], {"threshold": 1.0}, new.get("truth"))
+    assert [x["index"] for x in r["rows"]] == list(range(len(r["rows"]))) and r["rows"]
+    s = Studio()
+    s.data, s.new_data = d, new
+    p = s.picked_sample({"new_index": 0})
+    assert p["name"] == new["names"][0] and np.allclose(p["x"], new["X"][0])
+    assert p["label"] == predict.new_label(d, new, 0) and p["label"] is not None
+
+
+def test_web_sample_new_matches_installed():
+    """웹(sample_new)이 넘기는 새 데이터 값·정답·이름이 설치형(picked_sample)과 같음, 직접 넣은 값도."""
+    from blocklearning.graph import build_graph_model
+    s = web.WebStudio()
+    s.call("POST", "/api/data/load", {"example": "ecg"})
+    d = s.data
+    assert json.loads(web.sample_new(s, 0, "null"))["status"] == 400            # 학습 전
+    net = build_graph_model(G, d.length, d.n_out, seed=1).eval()
+    web.set_trained(s, json.dumps(G), "{}", json.dumps({"metric_name": "accuracy"}))
+    assert json.loads(web.sample_new(s, 0, "null"))["status"] == 400            # 추론 전
+    assert json.loads(web.predict_prepare(s, json.dumps({"example_new": True})))["status"] == 200
+    X = np.frombuffer(web.predict_x(s), dtype=np.float32).reshape(-1, d.length)
+    with torch.no_grad():
+        out = net(torch.as_tensor(X[:, None, :])).numpy().astype(np.float32)
+    r = json.loads(web.predict_finish(s, out.tobytes()))["body"]
+    assert r["rows"][2]["index"] == 2 and s.new_data is not None
+    w = json.loads(web.sample_new(s, 2, "null"))
+    assert w["status"] == 200
+    w = w["body"]
+    p = s.picked_sample({"new_index": 2})
+    assert np.allclose(w["x"], X[2]) and np.allclose(w["x"], p["x"]) and w["label"] == p["label"] and w["name"] == p["name"]
+    assert np.allclose(w["input"], d.raw(X[2]), atol=1e-4) and w["order"] and w["classes"] == [str(c) for c in d.classes]
+    assert set(w) >= {"x", "input", "label", "order", "classes", "name"}
+    v = json.loads(web.sample_new(s, -1, json.dumps(w["input"])))["body"]       # 직접 넣은 값 (원래 단위)
+    assert np.allclose(v["x"], X[2], atol=1e-4) and v["label"] is None
+    assert json.loads(web.sample_new(s, 99, "null"))["status"] == 400

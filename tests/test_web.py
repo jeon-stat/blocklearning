@@ -53,6 +53,13 @@ p = web.data_payload(s)
 assert len(p["X_train"]) == 4 * 3992 * 140
 web.set_trained(s, json.dumps(g), "{}", "{}")
 assert json.loads(web.sample(s, 0))["status"] == 200
+assert json.loads(web.predict_prepare(s, json.dumps({"example_new": True})))["status"] == 200     # ⑤ 추론 → 새 데이터 한 샘플
+import numpy as np
+n_new = len(np.frombuffer(web.predict_x(s), dtype=np.float32)) // 140
+assert json.loads(web.predict_finish(s, np.zeros((n_new, len(s.data.classes)), np.float32).tobytes()))["status"] == 200
+w = json.loads(web.sample_new(s, 0, "null"))
+assert w["status"] == 200 and len(w["body"]["x"]) == 140 and w["body"]["name"], w
+assert json.loads(web.sample_new(s, -1, json.dumps(w["body"]["input"])))["status"] == 200
 c, r = s.call("POST", "/api/code", {"graph": g, "framework": "pytorch", "weights_file": "w.npz"})
 assert c == 200 and r["trained"] and 'load_trained(path="w.npz")' in r["code"], r
 state = {}

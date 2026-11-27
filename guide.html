@@ -168,7 +168,7 @@
         <div class="card"><b>시계열 예측</b><span>지금까지의 흐름으로 앞으로의 값 예측</span></div>
         <div class="card"><b>생성</b><span>데이터를 닮은 새 그림·신호 만들기 (VAE·확산 모델, 클래스 골라서도)</span></div>
       </div>
-      <p>순서는 늘 같습니다: <span class="ui">① 과제</span> → <span class="ui">② 데이터</span> → <span class="ui">③ 모델</span> → <span class="ui">④ 학습</span> → <span class="ui">⑤ 예측</span>. 학습한 모델은 PyTorch 코드나 파일로 내보내 다른 곳에서 쓸 수 있습니다.</p>
+      <p>순서는 늘 같습니다: <span class="ui">① 과제</span> → <span class="ui">② 데이터</span> → <span class="ui">③ 모델</span> → <span class="ui">④ 학습</span> → <span class="ui">⑤ 추론</span>. 학습한 모델은 PyTorch 코드나 파일로 내보내 다른 곳에서 쓸 수 있습니다.</p>
       <div class="callout warn"><b>교육·실험용 도구입니다</b>학습 결과를 의료 진단이나 제조 판정 같은 실제 결정에 그대로 쓰지 마세요.</div>
     </section>
 
@@ -352,12 +352,17 @@
         <li><span class="ui">더 보기</span>에는 가장 좋았던 epoch 남기기, 조기 종료, 손실 함수 조립이 있습니다.</li>
       </ul>
 
-      <h3>⑤ 새 데이터로 예측</h3>
-      <figure><img src="docs/guide/predict.webp" alt="예측 화면" width="800" height="562" loading="lazy"><figcaption>학습한 모델로 새 데이터를 예측합니다</figcaption></figure>
+      <h3>⑤ 추론</h3>
+      <figure><img src="docs/guide/predict.webp" alt="추론 화면: 왼쪽 샘플 목록, 오른쪽 추론 과정" width="800" height="562" loading="lazy"><figcaption>왼쪽에서 샘플을 고르면 오른쪽에 그 샘플이 모델을 지나는 과정이 나옵니다</figcaption></figure>
       <ul>
-        <li>예시 데이터면 <span class="ui">예시 새 데이터 10개로 예측</span>으로 학습에 쓰지 않은 데이터를 바로 예측하고 정답과 비교합니다.</li>
-        <li>내 데이터는 학습 때와 같은 모양의 CSV(정답 열은 없어도 됨)·폴더를 고릅니다. 같은 정규화를 해서 예측하고, 정답이 있으면 맞았는지 표시합니다.</li>
-        <li><span class="ui">결과 CSV 내려받기</span>로 예측 결과를 받습니다.</li>
+        <li>예시 데이터면 <span class="ui">예시 새 데이터 10개로 추론</span>을 누릅니다. 학습에 쓰지 않은 데이터로 추론하고 정답과 비교합니다.</li>
+        <li>내 데이터는 학습 때와 같은 모양의 CSV(정답 열은 없어도 됨)나 폴더를 고릅니다. 학습 때와 같은 정규화를 거쳐 추론하고, 정답이 있으면 맞았는지 표시합니다.</li>
+        <li><b>목록:</b> 분류·회귀는 왼쪽에 샘플마다 예측이 나옵니다. 분류의 막대는 확신도이고, 정답이 있으면 ✓·✗로 맞았는지 보입니다.</li>
+        <li><b>추론 과정:</b> 맨 위 줄은 입력 → 정규화 → 블록들 → 출력 → 확률(회귀는 값) 순서입니다. 블록을 누르면 아래의 그 블록 그림으로 갑니다. 그 아래에 분류는 확률이 큰 5개, 회귀는 예측 값이 나오고, 이어서 ④의 '샘플 하나 따라가 보기'와 같은 그림(어디를 봤나, 블록마다 값)이 나옵니다.</li>
+        <li><span class="ui">▶ 재생</span>을 누르면 입력부터 블록이 하나씩 켜지고, 끝에 확률 막대가 차오릅니다.</li>
+        <li><b>값 바꿔 보기:</b> 표 데이터는 입력 칸의 값을 바꾸면 잠시 뒤 그 값으로 다시 추론합니다. <span class="ui">원래 값</span>을 누르면 처음 값으로 돌아갑니다.</li>
+        <li>객체 탐지·이상 탐지·구간 분할·여러 정답·시계열 예측은 결과 표의 행이나 그림을 누르면 결과 아래에 같은 추론 과정이 열립니다.</li>
+        <li><span class="ui">결과 CSV 내려받기</span>로 추론 결과를 받습니다. 생성 과제는 ⑤에서 <a href="#generate">새 샘플을 만듭니다</a>.</li>
       </ul>
     </section>
 
@@ -393,18 +398,18 @@
         <li><b>함께 학습</b>: 없음(고정, 가장 빠름: 특징을 한 번만 뽑음) · 마지막 단계 · 전체. 데이터가 많을수록 더 많이 풀고, 그때는 학습률을 0.0001 정도로 작게, AdamW + Warmup·cosine을 함께 쓰는 것이 좋습니다.</li>
         <li><b>입력 크기</b>: 224가 원래 크기입니다. 작게 하면 빠르지만 덜 정확할 수 있습니다. ViT-B/16은 224만 됩니다.</li>
       </ul>
-      <h3>생성 모델 (새 샘플 만들기)</h3>
+      <h3 id="generate">생성 모델 (새 샘플 만들기)</h3>
       <p><span class="ui">① 과제</span>에서 <span class="ui">생성 (새 샘플 만들기)</span>를 고릅니다. 정답은 필요 없습니다. 그림은 클래스 폴더가 없이 그림만 든 폴더도 됩니다.</p>
       <ul>
         <li><b>어떻게 만드나 (VAE)</b>: 모델 가운데의 <span class="ui">VAE 잠재 공간</span> 블록이 데이터를 정규분포 위의 점으로 모읍니다. 앞부분(인코더)은 데이터를 점으로 줄이고, 뒷부분(디코더)은 점에서 데이터를 되살립니다. 학습이 끝나면 정규분포에서 뽑은 점을 디코더에 넣어 새 샘플을 만듭니다.</li>
-        <li><b>결과</b>: <span class="ui">④ 학습</span> 결과에는 시험 샘플을 되살린 것이 나옵니다. 생성 과제에서는 ⑤단계가 예측 대신 <span class="ui">⑤ 새 샘플 만들기</span>가 됩니다. 이때 입력은 데이터가 아니라 정규분포에서 뽑은 무작위 숫자(잠재 차원 수만큼)입니다. <span class="ui">새 샘플 만들기</span>를 누를 때마다 다른 샘플이 나오고 <span class="ui">CSV 받기</span>로 값을 받습니다. <span class="ui">폭</span>을 줄이면 평균에 가까운 무난한 샘플, 늘리면 더 다양한 샘플이 나옵니다.</li>
+        <li><b>결과</b>: <span class="ui">④ 학습</span> 결과에는 시험 샘플을 되살린 것이 나옵니다. 생성 과제에서는 <span class="ui">⑤ 추론</span>에서 새 데이터 대신 새 샘플을 만듭니다. 이때 입력은 데이터가 아니라 정규분포에서 뽑은 무작위 숫자(잠재 차원 수만큼)입니다. <span class="ui">새 샘플 만들기</span>를 누를 때마다 다른 샘플이 나오고 <span class="ui">CSV 받기</span>로 값을 받습니다. <span class="ui">폭</span>을 줄이면 평균에 가까운 무난한 샘플, 늘리면 더 다양한 샘플이 나옵니다.</li>
         <li><b>조절</b>: 잠재 공간 블록의 <b>β</b>가 크면 뽑은 샘플이 고르게 자연스럽고, 작으면 되살림이 더 정확합니다. <b>잠재 차원</b>을 늘리면 더 자세한 모양을 담습니다.</li>
         <li><b>클래스를 골라 만들기 (조건부 VAE)</b>: 데이터에 클래스가 있으면 (예시의 숫자 0–9, 클래스 폴더로 나눈 그림, 정답 열이 클래스인 CSV) <span class="ui">조건부 VAE</span> 대표 모델을 고릅니다. <span class="ui">클래스 조건</span> 블록이 샘플의 클래스를 채널마다 더해, 학습 때는 샘플의 클래스를, 만들 때는 고른 클래스를 넣습니다. ⑤에서 <span class="ui">클래스</span>를 고르면 그 클래스를 닮은 샘플이 나오고, <span class="ui">모두</span>면 클래스를 돌아가며 만듭니다. 블록의 클래스 수는 데이터의 클래스 수 이상이어야 합니다.</li>
         <li><b>분류기 채점</b>: 클래스를 골라 만들 수 있는 모델이면 ⑤에 <span class="ui">분류기 채점</span>이 나옵니다. 진짜 학습 데이터에서 가장 가까운 샘플 5개의 클래스로 판정하는 분류기(kNN)가, 만든 샘플을 고른 클래스로 보는 비율입니다. 옆의 <span class="ui">진짜 시험 데이터</span>는 같은 분류기가 진짜 샘플을 맞힌 비율이라, 둘이 가까울수록 고른 클래스를 잘 따른 것입니다. 분류기가 다르게 본 샘플에는 <b>이상 → 정상</b>처럼 표시됩니다. 성적(복원 오차)이 데이터를 얼마나 잘 되살리는지라면, 분류기 채점은 새로 만든 샘플 자체를 봅니다.</li>
         <li><b>확산 모델 (DDPM)</b>: <span class="ui">확산 모델 (U-Net)</span>(그림)·<span class="ui">확산 모델 (MLP)</span>(시계열)을 고릅니다. 학습 때는 데이터에 잡음을 조금에서 많이까지 섞고, 모델이 잡음 섞인 것을 보고 원래 값을 맞히도록 배웁니다. <span class="ui">확산 시점</span> 블록이 얼마나 섞었는지(시점)를 모델에 알려 줍니다. 만들 때는 순수한 잡음에서 시작해 200번에 걸쳐 잡음을 걷어 냅니다. VAE보다 또렷한 샘플이 나오지만 학습이 오래 걸리니 epoch를 넉넉히(그림은 30 이상) 두세요. 확산 모델에도 클래스 조건 블록이 들어 있어 클래스를 골라 만들 수 있습니다. 성적(복원 오차)은 시험 샘플에 잡음을 절반쯤 섞은 것에서 맞힌 원래 값과 실제의 차이입니다.</li>
         <li><b>코드로</b>: <span class="ui">코드로 보기</span>의 PyTorch 코드에 <code>generate()</code>가 들어 있어 (VAE는 <code>decode()</code>도), 학습한 모델로 새 샘플을 바로 만들 수 있습니다. 클래스 조건이 있으면 <code>train(…, labels=클래스 번호)</code>로 학습하고 <code>generate(model, 16, label=7)</code>처럼 클래스를 고릅니다. 이 블록들은 TensorFlow(Keras) 코드로는 내보내지 않습니다.</li>
       </ul>
-      <figure><img src="docs/guide/generate.webp" alt="⑤ 새 샘플 만들기 화면" width="580" height="216" loading="lazy"><figcaption>손글씨 숫자로 2 epoch 학습한 뒤 ⑤에서 만든 새 그림 16장</figcaption></figure>
+      <figure><img src="docs/guide/generate.webp" alt="⑤ 추론에서 새 샘플 만들기" width="580" height="216" loading="lazy"><figcaption>손글씨 숫자로 2 epoch 학습한 뒤 ⑤에서 만든 새 그림 16장</figcaption></figure>
     </section>
 
     <section id="save">

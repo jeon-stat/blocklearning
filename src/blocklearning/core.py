@@ -53,6 +53,7 @@ class Studio:
         self.run_weights: dict = {}             # 기록 번호 → 가중치 {이름: 배열} (GraphNet 이름)
         self.current_run: Optional[int] = None  # 지금 학습된 모델이 몇 번 기록인지
         self.pending = None                     # 웹 예측: 엔진에 넘길 값을 잠시 둠
+        self.new_data = None                    # ⑤ 마지막으로 추론한 새 데이터 (read_new 결과: 샘플마다 추론 과정을 볼 때)
         self.outputs: set = set()               # 저장·내보내기로 쓴 파일 (설치형: 이것만 브라우저로 내려받을 수 있음)
 
     def wrote(self, *paths) -> list:
@@ -64,7 +65,7 @@ class Studio:
     def reset_work(self) -> None:
         """새 프로젝트로: 데이터·모델·학습 결과를 비움 (라벨링 작업과 저장한 파일 목록은 둠)."""
         self.cancel_training()
-        self.data = self.graph = self.model = self.model_graph = self.selection = None
+        self.data = self.graph = self.model = self.model_graph = self.selection = self.new_data = None
         self.train_settings, self.results = {}, {}
         self.runs, self.run_weights, self.current_run = [], {}, None
 
@@ -126,7 +127,7 @@ class Studio:
                 raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
             tg = b.get("targets") or ([b["label_col"]] if b.get("label_col") is not None else None)
             d = load_segment_csv(path, state_col=tg[0] if tg else None, skip=b.get("skip"), length=b.get("length") or None, **opts)
-            self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
+            self.data, self.model, self.model_graph, self.results, self.current_run, self.new_data = d, None, None, {}, None, None
             return {"summary": d.summary(), "source": d.source}
         if b.get("task") == "forecast" and not b.get("example"):   # 긴 시계열 CSV 하나 (한 행 = 한 시점)
             from blocklearning.forecast import load_forecast_csv
@@ -134,7 +135,7 @@ class Studio:
             if not os.path.isfile(path):
                 raise UserError(f"파일을 찾을 수 없음: {path}", "CSV 파일의 전체 경로를 넣으세요")
             d = load_forecast_csv(path, b.get("column"), b.get("L"), b.get("H"), b.get("stride"), calendar=b.get("calendar", True), **opts)
-            self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
+            self.data, self.model, self.model_graph, self.results, self.current_run, self.new_data = d, None, None, {}, None, None
             return {"summary": d.summary(), "source": d.source}
         if b.get("example"):
             kind = b["example"] if isinstance(b["example"], str) else "ecg"
@@ -176,7 +177,7 @@ class Studio:
         if b.get("task") == "generation" and d.task != "generation":   # 읽은 것의 입력만으로 새 샘플 만들기 (정답은 쓰지 않음)
             from blocklearning.generate import to_generation
             d = to_generation(d)
-        self.data, self.model, self.model_graph, self.results, self.current_run = d, None, None, {}, None
+        self.data, self.model, self.model_graph, self.results, self.current_run, self.new_data = d, None, None, {}, None, None
         return {"summary": d.summary(), "source": d.source}
 
     # ------------------------------------------------------------ 라벨링 작업실
@@ -417,7 +418,7 @@ class Studio:
             r = train_job(job, graph, d, settings, init_state=init)
             r["stopped"] = job.stopped                            # [멈추기]: 거기까지 학습한 모델을 남김
             if (not job.cancelled or job.stopped) and self.data is d:   # 그사이 데이터가 바뀌었거나 다시 시작했으면 버림
-                self.model, self.model_graph = r["model"], graph
+                self.model, self.model_graph, self.new_data = r["model"], graph, None
                 self.train_settings = dict(b.get("settings") or {}, **({"resume": True} if init is not None else {}))
                 self.results = {k: v for k, v in r.items() if k != "model"}
                 self.add_run(graph, self.train_settings, self.results,
@@ -451,17 +452,39 @@ class Studio:
             raise UserError("지금 모델과 블록 구성이 달라 이어서 학습할 수 없음", "블록을 바꿨다면 [학습 시작]으로 처음부터 학습하세요")
         return {k: v.detach().clone() for k, v in have.items()}
 
-    def api_activations(self, b: dict) -> dict:
-        from blocklearning.analysis import activations, attention
-        import torch
-        d, m = self.need_data(), self.need_model()
+    def picked_sample(self, b: dict) -> dict:
+        """샘플 따라가기에 넣을 샘플 하나: 시험 샘플(sample_index) · ⑤에서 추론한 새 데이터(new_index) · 직접 넣은 값(rows, 원래 단위 한 줄).
+        돌려줌 {"x": 정규화한 값, "label": 정답 (없으면 None), "name", "index"}."""
+        d = self.need_data()
+        if b.get("rows") is not None:
+            from blocklearning.predict import read_new
+            new = read_new(d, {"rows": [b["rows"]]})
+            return {"x": new["X"][0], "label": None, "name": new["names"][0], "index": None}
+        if b.get("new_index") is not None:
+            from blocklearning.predict import new_label
+            nd = self.new_data
+            if nd is None:
+                raise UserError("추론한 새 데이터가 없음", "⑤ 추론에서 새 데이터로 먼저 추론하세요")
+            i = int(b["new_index"])
+            if not 0 <= i < len(nd["names"]):
+                raise UserError(f"새 데이터 번호 {i}이(가) 없음", f"0–{len(nd['names']) - 1} 사이로 고르세요")
+            return {"x": nd["X"][i], "label": new_label(d, nd, i), "name": nd["names"][i], "index": i}
         i = int(b.get("sample_index", 0))
         if not 0 <= i < len(d.y_test):
             raise UserError(f"시험 샘플 번호 {i}이(가) 없음", f"0–{len(d.y_test) - 1} 사이로 고르세요")
-        x = self.model_input(d.X_test[i:i + 1])[0]
+        return {"x": d.X_test[i], "label": d.label_text("test", i), "name": f"시험 샘플 {i}", "index": i}
+
+    def api_activations(self, b: dict) -> dict:
+        """샘플 하나가 블록마다 지난 값·어디를 봤나·어텐션. 시험 샘플·새 데이터·직접 넣은 값 (picked_sample)."""
+        from blocklearning.analysis import activations, attention
+        import torch
+        d, m = self.need_data(), self.need_model()
+        p = self.picked_sample(b)
+        xn = np.asarray(p["x"], dtype=np.float32)
+        x = self.model_input(xn[None])[0]
         with torch.no_grad():
             out = m.eval()(torch.as_tensor(x[None], dtype=torch.float32))[0].numpy()
-        label = d.label_text("test", i)
+        probs = None
         if d.task == "detection":
             from blocklearning.detect import SHOW_SCORE, decode
             pred = f"상자 {len(decode(out, d.n_out.grid, d.n_out.n_cls, SHOW_SCORE))}개 찾음"
@@ -476,18 +499,25 @@ class Studio:
                               for h, v in zip(d.n_out.heads, pred_values(out, d.n_out.heads)))
         elif d.task == "anomaly":
             from blocklearning.anomaly import scores
-            s, th = float(scores(out[None], d.X_test[i:i + 1])[0]), (self.results or {}).get("threshold")
+            s, th = float(scores(out[None], xn[None].astype(np.float64))[0]), (self.results or {}).get("threshold")
             pred = f"이상 점수 {s:.3g}" + ("" if th is None else (" → 이상" if s > th else " → 정상"))
+        elif d.task == "classification":
+            from blocklearning.predict import top_probs
+            pred, probs = d.classes[int(out.argmax())], top_probs(out, d.classes, 5)
         else:
-            pred = d.classes[int(out.argmax())] if d.task == "classification" else float(out[0])
+            pred = float(out[0])
         order = check_graph(self.model_graph, d.length, d.n_out, image=d.image).order
         from blocklearning.analysis import saliency
         try:
             sal = saliency(m, x, d)
         except Exception:                                     # 기울기를 못 내는 블록이 있으면 보이지 않음
             sal = None
-        return {"index": i, "label": label, "prediction": pred, "input": np.round(d.raw(d.X_test[i]), 5).tolist(),
-                "values": activations(m, x), "attention": attention(m, x), "order": order, "saliency": sal}
+        r = {"index": p["index"], "name": p["name"], "label": p["label"], "prediction": pred,
+             "input": np.round(d.raw(xn.astype(np.float64)), 5).tolist(),
+             "values": activations(m, x), "attention": attention(m, x), "order": order, "saliency": sal}
+        if probs is not None:
+            r["probs"] = probs
+        return r
 
     # ------------------------------------------------------------ 학습 기록
     def data_key(self) -> str:
@@ -551,7 +581,7 @@ class Studio:
             raise UserError("이 기록에는 가중치가 없음", "같은 모델로 다시 학습하세요")
         self.graph = run["graph"]
         self.model_graph, self.train_settings, self.results = run["graph"], dict(run["settings"]), dict(run["results"])
-        self.current_run = run["n"]
+        self.current_run, self.new_data = run["n"], None
         return run
 
     def api_runs_restore(self, b: dict) -> dict:
@@ -581,6 +611,7 @@ class Studio:
         import torch
         d, m = self.need_data(), self.need_model()
         new = predict.read_new(d, _paths(b))
+        self.new_data = new
         X = to_model_input(m.kind, new["X"], image=d.image, channels=channels_of(d.length))
         outs = []
         with torch.no_grad():

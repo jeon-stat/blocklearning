@@ -15,7 +15,7 @@
     <button data-step="data" class="step"><span class="n">2</span><span class="sl">데이터<small>CSV·그림 넣기</small></span></button>
     <button data-step="model" class="step"><span class="n">3</span><span class="sl">모델<small>블록으로 쌓기</small></span></button>
     <button data-step="train" class="step"><span class="n">4</span><span class="sl">학습<small>배우고 채점하기</small></span></button>
-    <button data-step="predict" class="step"><span class="n">5</span><span class="sl">예측<small>새 데이터에 쓰기</small></span></button>
+    <button data-step="predict" class="step"><span class="n">5</span><span class="sl">추론<small>학습한 모델 쓰기</small></span></button>
   </nav>
   <div class="files">
     <button id="btn-label" title="정답이 없는 데이터에 정답 붙이기 (새 탭). 붙인 정답은 ② 데이터의 라벨링한 데이터에서 불러 씀">라벨링 ↗</button>
@@ -255,12 +255,12 @@
     </div>
     <div class="next"><button class="primary go back" data-go="model">← 이전: 모델</button>
       <button id="btn-export-pt">학습한 모델 내보내기 (.pt)</button>
-      <button id="btn-go-predict" class="primary go" data-go="predict">다음: 새 데이터로 예측 →</button></div>
+      <button id="btn-go-predict" class="primary go" data-go="predict">다음: 추론 →</button></div>
   </section>
 
-  <!-- ⑤ 예측 -->
+  <!-- ⑤ 추론 -->
   <section id="step-predict" class="panel" hidden>
-    <h2 id="predict-title">⑤ 새 데이터로 예측</h2>
+    <h2>⑤ 추론</h2>
     <div class="empty-step" data-empty="predict">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>아직 학습한 모델이 없습니다</b>
@@ -276,22 +276,26 @@
       <div id="gen-judge" class="cards" hidden></div>
     </div>
     <div id="predict-inputs">
-      <div class="row" data-kind="example"><button id="btn-predict-example" class="primary">예시 새 데이터 10개로 예측</button></div>
-      <div class="row" data-kind="csv"><input id="predict-path" class="path" placeholder="C:\data\new.csv"><button id="btn-predict-csv" class="primary">CSV로 예측</button></div>
-      <div class="row" data-kind="folder"><input id="predict-folder" class="path" placeholder="C:\data\새 그림 폴더"><button id="btn-predict-folder" class="primary">그림 폴더로 예측</button></div>
-      <div class="row" data-kind="series"><input id="predict-series" class="path" placeholder="C:\data\새 사이클 (샘플마다 CSV 하나)"><button id="btn-predict-series" class="primary">폴더로 예측</button></div>
-      <details data-kind="rows" id="predict-manual" class="more"><summary>값을 직접 넣어 예측</summary>
+      <div class="row" data-kind="example"><button id="btn-predict-example" class="primary">예시 새 데이터 10개로 추론</button></div>
+      <div class="row" data-kind="csv"><input id="predict-path" class="path" placeholder="C:\data\new.csv"><button id="btn-predict-csv" class="primary">CSV로 추론</button></div>
+      <div class="row" data-kind="folder"><input id="predict-folder" class="path" placeholder="C:\data\새 그림 폴더"><button id="btn-predict-folder" class="primary">그림 폴더로 추론</button></div>
+      <div class="row" data-kind="series"><input id="predict-series" class="path" placeholder="C:\data\새 사이클 (샘플마다 CSV 하나)"><button id="btn-predict-series" class="primary">폴더로 추론</button></div>
+      <details data-kind="rows" id="predict-manual" class="more"><summary>값을 직접 넣어 추론</summary>
         <div id="predict-form" class="grid4"></div>
-        <div class="row"><button id="btn-predict-rows" class="primary">이 값으로 예측</button></div>
+        <div class="row"><button id="btn-predict-rows" class="primary">이 값으로 추론</button></div>
       </details>
-      <p class="muted" id="predict-format"></p>
     </div>
     <ul id="predict-issues" class="issues"></ul>
     <div id="predict-result" hidden>
       <div class="cards" id="predict-cards"></div>
+      <div id="infer-split" class="infer-split" hidden>
+        <div id="infer-list" class="infer-list"></div>
+        <div id="infer-detail" class="infer-detail"></div>
+      </div>
       <div id="predict-gallery"></div>
       <div class="row"><button id="btn-predict-download">결과 CSV 내려받기</button><span id="predict-note" class="muted"></span></div>
-      <div class="table-wrap"><table class="tab predict-table" id="predict-table"></table></div>
+      <div class="table-wrap" id="predict-table-wrap"><table class="tab predict-table" id="predict-table"></table></div>
+      <div id="infer-panel" class="box infer-detail" hidden></div>
     </div>
     <div class="next"><button class="primary go back" data-go="train">← 이전: 학습</button></div>
   </section>

@@ -323,3 +323,22 @@ def test_every_step_has_previous_button_and_history():
     assert 'go back"' not in html[html.index('<section id="step-task"'):html.index('<section id="step-data"')]
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "history.pushState({ dls: step }" in js and 'addEventListener("popstate"' in js
+
+
+def test_inference_step_name_and_view():
+    """⑤는 모든 과제에서 '추론' (생성 과제도), 입력 형식 설명 문단은 없음. 새 데이터 한 샘플의 추론 과정은 ④ 샘플 따라가기와 같은 그림(flowHtml)."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert '<span class="sl">추론<small>학습한 모델 쓰기</small></span>' in html and "<h2>⑤ 추론</h2>" in html
+    assert 'data-go="predict">다음: 추론 →</button>' in html
+    sec = html[html.index('<section id="step-predict"'):]
+    sec = sec[:sec.index("</section>")]
+    assert "예측" not in sec.replace("예측 결과", "")                        # 단추·제목은 모두 '추론'
+    assert "predict-format" not in html and "PREDICT_FORMAT" not in js
+    assert "GEN_LABEL" not in js and "labelPredictStep" not in js
+    for i in ("infer-split", "infer-list", "infer-detail", "infer-panel", "predict-table-wrap"):
+        assert f'id="{i}"' in html, i
+    show = js[js.index("async function showSample()"):]
+    assert "flowHtml(a)" in show[:show.index("\n}\n")] and "function flowHtml(" in js
+    assert '"/api/activations", { new_index: i }' in js and '"/api/activations", { rows: vals }' in js
+    assert "▶ 재생" in js and "원래 값" in js

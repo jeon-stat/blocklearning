@@ -253,18 +253,19 @@ async function generateNew(body) {
   return wrapped(W.mod.gen_view(W.studio, new Uint8Array(out.buffer), n, seed, JSON.stringify(labels)));
 }
 
-// ------------------------------------------------------------ 샘플 따라가기
+// ------------------------------------------------------------ 샘플 따라가기 (④ 시험 샘플 · ⑤ 새 데이터 new_index · 직접 넣은 값 rows)
 function activations(body) {
   if (!W.trained) throw { message: "학습된 모델이 없음", hint: "④ 학습 단계에서 먼저 학습하세요" };
-  const i = Number(body.sample_index || 0);
-  const s = wrapped(W.mod.sample(W.studio, i));
+  const isNew = (body.new_index !== undefined && body.new_index !== null) || (body.rows !== undefined && body.rows !== null);
+  const i = Number((isNew ? body.new_index : body.sample_index) || 0);
+  const s = isNew ? wrapped(W.mod.sample_new(W.studio, i, JSON.stringify(body.rows ?? null))) : wrapped(W.mod.sample(W.studio, i));
   const d = getData(), net = W.trained.net;
   const x = E().toInput(Float32Array.from(s.x), 1, net.kind, d.length, d.image, d.channels);
   const attention = {};
   const values = Object.fromEntries(Object.entries(net.trace(x, attention)).map(([k, v]) => [k, E().thin(v)]));   // 층마다 줄이기
   const out = net.predict(x);
   x.dispose();
-  let pred;
+  let pred, probs = null;
   if (d.task === "detection") pred = `상자 ${E().detDecode(out, 0, d.det, E().DET.show).length}개 찾음`;
   else if (d.task === "forecast") pred = `다음 ${out.length}개 (첫 값 ${Number(out[0].toPrecision(4))})`;
   else if (d.task === "segmentation") {                       // 시점마다 가장 큰 상태 → 구간 이름
@@ -282,7 +283,7 @@ function activations(body) {
     const sc = out.length === 1 && s.x.length > 1 ? out[0] : t / out.length, th = W.trained.results && W.trained.results.threshold;   // '정상과의 거리'면 출력이 점수
     pred = `이상 점수 ${Number(sc.toPrecision(3))}` + (th === undefined || th === null ? "" : sc > th ? " → 이상" : " → 정상");
   }
-  else if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; }
+  else if (d.task === "classification") { let b = 0; for (let j = 1; j < out.length; j++) if (out[j] > out[b]) b = j; pred = s.classes[b]; probs = E().topProbs(out, s.classes, 5); }
   else if (d.task === "multi") pred = d.multi.heads.map((h) => {      // 정답마다: 분류는 가장 큰 클래스, 값은 그 칸
     if (h.kind !== "class") return `${h.name} ${Number(out[h.start].toPrecision(4))}`;
     let b = 0;
@@ -292,7 +293,9 @@ function activations(body) {
   else pred = out[0];
   let sal = null;
   try { sal = E().saliency(net, Float32Array.from(s.x), d); } catch (e) { sal = null; }   // 기울기를 못 내는 블록이면 보이지 않음
-  return { index: i, label: s.label, prediction: pred, input: s.input, values, attention, order: s.order, saliency: sal };
+  const r = { index: isNew ? s.index : i, name: isNew ? s.name : `시험 샘플 ${i}`, label: s.label, prediction: pred, input: s.input, values, attention, order: s.order, saliency: sal };
+  if (probs) r.probs = probs;
+  return r;
 }
 
 // ------------------------------------------------------------ 코드·가중치·프로젝트 (내려받기)
@@ -346,7 +349,7 @@ async function runRestore(body) {                      // 학습 기록의 모�
   changed("train");
   return r.response;
 }
-async function predictNew(body) {                      // 새 데이터로 예측: Python이 읽고 정규화 → 엔진(CPU) → Python이 표로
+async function predictNew(body) {                      // 새 데이터로 추론: Python이 읽고 정규화 → 엔진(CPU) → Python이 표로
   if (!W.trained) throw { message: "학습된 모델이 없음", hint: "④ 학습 단계에서 먼저 학습하세요" };
   const n = wrapped(W.mod.predict_prepare(W.studio, JSON.stringify(body))).n;
   const u8 = bytesOf(W.mod.predict_x(W.studio));
@@ -629,9 +632,9 @@ function afterApp() {
     });
   }
   wrapBtn("btn-folder", "folder-path", { dir: true }, "이미지 폴더 고르기");
-  wrapBtn("btn-predict-csv", "predict-path", { accept: ".csv,.tsv,.txt" }, "CSV 파일 고르고 예측");      // ⑤ 예측
-  wrapBtn("btn-predict-folder", "predict-folder", { dir: true }, "그림 폴더 고르고 예측");
-  wrapBtn("btn-predict-series", "predict-series", { dir: true }, "폴더 고르고 예측");
+  wrapBtn("btn-predict-csv", "predict-path", { accept: ".csv,.tsv,.txt" }, "CSV 파일 고르고 추론");      // ⑤ 추론
+  wrapBtn("btn-predict-folder", "predict-folder", { dir: true }, "그림 폴더 고르고 추론");
+  wrapBtn("btn-predict-series", "predict-series", { dir: true }, "폴더 고르고 추론");
   wrapBtn("btn-series-scan", "series-path", { dir: true }, "폴더 고르기");
   const lf = $("series-label-file");
   if (lf) {

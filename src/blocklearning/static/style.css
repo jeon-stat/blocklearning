@@ -430,7 +430,7 @@ table.cm.pick td[data-cell]:hover { outline: 2px solid var(--accent); }
 #preview-body svg { max-width: 100%; height: auto; }
 #preview-body p { font-size: 12px; margin: 6px 0 0; }
 
-/* ⑤ 예측 */
+/* ⑤ 추론 */
 .predict-table tr.bad td { background: var(--bad-bg); }
 .predict-table td:first-child { text-align: left; }
 #predict-result .table-wrap { max-height: 480px; overflow: auto; }
@@ -789,7 +789,7 @@ body.lab .files button, body.lab .btn-link { white-space: nowrap; }
 .ae-img { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; margin-right: 4px; }
 .seg-strip { display: block; border-radius: 2px; margin-top: 2px; }
 .seg-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 10px; }
-td.seg-cell { text-align: left; }
+table.tab td.seg-cell { text-align: left; }
 .loss-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .loss-k { font-weight: 600; color: var(--text-2); }
 .loss-term { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--accent-bg); }
@@ -854,3 +854,63 @@ td.seg-cell { text-align: left; }
 .gen-cell.cap { flex-direction: column; gap: 2px; }
 .gen-cell.cap .muted { font-size: 12px; line-height: 1.2; }
 .gen-cell.cap .gen-miss { font-size: 12px; line-height: 1.2; color: var(--bad); font-weight: 600; }
+
+/* ⑤ 추론 과정: 왼쪽 목록 (샘플마다) · 오른쪽 상세 (단계 줄 · 확률/값 · 블록마다 값, ▶ 재생) */
+.infer-split { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; margin: 12px 0; }
+.infer-list { max-height: 640px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card); }
+.infer-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 0; padding: 7px 10px; border: 0; border-bottom: 1px solid var(--line);
+  border-radius: 0; box-shadow: none; background: var(--card); text-align: left; color: var(--text); }
+.infer-item:last-child { border-bottom: 0; }
+.infer-item:hover:not(:disabled) { background: #f8fafc; border-color: var(--line); }
+.infer-item.sel, .infer-item.sel:hover:not(:disabled) { background: var(--accent-bg); box-shadow: inset 3px 0 0 var(--accent); }
+.infer-item .th { flex: none; width: 56px; display: flex; justify-content: center; }
+.infer-item .th svg, .infer-item .th img { display: block; border-radius: 3px; }
+.infer-item .bd { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.infer-item .nm { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.infer-item .pv { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.infer-item .pv .muted { font-size: 12px; }
+.infer-item .conf { height: 5px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.infer-item .conf i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.infer-item .mark { flex: none; font-weight: 700; color: var(--ok); }
+.infer-item.bad .pv b, .infer-item.bad .mark { color: var(--bad); }
+.infer-item.bad .conf i { background: var(--bad); }
+.infer-detail { min-width: 0; }
+#infer-detail { border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px 16px; background: var(--card); }
+#infer-panel { margin-top: 12px; }
+.infer-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.infer-head .infer-who { flex: 1; min-width: 0; }
+.infer-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 12px 0; }
+.infer-steps .st { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }   /* 블록 칩과 뒤 화살표를 한 덩어리로 (줄 앞에 화살표만 남지 않게) */
+.infer-steps .arr { color: var(--muted-2); font-size: 12px; }
+.infer-steps .chip { min-height: 0; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; box-shadow: none; background: var(--bg); border-color: var(--line); }
+.infer-result { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--r-sm); background: #f8fafc; border: 1px solid #eef0f4; }
+.pbars { display: grid; grid-template-columns: minmax(48px, max-content) minmax(0, 1fr) 56px; gap: 6px 10px; align-items: center; font-size: 13px; }
+.pbar { display: contents; }                          /* 줄마다 따로 재지 않고 한 격자: 이름 길이가 달라도 막대 시작이 맞음 */
+.pbar .pn { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pbar .pt { height: 12px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.pbar .pt i { display: block; height: 100%; width: var(--w); border-radius: inherit; background: var(--muted-2); transition: width .6s ease; }
+.pbar .pp { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.pbar.best { font-weight: 700; }
+.pbar.best .pt i { background: var(--accent); }
+.pbar.best .pp { color: var(--accent-ink); }
+.bars-zero .pbar .pt i { width: 0; transition: none; }
+.pvalue { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; color: var(--muted); }
+.pvalue .k { font-size: 12px; }
+.pvalue > b { font-size: 26px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+.pvalue > b.txt { font-size: 17px; }
+.pvalue span b { color: var(--text); }
+.infer-rest { display: contents; }
+.infer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; margin-top: 4px; }
+.infer-grid label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); min-width: 0; }
+.infer-grid label span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.infer-grid input[type=number] { width: 100%; min-height: 32px; padding: 4px 8px; }
+.infer-detail.playing :is(.chip, .fs, .infer-result) { opacity: .25; transition: opacity .2s; }
+.infer-detail.playing .past { opacity: .55; }
+.infer-detail.playing .on { opacity: 1; }
+.infer-detail.playing .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.infer-detail.playing .fs.on { border-left-color: var(--accent); }
+.predict-table tr[data-i], #predict-gallery [data-i] { cursor: pointer; }
+.predict-table tr[data-i]:hover td { background: #f8fafc; }
+.predict-table tr.sel td { background: var(--accent-bg); }
+#predict-gallery [data-i].sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+

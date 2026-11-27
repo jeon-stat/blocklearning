@@ -1504,7 +1504,16 @@ function thin(v) {
   return v.map(thin);
 }
 
-const API = { Net, train, fitDistance, segMetric, buildLoss, multiMetric, saliency, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
+// 분류 출력(로짓) 한 줄 → softmax 확률 큰 순 k개 [{name, p}] (같으면 앞 클래스 먼저, 소수 여섯째 자리). predict.top_probs와 같은 식
+function topProbs(out, classes, k = 5) {
+  let m = -Infinity;
+  for (const v of out) if (v > m) m = v;
+  const e = Array.from(out, (v) => Math.exp(v - m)), s = e.reduce((a, b) => a + b, 0);
+  return e.map((v, j) => [j, v / s]).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, k)
+    .map(([j, p]) => ({ name: String(classes[j]), p: Math.round(p * 1e6) / 1e6 }));
+}
+
+const API = { Net, train, fitDistance, segMetric, buildLoss, multiMetric, saliency, ensurePretrained, setPretrained, frozenHead, toInput, metric, confusion, regressionView, thin, attnView, topProbs, onCpu, checkedPredict, ACT, tf, fcMetric, aeScores, aeAuc, aeMetric,
   DET, detLoss, detDecode, detAP, detPR, detMetric, detResult, genMetric, optimConfig, optimStep, lrAt, OPT_MOMENTUM,
   SCHED, T_STEPS, genKind, condClasses, genPredict };
 if (typeof module !== "undefined") module.exports = API;

@@ -133,6 +133,7 @@ def gen_labels(studio: Studio, K: int, n: int, label=None) -> list:
 def set_trained(studio: Studio, graph_json: str, settings_json: str, results_json: str, state=None) -> None:
     """화면에서 학습이 끝났음을 기록 (코드·프로젝트 저장이 학습한 그래프를 알게). state가 있으면 학습 기록에도 더함."""
     studio.model_graph = json.loads(graph_json)
+    studio.new_data = None                                  # 새 모델: 지난 추론 결과는 버림
     studio.train_settings = json.loads(settings_json)
     studio.results = json.loads(results_json)
     if state is not None:
@@ -148,7 +149,7 @@ def _state_lists(sd: dict) -> dict:
 def _opened(studio: Studio, pr: dict) -> dict:
     """열린 프로젝트 → 상태에 반영하고 화면용 응답 + 가중치 + 엔진용 계획."""
     d = studio.data
-    studio.graph = pr["graph"]
+    studio.graph, studio.new_data = pr["graph"], None
     studio.train_settings, studio.results, studio.selection = pr["train_settings"], pr["results"], pr["selection"]
     state, plan_, notice = None, None, ""
     if pr["state_dict"] is not None:
@@ -188,7 +189,7 @@ def run_restore(studio: Studio, n: int) -> dict:
 
 @_wrap
 def predict_prepare(studio: Studio, body_json: str) -> dict:
-    """새 데이터로 예측 1단계: 읽고 정규화해 둠 (엔진이 predict_x로 가져감)."""
+    """새 데이터로 추론 1단계: 읽고 정규화해 둠 (엔진이 predict_x로 가져감)."""
     from blocklearning.core import _paths
     from blocklearning.predict import read_new
     d = studio.need_data()
@@ -204,10 +205,11 @@ def predict_x(studio: Studio) -> bytes:
 
 @_wrap
 def predict_finish(studio: Studio, out_bytes) -> dict:
-    """새 데이터로 예측 2단계: 엔진의 출력 → 표·요약·CSV."""
+    """새 데이터로 추론 2단계: 엔진의 출력 → 표·요약·CSV. 읽은 새 데이터는 남겨 둠 (샘플마다 추론 과정: sample_new)."""
     from blocklearning.predict import table
     raw = out_bytes.to_bytes() if hasattr(out_bytes, "to_bytes") else bytes(out_bytes)
     p, studio.pending = studio.pending, None
+    studio.new_data = p
     out = np.frombuffer(raw, dtype=np.float32).reshape(len(p["names"]), -1)
     return _clean(table(studio.data, p["names"], out, p["labels"], p["X"], studio.results, p.get("truth")))
 
@@ -224,6 +226,21 @@ def sample(studio: Studio, i: int) -> dict:
     order = check_graph(studio.model_graph, d.length, d.n_out, image=d.image).order
     return {"x": d.X_test[i].astype(float).tolist(), "input": np.round(d.raw(d.X_test[i]), 5).tolist(),
             "label": label, "order": order, "classes": [str(c) for c in d.classes]}
+
+
+@_wrap
+def sample_new(studio: Studio, i, rows_json: str = "null") -> dict:
+    """샘플 따라가기의 데이터 쪽 (⑤ 새 데이터): 새 데이터 i 또는 직접 넣은 값 한 줄(rows_json, 원래 단위)의
+    정규화한 값, 원래 값, 정답 (없으면 None), 노드 순서, 이름. sample()과 같은 모양 (core.picked_sample)."""
+    d = studio.need_data()
+    if studio.model_graph is None:
+        raise UserError("학습된 모델이 없음", "④ 학습 단계에서 먼저 학습하세요")
+    rows = json.loads(rows_json or "null")
+    p = studio.picked_sample({"rows": rows} if rows is not None else {"new_index": int(i)})
+    xn = np.asarray(p["x"], dtype=np.float32)
+    order = check_graph(studio.model_graph, d.length, d.n_out, image=d.image).order
+    return {"x": xn.astype(float).tolist(), "input": np.round(d.raw(xn.astype(np.float64)), 5).tolist(), "label": p["label"],
+            "order": order, "classes": [str(c) for c in d.classes], "name": p["name"], "index": p["index"]}
 
 
 def _arrays(state) -> dict:
