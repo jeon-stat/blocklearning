@@ -641,8 +641,10 @@ async function loadData(body) {                       // 성공하면 true
 // ④ 학습 화면 비우기: 새 데이터(다른 프로젝트 열기 포함)에는 지난 학습 결과·곡선·샘플을 남기지 않음
 function clearPredictView() {                            // 예측 결과는 그 모델·데이터의 것: 바뀌면 지움
   $("predict-result").hidden = true;
-  for (const id of ["predict-cards", "predict-table", "predict-gallery", "predict-note", "predict-issues"]) if ($(id)) $(id).innerHTML = "";
-  st.predictCsv = null;
+  for (const id of ["predict-cards", "predict-table", "predict-gallery", "predict-note", "predict-issues", "gen-out"]) if ($(id)) $(id).innerHTML = "";
+  st.predictCsv = st.genCsv = null;
+  st.genSeed = 0;
+  $("gen-csv").disabled = true;
 }
 function clearTrainView() {
   clearPredictView();
@@ -664,6 +666,7 @@ function onData(s) {
   st.dataSrc = s.example || null;
   st.trained = false;
   clearTrainView();                                          // 지난 데이터·프로젝트의 학습 결과는 치움
+  labelPredictStep();
   $("data-summary").hidden = false;
   $("btn-next-data").hidden = false;
   const det = s.task === "detection", fc = s.forecast, ae = s.anomaly;
@@ -1267,29 +1270,40 @@ function renderGenResult(r) {
   renderWarnings("train-warnings", r.warnings);
   $("train-confusion").innerHTML = $("train-scatter").innerHTML = "";
   $("det-box").hidden = false;
-  $("det-box").innerHTML = `<h3>새 샘플</h3><div class="row"><button id="gen-make" class="primary">새 샘플 만들기</button>` +
-    `<label class="inline">폭 <select id="gen-scale"><option value="0.5">0.5</option><option value="1" selected>1</option><option value="1.5">1.5</option></select></label>` +
-    `<button id="gen-csv" disabled>CSV 받기</button></div><div id="gen-out" class="gen-grid${wide}"></div>` +
-    `<h3>시험 샘플 → 되살린 것</h3><div class="gen-grid pair${wide}">` +
+  $("det-box").innerHTML = `<h3>시험 샘플 → 되살린 것</h3><div class="gen-grid pair${wide}">` +
     r.recon.map((p) => `<div class="gen-cell">${genPic(p.input, 110)}${genPic(p.output, 110)}</div>`).join("") + `</div>`;
-  let seed = 0, csv = "";
-  const make = async () => {
-    try {
-      const g = await api("/api/generate", { n: 16, seed: seed++, scale: Number($("gen-scale").value) });
-      csv = g.csv;
-      $("gen-csv").disabled = false;
-      $("gen-out").innerHTML = g.samples.map((v) => `<div class="gen-cell">${genPic(v, 110)}</div>`).join("");
-    } catch (e) { showError(e); }
-  };
-  $("gen-make").onclick = make;
-  $("gen-csv").onclick = () => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    a.download = "generated.csv";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  };
-  make();
+  $("gen-out").innerHTML = "";                                // 모델이 바뀌었으니 ⑤의 샘플은 새로
+  st.genSeed = 0;
+  st.genCsv = null;
+  $("gen-csv").disabled = true;
+}
+// ⑤ 생성 과제: 예측 대신 새 샘플 만들기 (정규분포에서 뽑아 디코더로). 학습이 바뀌면 처음부터
+async function makeGen() {
+  try {
+    const seed = st.genSeed || 0;
+    st.genSeed = seed + 1;
+    const g = await api("/api/generate", { n: 16, seed, scale: Number($("gen-scale").value) });
+    st.genCsv = g.csv;
+    $("gen-csv").disabled = false;
+    $("gen-out").className = "gen-grid" + (st.summary.image ? "" : " wide");
+    $("gen-out").innerHTML = g.samples.map((v) => `<div class="gen-cell">${genPic(v, 110)}</div>`).join("");
+  } catch (e) { showError(e); }
+}
+$("gen-make").onclick = makeGen;
+$("gen-csv").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([st.genCsv], { type: "text/csv;charset=utf-8" }));
+  a.download = "generated.csv";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+const PREDICT_LABEL = { sl: "예측<small>새 데이터에 쓰기</small>", title: "⑤ 새 데이터로 예측", next: "다음: 새 데이터로 예측 →" };
+const GEN_LABEL = { sl: "만들기<small>새 샘플 뽑기</small>", title: "⑤ 새 샘플 만들기", next: "다음: 새 샘플 만들기 →" };
+function labelPredictStep() {                              // 생성 과제면 ⑤ 이름을 '만들기'로
+  const L = st.summary && st.summary.task === "generation" ? GEN_LABEL : PREDICT_LABEL;
+  document.querySelector('.step[data-step="predict"] .sl').innerHTML = L.sl;
+  $("predict-title").textContent = L.title;
+  $("btn-go-predict").textContent = L.next;
 }
 // ---------------- 시계열 예측 결과: MAE (원래 단위)·단순 예측과 비교·몇 칸 뒤까지 맞히는지·시험 창 예시
 function fcVerdict(r) {
@@ -1839,9 +1853,13 @@ function renderPredictStep() {
   const guard = !s ? ["데이터와 모델이 아직 없습니다.", "data", "② 데이터 넣으러 가기"]
     : !st.trained ? ["학습한 모델이 없습니다. 먼저 학습하세요.", "train", "④ 학습하러 가기"] : null;
   $("predict-guard").hidden = !guard && !stale;
+  const gen = !!s && s.task === "generation";
   $("predict-guard").innerHTML = guard ? `<span>⚠ ${esc(guard[0])}</span><button data-go="${guard[1]}">${esc(guard[2])}</button>`
-    : stale ? `<span>예측은 마지막으로 학습한 모델로 합니다. ③에서 고친 내용은 다시 학습해야 반영됩니다.</span><button data-go="train">④ 다시 학습하러 가기</button>` : "";
-  $("predict-inputs").hidden = !!guard;
+    : stale ? `<span>${gen ? "새 샘플은" : "예측은"} 마지막으로 학습한 모델로 ${gen ? "만듭니다" : "합니다"}. ③에서 고친 내용은 다시 학습해야 반영됩니다.</span><button data-go="train">④ 다시 학습하러 가기</button>` : "";
+  $("predict-inputs").hidden = !!guard || gen;
+  $("gen-step").hidden = !!guard || !gen;
+  if (gen) $("predict-result").hidden = true;
+  if (gen && !guard && !$("gen-out").innerHTML) makeGen();
   document.querySelectorAll("#predict-inputs [data-kind]").forEach((el) => (el.hidden = !kinds.includes(el.dataset.kind)));
   $("predict-format").textContent = s ? kinds.filter((k) => PREDICT_FORMAT[k]).map((k) => PREDICT_FORMAT[k](s)).join(" ") : "";
   if (s && kinds.includes("rows") && st.predictFormFor !== s) {

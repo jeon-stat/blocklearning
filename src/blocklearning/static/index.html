@@ -255,18 +255,24 @@
     </div>
     <div class="next"><button class="primary go back" data-go="model">← 이전: 모델</button>
       <button id="btn-export-pt">학습한 모델 내보내기 (.pt)</button>
-      <button class="primary go" data-go="predict">다음: 새 데이터로 예측 →</button></div>
+      <button id="btn-go-predict" class="primary go" data-go="predict">다음: 새 데이터로 예측 →</button></div>
   </section>
 
   <!-- ⑤ 예측 -->
   <section id="step-predict" class="panel" hidden>
-    <h2>⑤ 새 데이터로 예측</h2>
+    <h2 id="predict-title">⑤ 새 데이터로 예측</h2>
     <div class="empty-step" data-empty="predict">
       <div class="es-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
       <b>아직 학습한 모델이 없습니다</b>
       <div class="es-actions"><button class="primary" data-go="data">② 데이터 넣기</button></div>
     </div>
     <div id="predict-guard" class="guard" hidden></div>
+    <div id="gen-step" hidden>
+      <div class="row"><button id="gen-make" class="primary">새 샘플 만들기</button>
+        <label class="inline">폭 <select id="gen-scale"><option value="0.5">0.5</option><option value="1" selected>1</option><option value="1.5">1.5</option></select></label>
+        <button id="gen-csv" disabled>CSV 받기</button></div>
+      <div id="gen-out" class="gen-grid"></div>
+    </div>
     <div id="predict-inputs">
       <div class="row" data-kind="example"><button id="btn-predict-example" class="primary">예시 새 데이터 10개로 예측</button></div>
       <div class="row" data-kind="csv"><input id="predict-path" class="path" placeholder="C:\data\new.csv"><button id="btn-predict-csv" class="primary">CSV로 예측</button></div>
