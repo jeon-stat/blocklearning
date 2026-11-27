@@ -61,7 +61,7 @@ python -m blocklearning        # 실행: 브라우저가 열립니다 (끝내려
 | 예측 · 시계열 | 철강 공장 전력 사용량 다음 하루 ([UCI](https://archive.ics.uci.edu/dataset/851)) | 선형 (DLinear식), MLP, 1D CNN, LSTM, Transformer |
 | 구간 분할 · 시계열 | 검사 기계 전류·압력의 시점마다 공정 단계 ([Mendeley](https://doi.org/10.17632/ypzswhhzh9.3)) | TCN, U-Net식, 양방향 GRU |
 | 여러 정답 · 표 | 유압 시스템 상태(분류)와 밸브 %·압력(숫자)을 한 번에 | MLP (몸통 함께 쓰기) |
-| 생성 · 이미지·시계열 | 손글씨 숫자 새 그림 / 심전도 새 박동 (진단용 아님) | VAE (Conv), VAE (Dense) |
+| 생성 · 이미지·시계열 | 손글씨 숫자 새 그림 (숫자를 골라서도) / 심전도 새 박동 (진단용 아님) | VAE, 조건부 VAE (클래스 골라 만들기), 확산 모델 (DDPM: U-Net·MLP) |
 
 ## 더 보기
 

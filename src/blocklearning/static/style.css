@@ -850,3 +850,7 @@ td.seg-cell { text-align: left; }
 .gen-grid.pair.wide { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 .gen-cell { display: flex; gap: 4px; justify-content: center; align-items: center; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
 .gen-cell svg, .gen-cell img { max-width: 100%; height: auto; }
+.gen-cell { min-width: 0; }
+.gen-cell.cap { flex-direction: column; gap: 2px; }
+.gen-cell.cap .muted { font-size: 12px; line-height: 1.2; }
+.gen-cell.cap .gen-miss { font-size: 12px; line-height: 1.2; color: var(--bad); font-weight: 600; }

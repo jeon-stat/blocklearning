@@ -236,13 +236,14 @@ def target_scale(Y: np.ndarray) -> tuple:
 
 def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int = 0, device=None, callback=None,
         det=None, keep_best: bool = False, early_stop: int = 0, val_score=None, loss_spec=None, n_cls: int = 0,
-        class_w=None, should_stop=None, optim=None):
+        class_w=None, should_stop=None, optim=None, cond=None):
     """평범한 torch 학습: optim(옵티마이저·학습률 스케줄·weight decay·기울기 자르기·혼합 정밀도, 기본 Adam), 분류는 교차 엔트로피, 회귀는 MSE, 탐지는 YOLO식 손실 (det: DetOut). 반복마다
     callback({"epoch", "loss", "val_loss", "best_epoch", "model"}), True를 돌려주면 멈춤. 돌려주는 모델은 CPU.
     keep_best·early_stop: 학습 몫의 VAL_FRAC를 검증 몫으로 떼어 epoch마다 검증 손실을 재고, 가장 낮았던 epoch의 모델을
     남기거나(keep_best) early_stop epoch 동안 나아지지 않으면 멈춤. 결과는 net.fit_info {best_epoch, early_stopped, n_val}.
     val_score(검증 출력, 검증 샘플 번호) → 클수록 좋은 성적: 주면 손실 대신 이것으로 고름 (탐지: 손실이 성적을 잘 대변하지 못함).
-    loss_spec: 조립한 손실 (losses.normalize 결과, 기본이면 None) → 반복마다 항마다의 값도 info["terms"]."""
+    loss_spec: 조립한 손실 (losses.normalize 결과, 기본이면 None) → 반복마다 항마다의 값도 info["terms"].
+    생성(task "generation"): cond = 샘플마다 클래스 번호 (클래스 조건 블록이 씀). 확산 모델이면 잡음을 섞은 입력에서 원래 값을 맞힘 (generate.noised)."""
     import torch
     from torch import nn
     torch.manual_seed(seed)
@@ -251,6 +252,10 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
     X = np.asarray(X)
     home = dev if dev.type == "cpu" or X.size * 4 <= GPU_RESIDENT_BYTES else torch.device("cpu")   # 크면 CPU에 두고 묶음만 GPU로
     Xt = torch.as_tensor(X, dtype=torch.float32, device=home)
+    gen_kind = net.gen_kind() if task == "generation" and hasattr(net, "gen_kind") else None
+    ct = torch.as_tensor(np.asarray(cond), dtype=torch.long, device=home) if gen_kind and cond is not None else None
+    if gen_kind == "diffusion":
+        from blocklearning import generate as G
     if task == "detection":
         from blocklearning.detect import torch_loss
         yt = torch.as_tensor(np.asarray(y), dtype=torch.float32, device=home)
@@ -288,6 +293,8 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
         perm = torch.randperm(len(Xt), generator=torch.Generator().manual_seed(seed + 1)).to(home)
         nv = max(2, int(round(len(Xt) * VAL_FRAC)))
         Xv, yv, Xt, yt = Xt[perm[:nv]], yt[perm[:nv]], Xt[perm[nv:]], yt[perm[nv:]]
+        if ct is not None:
+            cv, ct = ct[perm[:nv]], ct[perm[nv:]]
         val_idx = perm[:nv].cpu().numpy()
     n = len(Xt)
     best, best_ep, since, best_state, early = float("inf"), None, 0, None, False
@@ -310,8 +317,15 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
             opt.zero_grad()
             ix = idx.to(home)
             xb, yb = Xt[ix].to(dev, non_blocking=True), yt[ix].to(dev, non_blocking=True)
+            cb = ct[ix].to(dev) if ct is not None else None
             with torch.autocast("cuda", dtype=amp, enabled=amp is not None):
-                if parts_fn is not None:
+                if gen_kind:                               # 클래스 조건: 이 묶음의 클래스
+                    net.set_cond(y=cb)
+                if gen_kind == "diffusion":                # 확산: x_t를 넣고 원래 값(또는 잡음)을 맞힘 (generate.PRED)
+                    xin, tt, target = G.noised(xb)
+                    net.set_cond(y=cb, t=tt)
+                    loss = nn.functional.mse_loss(net(xin).float(), target)
+                elif parts_fn is not None:
                     loss, parts = parts_fn(net(xb), yb, net)
                     for k, v in parts.items():
                         terms[k] = terms.get(k, 0.0) + float(v.detach())
@@ -343,8 +357,19 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
             net.eval()
             with torch.no_grad():                            # 묶음마다 출력 → 바로 손실 (블록 출력 L1이 그 묶음의 값을 씀)
                 outs, tot = [], 0.0
+                g = torch.Generator().manual_seed(seed + 7)   # 확산: epoch마다 같은 잡음으로 검증
                 for i in range(0, len(Xv), 256):
-                    o = net(Xv[i:i + 256].to(dev))
+                    xv = Xv[i:i + 256].to(dev)
+                    if gen_kind:
+                        net.set_cond(y=None if ct is None else cv[i:i + 256].to(dev))
+                    if gen_kind == "diffusion":
+                        xin, tt, target = G.noised(xv, g)
+                        net.set_cond(y=None if ct is None else cv[i:i + 256].to(dev), t=tt)
+                        o = net(xin)
+                        outs.append(o)
+                        tot += float(nn.functional.mse_loss(o.float(), target)) * len(o)
+                        continue
+                    o = net(xv)
                     outs.append(o)
                     tot += float(loss_fn(o, yv[i:i + 256].to(dev))) * len(o)
             val_loss = tot / len(Xv)
@@ -365,6 +390,8 @@ def fit(net, X, y, task: str, epochs: int, lr: float, batch_size: int, seed: int
             break
     if getattr(net, "capture", None) is not None:
         net.capture = None
+    if gen_kind:
+        net.set_cond()
     if best_state is not None:
         net.load_state_dict(best_state)
     net.fit_info = {"best_epoch": best_ep, "early_stopped": early, "n_val": 0 if Xv is None else len(Xv)}
@@ -428,7 +455,16 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings, init_state: 
         Xfit, Fte = (frozen_features(model.block_modules[head], X, dev) for X in (Xtr, Xte))
         Xte_t = Fte
         model.start = head
+    gen = data.task == "generation" and model.gen_kind() is not None
     reg = data.task not in ("classification", "segmentation", "multi")   # 회귀·예측·이상 탐지: 맞힐 값을 출력마다 정규화해 학습
+    if gen and model.gen_kind() == "diffusion":            # 확산: 맞힐 값은 잡음 섞기 전의 입력 (따로 정규화하지 않음)
+        reg = False
+
+    def pred(net, X, labels, d=None):                      # 평가 출력 (생성: 클래스 조건·확산을 넣어)
+        if gen:
+            from blocklearning import generate
+            return generate.predict(net, X, labels, d)
+        return predict_np(net, X, d)
     Y = np.asarray(data.target_train, dtype=np.float64).reshape(len(data.X_train), -1)
     mu, sd = target_scale(Y) if reg else (0.0, 1.0)
     y_fit = (Y - mu) / sd if reg else data.y_train
@@ -442,7 +478,7 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings, init_state: 
     def cb(info):
         net = info["model"]
         net.eval()
-        out = predict_np(net, Xte_t, dev) * sd + mu
+        out = pred(net, Xte_t, data.y_test, dev) * sd + mu
         done.append(info["epoch"])
         job.report(_progress(info, metric(out, data.y_test, data.task, data.X_test, heads)))
         return job.cancelled
@@ -453,15 +489,15 @@ def train_job(job: Job, graph: dict, data, settings: TrainSettings, init_state: 
             net = fit(model, Xfit, y_fit, data.task, settings.epochs, settings.lr, settings.batch_size, seed=settings.seed,
                       device=dev, callback=cb, det=data.n_out if data.task in ("segmentation", "multi") else None,
                       keep_best=settings.keep_best, early_stop=settings.early_stop, should_stop=lambda: job.cancelled,
-                      optim=settings.optim(), **loss_args(data, settings))
+                      optim=settings.optim(), cond=data.y_train if gen else None, **loss_args(data, settings))
         finally:
             model.start = None
     if reg or heads:
         _fold_target_scale(net, mu, sd)
-    out = predict_np(net, Xte)
+    out = pred(net, Xte, data.y_test)
     result = {"model": net, "epochs_done": len(done), "test_metric": metric(out, data.y_test, data.task, data.X_test, heads),
               "metric_name": metric_name(data), "warnings": [], "confusion": None, "recall": None, **_fit_result(net)}
-    out_tr = predict_np(net, Xtr)                           # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
+    out_tr = pred(net, Xtr, data.y_train)                   # 학습 데이터 성적 (시험과 차이가 크면 외운 것)
     if data.task in ("forecast", "anomaly", "segmentation", "multi", "generation"):
         return dict(result, **task_result(data, out, out_tr))
     result["train_metric"] = metric(out_tr, data.y_train, data.task)

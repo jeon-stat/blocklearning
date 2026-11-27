@@ -392,6 +392,10 @@ class Studio:
         if not c.ok:
             i = c.issues[0]
             raise UserError(i.message, i.hint, [x.to_dict() for x in c.issues])
+        from blocklearning.generate import graph_issue
+        gi = graph_issue(d, graph)
+        if gi:
+            raise UserError(*gi)
         settings = TrainSettings.from_dict(b.get("settings"))
         from blocklearning import losses
         try:
@@ -423,17 +427,18 @@ class Studio:
         return {"id": self.jobs.start("train", run)}
 
     def api_generate(self, b: dict) -> dict:
-        """생성: 학습한 VAE의 디코더로 새 샘플 n개 (seed가 같으면 같은 샘플, scale은 뽑는 폭)."""
+        """생성: 학습한 모델로 새 샘플 n개 (VAE는 디코더로, 확산은 잡음을 걷어 내며). seed가 같으면 같은 샘플, scale은 뽑는 폭,
+        label은 클래스 조건 블록이 있을 때 만들 클래스 번호 (없으면 클래스를 돌아가며)."""
         from blocklearning import generate
         d, m = self.need_data(), self.need_model()
         if d.task != "generation":
             raise UserError("생성 과제로 학습한 모델이 아님", "① 과제에서 '생성'을 고르고 학습하세요")
         seed = int(b.get("seed", 0))
         try:
-            X = generate.sample(m, d, int(b.get("n", 16)), seed, float(b.get("scale", 1.0)))
+            X, y, Z = generate.sample(m, d, int(b.get("n", 16)), seed, float(b.get("scale", 1.0)), b.get("label"))
         except ValueError as e:
-            raise UserError(str(e), "모델에 'VAE 잠재 공간' 블록을 두고, 그 뒤 블록이 앞쪽 블록을 쓰지 않게 하세요") from None
-        return generate.view(d, X, seed)
+            raise UserError(str(e), "모델에 'VAE 잠재 공간'이나 '확산 시점' 블록을 두고, VAE면 잠재 공간 뒤 블록이 앞쪽 블록을 쓰지 않게 하세요") from None
+        return generate.view(d, X, seed, y, generate.judge(d, Z, y))
 
     def _resume_state(self, graph: dict, d) -> dict:
         """이어 학습: 지금 모델의 가중치 (같은 데이터·같은 모양의 모델일 때만)."""
@@ -718,6 +723,8 @@ class Studio:
             info["calendar"] = list(d.extra["calendar"])
         if heads:
             info["heads"] = heads
+        if d.task == "generation" and (d.extra or {}).get("labels"):
+            info["gen_labels"] = list(d.extra["labels"])
         settings = b.get("settings") or self.train_settings or {}
         train = {k: settings[k] for k in ("epochs", "lr", "batch_size") if k in settings}
         from blocklearning import losses

@@ -429,6 +429,24 @@ def _graph_net_class():
             ks = [m.beta * m.kl for m in self.modules() if type(m).__name__ == "VAELatent" and m.kl is not None]
             return sum(ks) if ks else None
 
+        def gen_kind(self):
+            """생성 방식: "diffusion" (확산 시점 블록), "vae" (잠재 공간 블록), 둘 다 없으면 None."""
+            names = {type(m).__name__ for m in self.modules()}
+            return "diffusion" if "TimeEmbed" in names else "vae" if "VAELatent" in names else None
+
+        def cond_classes(self) -> int:
+            """클래스 조건 블록의 클래스 수 (가장 작은 것, 없으면 0)."""
+            ks = [m.emb.num_embeddings for m in self.modules() if type(m).__name__ == "ClassCond"]
+            return min(ks) if ks else 0
+
+        def set_cond(self, y=None, t=None):
+            """클래스 조건·확산 시점 블록이 쓸 값 (샘플마다): y (N,) 정수 클래스, t (N,) 시점. None이면 쓰지 않음."""
+            for m in self.modules():
+                if type(m).__name__ == "ClassCond":
+                    m.y = y
+                elif type(m).__name__ == "TimeEmbed":
+                    m.t = t
+
         def generate(self, z):
             """잠재 값 z (N, dim) → 디코더(잠재 공간 블록 뒤)만 실행한 출력. 디코더가 앞쪽 블록을 쓰면 ValueError."""
             lat = self.latent()

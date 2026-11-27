@@ -74,6 +74,10 @@ def plan(studio: Studio, graph_json: str) -> dict:
     if not c.ok:
         i = c.issues[0]
         raise UserError(i.message, i.hint, [x.to_dict() for x in c.issues])
+    from blocklearning.generate import graph_issue
+    gi = graph_issue(d, graph)
+    if gi:
+        raise UserError(*gi)
     return codegen.plan_dict(graph, d.length, d.n_out, d.image)
 
 
@@ -105,13 +109,25 @@ def task_result(studio: Studio, out_bytes, out_tr_bytes) -> dict:
 
 
 @_wrap
-def gen_view(studio: Studio, out_bytes, n: int, seed: int) -> dict:
-    """생성: 화면(엔진)이 디코더로 만든 출력(float32, 정규화한 값) → 원래 단위의 새 샘플과 CSV (generate.view)."""
+def gen_view(studio: Studio, out_bytes, n: int, seed: int, labels_json: str = "null") -> dict:
+    """생성: 화면(엔진)이 만든 출력(float32, 정규화한 값) → 원래 단위의 새 샘플과 CSV (generate.view). labels_json: 샘플마다 클래스 번호."""
     from blocklearning import generate
     d = studio.need_data()
     raw = out_bytes.to_bytes() if hasattr(out_bytes, "to_bytes") else bytes(out_bytes)
     out = np.frombuffer(raw, dtype=np.float32).reshape(int(n), -1).astype(np.float64)
-    return _clean(generate.view(d, d.raw(out), int(seed)))
+    y = json.loads(labels_json)
+    y = None if y is None else np.asarray(y, np.int64)
+    return _clean(generate.view(d, d.raw(out), int(seed), y, generate.judge(d, out, y)))
+
+
+@_wrap
+def gen_labels(studio: Studio, K: int, n: int, label=None) -> list:
+    """생성: 만들 샘플마다 넣을 클래스 번호 (generate.labels_for, 클래스 조건 블록의 클래스 수 K)."""
+    from blocklearning import generate
+    try:
+        return [int(v) for v in generate.labels_for(int(K), generate.labels_of(studio.need_data()), int(n), label)]
+    except ValueError as e:
+        raise UserError(str(e), "만들 클래스를 다시 고르세요") from None
 
 
 def set_trained(studio: Studio, graph_json: str, settings_json: str, results_json: str, state=None) -> None:

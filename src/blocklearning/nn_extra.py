@@ -564,6 +564,43 @@ class VAELatent(nn.Module):
         return mu + torch.exp(0.5 * lv) * torch.randn_like(mu)
 
 
+class ClassCond(nn.Module):
+    """클래스 조건: 샘플마다 그 클래스의 학습한 값(채널마다 하나)을 더함. 모양은 그대로.
+    클래스는 밖에서 정함 (self.y: (N,) 정수, 학습 때는 정답, 만들 때는 고른 클래스). 정하지 않으면 그대로 내보냄."""
+
+    def __init__(self, c, classes):
+        super().__init__()
+        self.emb = nn.Embedding(classes, c)
+        nn.init.zeros_(self.emb.weight)                   # 처음에는 조건 없음과 같음
+        self.y = None
+
+    def forward(self, x):
+        if self.y is None:
+            return x
+        e = self.emb(self.y.clamp(0, self.emb.num_embeddings - 1))
+        return x + e.view(e.shape[0], e.shape[1], *([1] * (x.dim() - 2)))
+
+
+class TimeEmbed(nn.Module):
+    """확산 시점: 시점 t를 사인·코사인 16쌍으로 바꾸고 Linear로 채널마다 값 하나를 만들어 더함. 모양은 그대로.
+    t는 밖에서 정함 (self.t: (N,) 실수, 0 = 잡음이 가장 적은 시점). 정하지 않으면 그대로 내보냄."""
+
+    FREQS = 16
+
+    def __init__(self, c):
+        super().__init__()
+        self.proj = nn.Linear(2 * self.FREQS, c)
+        self.t = None
+
+    def forward(self, x):
+        if self.t is None:
+            return x
+        f = torch.exp(-math.log(10000.0) * torch.arange(self.FREQS, device=x.device, dtype=x.dtype) / self.FREQS)
+        a = self.t.to(x.dtype)[:, None] * f[None]
+        e = self.proj(torch.cat([torch.sin(a), torch.cos(a)], 1))
+        return x + e.view(e.shape[0], e.shape[1], *([1] * (x.dim() - 2)))
+
+
 class TorchvisionBackbone(nn.Module):
     """torchvision이 ImageNet으로 미리 학습한 그림 모델의 특징 추출기 (설치형). 가중치는 처음 쓸 때 torchvision이 내려받아 둠.
     그림 (N, 1 또는 3, H, W) → 그림마다 0~1로 → size×size (bilinear) → ImageNet 평균·표준편차로 정규화 → 특징 벡터.

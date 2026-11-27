@@ -38,13 +38,14 @@ EXTRA_TYPES = (
     "embedding", "spectrogram", "rand_flip", "rand_rotate", "rand_shift", "rand_zoom", "rand_scale", "rand_stretch",
     # 사전학습 (가중치 고정)
     "mnv3s", "tv_backbone",
-    # 생성 (VAE)
-    "vae_latent",
+    # 생성 (VAE·확산)
+    "vae_latent", "class_cond", "time_embed",
 )
 # torchvision이 ImageNet으로 미리 학습한 그림 모델 (설치형 전용, nn_extra.TorchvisionBackbone): 이름 → 특징 수
 TV_ARCHS = {"resnet18": 512, "resnet50": 2048, "efficientnet_b0": 1280, "convnext_tiny": 768, "mobilenet_v3_large": 960,
             "vit_b_16": 768}
 TV_TUNES = ("frozen", "last", "all")
+TIME_FREQS = 16                                             # 확산 시점 블록: 시점 t를 사인·코사인 16쌍으로 (nn_extra.TimeEmbed와 같음)
 PRETRAINED_TYPES = ("mnv3s",)                               # 가중치를 pretrained/<종류>.bin에서 읽고 학습하지 않음
 # Google MobileNetV3-Small 특징 추출기 (nn_extra.MobileNetV3Small.CFG와 같음): (들어옴, kernel, 넓힘, 나감, SE 채널, HardSwish인지, stride)
 MNV3S_CFG = ((16, 3, 16, 16, 8, 0, 2), (16, 3, 72, 24, 0, 0, 2), (24, 3, 88, 24, 0, 0, 1), (24, 5, 96, 40, 24, 1, 2),
@@ -78,7 +79,7 @@ EXTRA_NAMES = {
     "rand_shift": "RandomShift", "rand_zoom": "RandomZoom", "rand_scale": "RandomScale", "rand_stretch": "RandomStretch",
     "multiply": "Multiply", "average": "Average", "maximum": "Maximum", "mnv3s": "MobileNetV3-Small (사전학습)",
     "tv_backbone": "사전학습 CNN (torchvision)",
-    "vae_latent": "VAE 잠재 공간",
+    "vae_latent": "VAE 잠재 공간", "class_cond": "클래스 조건", "time_embed": "확산 시점",
 }
 
 # 정수 설정: (키, 최소, 최대, 기본값, 허용 값, 설명) — blocks.PARAMS와 같은 꼴
@@ -119,6 +120,7 @@ EXTRA_PARAMS = {
                     ("n_mels", 4, 64, 16, (8, 16, 32, 64), "mel 칸 수는 8·16·32·64"),
                     ("n_mfcc", 4, 40, 13, (8, 13, 20, 40), "MFCC 개수는 8·13·20·40")],
     "vae_latent": [("dim", 1, 256, 16, None, "잠재 차원은 1–256")],
+    "class_cond": [("classes", 2, 1000, 10, None, "클래스 수는 2–1000")],
     "tv_backbone": [("size", 64, 384, 224, (64, 96, 128, 160, 224, 256, 384), "크기는 64·96·128·160·224·256·384")],
     "mnv3s": [("size", 64, 224, 128, (64, 96, 128, 160, 224), "크기는 64·96·128·160·224"),
               ("train_last", 0, 3, 0, (0, 1, 2, 3), "학습할 끝 블록 수는 0–3 (0이면 모두 고정)")],
@@ -260,6 +262,8 @@ def shape(w, b: dict, shape_in, path, ctx):
         if not _need(w, t, s, (1,), path):
             return None
         return (o("dim"),)
+    if t in ("class_cond", "time_embed"):                  # 모양 그대로 (채널마다 값을 더함)
+        return s if _need(w, t, s, (1, 2, 3), path) else None
     if t == "tv_backbone":
         if not _need(w, t, s, (3,), path):
             return None
@@ -471,6 +475,10 @@ def params(t: str, b: dict, ins, out, k: str, ins2=None) -> list:
     if t == "vae_latent":
         d = o("dim")
         return [W("mu.weight", d, C), W("mu.bias", d), W("logvar.weight", d, C), W("logvar.bias", d)]
+    if t == "class_cond":
+        return [(f"{k}.emb.weight", [o("classes"), C], "weight", "zeros")]
+    if t == "time_embed":
+        return [W("proj.weight", C, 2 * TIME_FREQS), W("proj.bias", C)]
     return []
 
 
@@ -620,6 +628,10 @@ def torch_args(t: str, b: dict, ins, ins2=None):
         return "RandomStretch", {"frac": float(o("frac"))}
     if t == "vae_latent":
         return "VAELatent", {"c": C, "dim": o("dim"), "beta": float(o("beta"))}
+    if t == "class_cond":
+        return "ClassCond", {"c": C, "classes": o("classes")}
+    if t == "time_embed":
+        return "TimeEmbed", {"c": C}
     if t == "tv_backbone":
         return "TorchvisionBackbone", {"arch": o("arch"), "size": o("size"), "tune": o("tune")}
     if t == "mnv3s":

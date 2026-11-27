@@ -210,6 +210,37 @@ T_VAE_CONV = {"id": "vae_conv", "name": "VAE (Conv)",
                          _dense(1024), P2, {"type": "reshape", "channels": 16, "height": 8},
                          {"type": "conv_t2d", "channels": 16, "kernel": 2, "stride": 2}, P2,
                          {"type": "conv_t2d", "channels": 1, "kernel": 2, "stride": 2}, OUT]}
+COND = {"type": "class_cond", "classes": 10}
+CLATENT = dict(LATENT, beta=2.0)                  # 조건부: KL을 조금 무겁게 → 잠재 값이 클래스를 덜 담고 클래스 조건을 씀
+TIME = {"type": "time_embed"}
+T_CVAE_DENSE = {"id": "cvae_dense", "name": "조건부 VAE (Dense)",
+                "desc": "VAE (Dense)의 인코더와 디코더에 '클래스 조건'을 더한 모델. 만들 때 클래스를 고르면 그 클래스를 닮은 샘플을 만듦",
+                "when": "클래스(정상·이상 등)가 있는 데이터에서 원하는 클래스만 만들고 싶을 때",
+                "blocks": [{"type": "flatten"}, COND, _dense(256), P2, _dense(64), P2, CLATENT, COND, _dense(64), COND, P2, _dense(256), COND, P2, OUT]}
+T_CVAE_CONV = {"id": "cvae_conv", "name": "조건부 VAE (Conv)",
+               "desc": "VAE (Conv)의 잠재 공간 앞뒤에 '클래스 조건'을 더한 모델. 만들 때 클래스(예: 숫자 7)를 고르면 그 클래스의 그림을 만듦",
+               "when": "클래스 폴더로 나뉜 그림 데이터에서 원하는 클래스만 만들고 싶을 때",
+               "blocks": [{"type": "conv2d", "channels": 16, "kernel": 3, "stride": 2}, P2,
+                          {"type": "conv2d", "channels": 32, "kernel": 3, "stride": 2}, P2, {"type": "flatten"}, COND, CLATENT, COND,
+                          _dense(1024), COND, P2, {"type": "reshape", "channels": 16, "height": 8},
+                          {"type": "conv_t2d", "channels": 16, "kernel": 2, "stride": 2}, COND, P2,
+                          {"type": "conv_t2d", "channels": 1, "kernel": 2, "stride": 2}, OUT]}
+# 확산 (DDPM): 잡음을 섞은 입력에서 원래 값을 맞히도록 학습 → 순수한 잡음에서 200번 잡음을 걷어 내 새 샘플
+T_DDPM_MLP = {"id": "ddpm_mlp", "name": "확산 모델 (MLP)",
+              "desc": "잡음을 섞은 신호와 시점(얼마나 섞었나)을 보고 원래 신호를 맞히는 Dense 모델. 새 샘플은 순수한 잡음에서 시작해 "
+                      "200번에 걸쳐 잡음을 걷어 내 만듦. 클래스가 있으면 고른 클래스로 만듦",
+              "when": "VAE보다 또렷한 샘플이 필요할 때. 학습은 더 오래(50 epoch 이상) 걸림",
+              "blocks": [{"type": "flatten"}, _dense(256), TIME, COND, P2, _dense(256), TIME, P2, _dense(256), P2, OUT]}
+T_DDPM_UNET = {"id": "ddpm_unet", "name": "확산 모델 (U-Net)",
+               "desc": "잡음을 섞은 그림과 시점을 보고 원래 그림을 맞히는 작은 U-Net (한 번 줄였다 키우고, 줄이기 전 값과 이어 붙임). "
+                       "새 샘플은 순수한 잡음에서 시작해 200번에 걸쳐 잡음을 걷어 내 만듦. 클래스가 있으면 고른 클래스로 만듦",
+               "when": "그림 데이터에서 VAE보다 또렷한 그림이 필요할 때. 학습은 더 오래(30 epoch 이상) 걸림",
+               "blocks": [{"type": "conv2d", "channels": 32, "kernel": 3}, TIME, COND, P2,
+                          {"type": "branch", "branches": [[], [
+                              {"type": "conv2d", "channels": 64, "kernel": 3, "stride": 2}, TIME, COND, P2,
+                              {"type": "conv2d", "channels": 64, "kernel": 3}, P2,
+                              {"type": "conv_t2d", "channels": 32, "kernel": 2, "stride": 2}, COND, P2]]},
+                          {"type": "conv2d", "channels": 32, "kernel": 3}, TIME, COND, P2, {"type": "conv2d", "channels": 1, "kernel": 3}, OUT]}
 
 # 구간 분할: 길이를 줄이지 않고 시점마다 상태를 맞힘 (출력 블록이 시점마다 1×1 필터)
 T_SEG_TCN = {"id": "seg_tcn", "name": "TCN (팽창 합성곱)",
@@ -334,15 +365,15 @@ CATALOG = [
      "desc": "데이터를 닮은 새 샘플을 만들어 냅니다 (VAE)",
      "subtasks": [
          {"id": "gen_img", "name": "그림 생성", "input": "image", "available": True, "task": "generation",
-          "desc": "그림들을 줄였다가 되살리도록 학습하고, 잠재 공간에서 뽑은 점으로 새 그림을 만듦. 정답은 필요 없음 (그림만 든 폴더도 됨)",
+          "desc": "그림들을 닮은 새 그림을 만듦 (VAE·확산 모델). 정답은 필요 없음 (그림만 든 폴더도 됨). 클래스 폴더로 나뉘어 있으면 클래스를 골라 만들 수도 있음",
           "examples_text": "부족한 불량 사진 늘려 보기, 손글씨·부품 그림의 변형 만들기, 데이터가 어떤 모양들로 이뤄졌는지 보기",
           "example_data": [["digits_gen", "손글씨 숫자 — 새 숫자 그림 만들기 (32×32)"]],
-          "templates": [T_VAE_CONV, T_VAE_DENSE]},
+          "templates": [T_VAE_CONV, T_CVAE_CONV, T_DDPM_UNET, T_VAE_DENSE]},
          {"id": "gen_ts", "name": "시계열 생성", "input": "timeseries", "available": True, "task": "generation",
-          "desc": "신호들을 줄였다가 되살리도록 학습하고, 잠재 공간에서 뽑은 점으로 새 신호를 만듦. 정답 열은 쓰지 않음",
+          "desc": "신호들을 닮은 새 신호를 만듦 (VAE·확산 모델). 정답 열이 클래스면 클래스를 골라 만들 수도 있음",
           "examples_text": "모의 센서 신호 만들기, 정상 신호의 변형 만들기",
           "example_data": [["ecg_gen", "심전도 박동 — 새 박동 모양 만들기 (의료, 진단용 아님)"]],
-          "templates": [T_VAE_DENSE]},
+          "templates": [T_VAE_DENSE, T_CVAE_DENSE, T_DDPM_MLP]},
      ]},
     {"id": "multi", "name": "여러 정답 동시에", "icon": "🧩",
      "desc": "한 입력으로 여러 정답(분류·숫자 섞어서)을 함께 맞힙니다",

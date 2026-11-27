@@ -206,21 +206,51 @@ function jobView(path) {
   return { id: job.id, kind: job.kind, state: job.state, progress: job.progress.slice(), result: job.result, error: job.error };
 }
 
-// ------------------------------------------------------------ 생성: 정규분포에서 뽑은 잠재 값 → 디코더 (core.api_generate)
-function generateNew(body) {
+// ------------------------------------------------------------ 생성: VAE는 정규분포에서 뽑은 잠재 값 → 디코더, 확산은 잡음에서 200번 걷어 냄 (core.api_generate)
+async function generateNew(body) {
   if (!W.trained) throw { message: "학습된 모델이 없음", hint: "④ 학습 단계에서 먼저 학습하세요" };
-  if (getData().task !== "generation") throw { message: "생성 과제로 학습한 모델이 아님", hint: "① 과제에서 '생성'을 고르고 학습하세요" };
-  const lat = W.trained.plan.steps.find((st) => st.type === "vae_latent");
-  if (!lat) throw { message: "모델에 VAE 잠재 공간 블록이 없음", hint: "모델에 'VAE 잠재 공간' 블록을 두세요" };
+  const d = getData();
+  if (d.task !== "generation") throw { message: "생성 과제로 학습한 모델이 아님", hint: "① 과제에서 '생성'을 고르고 학습하세요" };
+  const en = E(), tf = en.tf, net = W.trained.net, plan = W.trained.plan, kind = en.genKind(plan);
+  if (!kind) throw { message: "모델에 VAE 잠재 공간이나 확산 시점 블록이 없음", hint: "모델에 'VAE 잠재 공간'이나 '확산 시점' 블록을 두세요" };
   const n = Math.max(1, Math.min(64, Number(body.n) || 16)), seed = Number(body.seed) || 0, scale = body.scale === undefined ? 1 : Number(body.scale);
-  const dim = lat.cfg.dim || 16, z = new Float32Array(n * dim);
+  const K = en.condClasses(plan);
+  const labels = K ? wrapped(W.mod.gen_labels(W.studio, K, n, body.label === undefined || body.label === null ? "" : String(body.label))) : null;
   let s = (seed * 2654435761 + 12345) >>> 0;
   const u = () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (((t ^ (t >>> 14)) >>> 0) + 1) / 4294967297; };
-  for (let i = 0; i < z.length; i++) z[i] = Math.sqrt(-2 * Math.log(u())) * Math.cos(2 * Math.PI * u()) * scale;
+  const normal = (len) => { const z = new Float32Array(len); for (let i = 0; i < len; i++) z[i] = Math.sqrt(-2 * Math.log(u())) * Math.cos(2 * Math.PI * u()); return z; };
+  const yT = labels ? tf.tensor1d(Int32Array.from(labels), "int32") : null;
   let out;
-  try { out = E().tf.tidy(() => W.trained.net.generate(E().tf.tensor2d(z, [n, dim]))).dataSync().slice(); }
-  catch (e) { throw { message: String(e.message || e), hint: "모델에 'VAE 잠재 공간' 블록을 두고, 그 뒤 블록이 앞쪽 블록을 쓰지 않게 하세요" }; }
-  return wrapped(W.mod.gen_view(W.studio, new Uint8Array(out.buffer), n, seed));
+  try {
+    if (kind === "diffusion") {                          // generate.sample: x_T ~ N(0, 1) → 시점마다 잡음을 걷어 냄
+      const { beta, alpha, ab } = en.SCHED, F = d.n_features;
+      const probe = en.toInput(new Float32Array(F), 1, net.kind, d.length, d.image, d.channels), shape = [n].concat(probe.shape.slice(1));
+      probe.dispose();
+      const lo = new Float32Array(F).fill(Infinity), hi = new Float32Array(F).fill(-Infinity);   // 학습 데이터의 열마다 범위 (x₀를 자름)
+      for (let i = 0; i < d.X_train.length; i++) { const j = i % F, v = d.X_train[i]; if (v < lo[j]) lo[j] = v; if (v > hi[j]) hi[j] = v; }
+      const loT = tf.tensor(lo, [1].concat(shape.slice(1))), hiT = tf.tensor(hi, [1].concat(shape.slice(1)));
+      let x = tf.tensor(normal(n * F), shape).mul(scale);
+      for (let t = en.T_STEPS - 1; t >= 0; t--) {
+        const nx = tf.tidy(() => {
+          net.cond = { y: yT, t: tf.fill([n], t) };
+          const abPrev = t > 0 ? ab[t - 1] : 1;                // generate.step: 모델이 맞힌 x₀를 범위로 자르고 사후 평균
+          const x0 = tf.minimum(tf.maximum(net.forward(x, false).reshape(shape), loT), hiT);
+          let m = x0.mul((Math.sqrt(abPrev) * beta[t]) / (1 - ab[t])).add(x.mul((Math.sqrt(alpha[t]) * (1 - abPrev)) / (1 - ab[t])));
+          if (t > 0) m = m.add(tf.tensor(normal(n * F), shape).mul(Math.sqrt((beta[t] * (1 - ab[t - 1])) / (1 - ab[t])) * scale));
+          return m;
+        });
+        x.dispose(); x = nx;
+        if (t % 20 === 0) await new Promise((r) => setTimeout(r, 0));   // 화면이 멈추지 않게
+      }
+      out = x.dataSync().slice();
+      [x, loT, hiT].forEach((v) => v.dispose());
+    } else {
+      const lat = plan.steps.find((st) => st.type === "vae_latent"), dim = lat.cfg.dim || 16, z = normal(n * dim).map((v) => v * scale);
+      out = tf.tidy(() => { net.cond = { y: yT }; return net.generate(tf.tensor2d(z, [n, dim])); }).dataSync().slice();
+    }
+  } catch (e) { throw { message: String(e.message || e), hint: "모델에 'VAE 잠재 공간'이나 '확산 시점' 블록을 두고, VAE면 잠재 공간 뒤 블록이 앞쪽 블록을 쓰지 않게 하세요" }; }
+  finally { net.cond = null; if (yT) yT.dispose(); }
+  return wrapped(W.mod.gen_view(W.studio, new Uint8Array(out.buffer), n, seed, JSON.stringify(labels)));
 }
 
 // ------------------------------------------------------------ 샘플 따라가기
@@ -506,7 +536,7 @@ async function api(path, body) {
     if (path === "/api/project/open") return await projectOpen(body);
     if (path === "/api/runs/restore") return await runRestore(body);
     if (path === "/api/predict") return await predictNew(body);
-    if (path === "/api/generate") return generateNew(body || {});
+    if (path === "/api/generate") return await generateNew(body || {});
     if (path === "/api/preview") return await preview(body);
     if (path === "/api/anomaly/threshold") {                // 이상 탐지 기준값: Python 결과와 엔진 쪽 결과 둘 다
       const r = pyCall(method, path, body);

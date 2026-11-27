@@ -177,6 +177,11 @@ class Dataset:
             label = lambda i: self.classes[int(self.y_train[i])]
             if self.task == "anomaly":                          # 학습에는 정상만: 미리보기는 시험의 이상도 함께
                 return self._ae_summary(counts)
+        elif self.task == "generation" and (self.extra or {}).get("labels"):   # 생성 (클래스 있음): 클래스 조건 블록이 씀
+            names = self.extra["labels"]
+            counts = {name: int((y_all == k).sum()) for k, name in enumerate(names)}
+            picks = list(range(min(6, len(self.y_train))))
+            label = lambda i: names[int(self.y_train[i])]
         else:
             counts = {}
             picks = list(range(min(6, len(self.y_train))))
@@ -191,7 +196,8 @@ class Dataset:
                 "predict_kinds": self._predict_kinds(),
                 "feature_means": None if self.image or self.length > 40 else
                 [round(float(v), 4) for v in self.raw(self.X_train).mean(0)],    # ⑤ 직접 넣기 칸의 처음 값
-                "preview": [{"label": label(i), "values": [round(float(v), 5) for v in raw[i]]} for i in picks]}
+                "preview": [{"label": label(i), "values": [round(float(v), 5) for v in raw[i]]} for i in picks],
+                **({"gen_labels": list((self.extra or {}).get("labels") or [])} if self.task == "generation" else {})}
 
     def _channel_info(self) -> dict:
         C = channels_of(self.length)

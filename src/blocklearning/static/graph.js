@@ -11,7 +11,7 @@ const BOX_W = 236, BOX_H = 50, MERGE_W = 104, MERGE_H = 30, GAP_Y = 34, GAP_X = 
 const CATS = [["dense", "완전연결 (Dense)"], ["conv", "합성곱 (Conv)"], ["pool", "줄이기·모으기 (Pooling)"], ["up", "키우기 (Upsampling)"],
   ["rnn", "순환 (RNN)"], ["attn", "어텐션 (Attention)"], ["tf", "Transformer 부품"], ["norm", "정규화 (Normalization)"],
   ["act", "활성화 (Activation)"], ["reg", "과적합 막기 (Regularization)"], ["merge", "합치기·나누기"], ["shape", "모양 바꾸기"],
-  ["prep", "입력 변환"], ["aug", "증강 (학습 때만)"], ["pre", "사전학습 (고정)"], ["gen", "생성 (VAE)"], ["pack", "묶음 (자주 쓰는 조합)"]];
+  ["prep", "입력 변환"], ["aug", "증강 (학습 때만)"], ["pre", "사전학습 (고정)"], ["gen", "생성"], ["pack", "묶음 (자주 쓰는 조합)"]];
 const COLORS = { input: "gray", dense: "gray", conv: "teal", pool: "teal", up: "teal", rnn: "coral", attn: "blue", tf: "blue", norm: "amber",
   act: "purple", reg: "gray", merge: "add", shape: "gray", prep: "pink", aug: "pink", pre: "blue", gen: "purple", out: "coral", pack: "gray" };
 // 블록이 받는 모양: seq (채널, 길이) · img (채널, 높이, 너비) · sp (둘 다) · any
@@ -105,6 +105,8 @@ const PALETTE = {
   rand_stretch: P("aug", "RandomStretch", "학습 때 신호를 시간 방향으로 늘이고 줄임", () => ({ type: "rand_stretch", frac: 0.1 })),
   mnv3s: P("pre", "MobileNetV3-Small", "ImageNet으로 미리 학습한 특징 1024개 (가중치 고정)", () => ({ type: "mnv3s", size: 128 })),
   vae_latent: P("gen", "VAE 잠재 공간", "숫자 묶음 → 정규분포 위의 점 (앞은 인코더, 뒤는 디코더). 생성 과제에서 새 샘플을 만드는 자리", () => ({ type: "vae_latent", dim: 16, beta: 1 })),
+  time_embed: P("gen", "확산 시점", "잡음을 얼마나 섞었는지(시점)를 채널마다 더함. 이 블록이 있으면 확산 모델로 학습하고 잡음을 걷어 내며 새 샘플을 만듦", () => ({ type: "time_embed" })),
+  class_cond: P("gen", "클래스 조건", "샘플의 클래스를 채널마다 더함. 생성 과제에서 클래스를 골라 그 클래스를 닮은 샘플을 만듦", () => ({ type: "class_cond", classes: 10 })),
   tv_backbone: P("pre", "ResNet18", "ImageNet 사전학습 특징 512개 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "resnet18", size: 224, tune: "frozen" })),
   "tv_backbone:resnet50": P("pre", "ResNet50", "ImageNet 사전학습 특징 2048개 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "resnet50", size: 224, tune: "frozen" })),
   "tv_backbone:efficientnet_b0": P("pre", "EfficientNet-B0", "ImageNet 사전학습 특징 1280개, 가볍고 정확 (설치형, torchvision)", () => ({ type: "tv_backbone", arch: "efficientnet_b0", size: 224, tune: "frozen" })),
@@ -637,6 +639,8 @@ const LABELS = {
   rand_zoom: (b) => `RandomZoom · ±${b.frac ?? 0.1}`, rand_scale: (b) => `RandomScale · ±${b.frac ?? 0.2}`,
   rand_stretch: (b) => `RandomStretch · ±${b.frac ?? 0.1}`,
   vae_latent: (b) => `VAE 잠재 공간 · ${b.dim || 16}차원` + ((b.beta ?? 1) !== 1 ? ` · β ${b.beta}` : ""),
+  time_embed: () => "확산 시점",
+  class_cond: (b) => `클래스 조건 · ${b.classes || 10}개`,
   tv_backbone: (b) => `${TV_NAMES[b.arch] || b.arch} · ${b.size || 224}×${b.size || 224} · ${{ frozen: "고정", last: "마지막 단계 학습", all: "전체 학습" }[b.tune || "frozen"]}`,
   mnv3s: (b) => `MobileNetV3-Small · ${b.out === "map" ? "특징 지도" : `${b.size || 128}×${b.size || 128}`} · ${b.train_last ? `끝 ${b.train_last}블록 학습` : "고정"}`,
 };
@@ -679,6 +683,7 @@ const FIELDS = {
   rand_flip: [sel("dir", "방향 (그림)", [["h", "좌우"], ["v", "상하"], ["hv", "좌우·상하"]])],
   rand_rotate: [num("degrees", "최대 각도 (±도)", 1, 180)],
   vae_latent: [num("dim", "잠재 차원 (요약할 값 수)", 1, 256), sel("beta", "β (KL 무게: 크면 뽑은 샘플이 고르고, 작으면 되살림이 정확)", vals(0.1, 0.5, 1, 2, 4))],
+  class_cond: [num("classes", "클래스 수 (데이터의 클래스 수 이상)", 2, 1000)],
   tv_backbone: [sel("arch", "모델", Object.entries(TV_NAMES)),
     sel("size", "입력 크기", [64, 96, 128, 160, 224, 256, 384].map((v) => [v, `${v}×${v}`])),
     sel("tune", "함께 학습 (미세조정)", [["frozen", "없음 (고정, 빠름)"], ["last", "마지막 단계"], ["all", "전체 (느림, 데이터 많을 때)"]])],

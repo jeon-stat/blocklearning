@@ -642,6 +642,7 @@ async function loadData(body) {                       // 성공하면 true
 function clearPredictView() {                            // 예측 결과는 그 모델·데이터의 것: 바뀌면 지움
   $("predict-result").hidden = true;
   for (const id of ["predict-cards", "predict-table", "predict-gallery", "predict-note", "predict-issues", "gen-out"]) if ($(id)) $(id).innerHTML = "";
+  $("gen-judge").hidden = true;
   st.predictCsv = st.genCsv = null;
   st.genSeed = 0;
   $("gen-csv").disabled = true;
@@ -1273,6 +1274,7 @@ function renderGenResult(r) {
   $("det-box").innerHTML = `<h3>시험 샘플 → 되살린 것</h3><div class="gen-grid pair${wide}">` +
     r.recon.map((p) => `<div class="gen-cell">${genPic(p.input, 110)}${genPic(p.output, 110)}</div>`).join("") + `</div>`;
   $("gen-out").innerHTML = "";                                // 모델이 바뀌었으니 ⑤의 샘플은 새로
+  $("gen-judge").hidden = true;
   st.genSeed = 0;
   st.genCsv = null;
   $("gen-csv").disabled = true;
@@ -1282,14 +1284,37 @@ async function makeGen() {
   try {
     const seed = st.genSeed || 0;
     st.genSeed = seed + 1;
-    const g = await api("/api/generate", { n: 16, seed, scale: Number($("gen-scale").value) });
+    const label = $("gen-class-wrap").hidden || $("gen-class").value === "" ? undefined : Number($("gen-class").value);
+    $("gen-make").disabled = true;
+    const g = await api("/api/generate", { n: 16, seed, scale: Number($("gen-scale").value), label });
     st.genCsv = g.csv;
     $("gen-csv").disabled = false;
     $("gen-out").className = "gen-grid" + (st.summary.image ? "" : " wide");
-    $("gen-out").innerHTML = g.samples.map((v) => `<div class="gen-cell">${genPic(v, 110)}</div>`).join("");
+    const j = g.judge;                                       // 분류기 채점 (진짜 데이터로 만든 kNN이 고른 클래스로 보나)
+    $("gen-out").innerHTML = g.samples.map((v, i) => {
+      const miss = j && j.pred[i] !== g.classes[i];
+      return `<div class="gen-cell${g.classes ? " cap" : ""}">${genPic(v, 110)}` +
+        (g.classes ? `<div class="${miss ? "gen-miss" : "muted"}">${esc(g.classes[i])}${miss ? ` → ${esc(j.pred[i])}` : ""}</div>` : "") + `</div>`;
+    }).join("");
+    $("gen-judge").hidden = !j;
+    $("gen-judge").innerHTML = j ? [["분류기 채점 (고른 클래스로 봄)", `${pct(j.acc)} <span class="muted">${j.hit}/${j.n}</span>`],
+      ["진짜 시험 데이터", pct(j.real_acc)]]
+      .map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`).join("") : "";
   } catch (e) { showError(e); }
+  finally { $("gen-make").disabled = false; }
+}
+function genClassOptions() {                               // 클래스 조건 블록으로 학습했고 데이터에 클래스가 있으면 고를 칸
+  const names = (st.summary && st.summary.gen_labels) || [];
+  const on = names.length > 1 && !!st.trainedGraph && JSON.stringify(st.trainedGraph).includes('"class_cond"');
+  $("gen-class-wrap").hidden = !on;
+  const key = on ? names.join("\u0001") : "";
+  if (on && $("gen-class").dataset.key !== key) {
+    $("gen-class").dataset.key = key;
+    $("gen-class").innerHTML = `<option value="">모두</option>` + names.map((c, i) => `<option value="${i}">${esc(c)}</option>`).join("");
+  }
 }
 $("gen-make").onclick = makeGen;
+$("gen-class").onchange = makeGen;
 $("gen-csv").onclick = () => {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([st.genCsv], { type: "text/csv;charset=utf-8" }));
@@ -1859,6 +1884,7 @@ function renderPredictStep() {
   $("predict-inputs").hidden = !!guard || gen;
   $("gen-step").hidden = !!guard || !gen;
   if (gen) $("predict-result").hidden = true;
+  if (gen) genClassOptions();
   if (gen && !guard && !$("gen-out").innerHTML) makeGen();
   document.querySelectorAll("#predict-inputs [data-kind]").forEach((el) => (el.hidden = !kinds.includes(el.dataset.kind)));
   $("predict-format").textContent = s ? kinds.filter((k) => PREDICT_FORMAT[k]).map((k) => PREDICT_FORMAT[k](s)).join(" ") : "";

@@ -454,18 +454,36 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
     else:
         loss, ytype = "nn.CrossEntropyLoss()", "torch.long"
     oc = _optim(tr)
+    cond = task == "generation" and any(s.type == "class_cond" for s in plan.steps)     # 조건부 생성: 클래스를 넣어 학습·생성
+    diff = task == "generation" and any(s.type == "time_embed" for s in plan.steps)     # 확산 모델
+    in_shape = (plan.in_shape[1], 1) if plan.kind == "rnn" else tuple(plan.in_shape)
+    if cond or diff:
+        n_cls = len((data_info or {}).get("gen_labels") or []) or min(s.cfg.get("classes", 10) for s in plan.steps if s.type == "class_cond") if cond else 0
+        lines += _torch_gen_code(diff, cond, lat, in_shape, n_cls)
+        step = f"gen_loss(model, X[idx], y[idx]{', c[idx]' if cond else ''})"
+    else:
+        step = "loss_fn(model(X[idx]), y[idx])" + (" + vae_kl(model) / y.shape[1]" if lat is not None else "")
     lines += _lr_at_code(oc) + [
-        f"def train(model, X, y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}):",
-        f'    """X: 위 입력 모양의 배열, y: {_y_doc(task)}. {_optim_doc(oc)}"""',
+        f"def train(model, X, y, epochs={tr['epochs']}, lr={tr['lr']}, batch_size={tr['batch_size']}{', labels=None' if cond else ''}):",
+        f'    """X: 위 입력 모양의 배열, y: {_y_doc(task)}.{" labels: 샘플마다 클래스 번호 (클래스 조건 블록이 씀)." if cond else ""} {_optim_doc(oc)}"""',
         "    X = torch.as_tensor(X, dtype=torch.float32)",
         f"    y = torch.as_tensor(y, dtype={ytype})" + (".reshape(len(X), -1)" if task in ("regression", "forecast", "anomaly", "multi", "generation") else ""),
+        *(["    c = torch.zeros(len(X), dtype=torch.long) if labels is None else torch.as_tensor(labels, dtype=torch.long)"] if cond else []),
         *_optim_mod().code_lines(oc),
         f"    loss_fn = {'lambda out, t: studio_loss(out, t, model)' if custom else loss}",
-        *_train_loop(oc, "loss_fn(model(X[idx]), y[idx])" + (" + vae_kl(model) / y.shape[1]" if lat is not None else "")),
+        *_train_loop(oc, step),
+        *(["    set_cond(model)"] if cond or diff else []),
         "    return model.eval()",
         "", "",
     ]
-    if lat is not None:
+    if cond and not diff:
+        lines += ["def generate(model, n=16, label=None):",
+                  '    """정규분포에서 뽑은 잠재 값 n개 → 새 샘플 (학습할 때와 같은 정규화한 값). label: 만들 클래스 번호 (없으면 돌아가며)."""',
+                  "    model.eval()",
+                  "    set_cond(model, y=torch.arange(n) % N_CLASSES if label is None else torch.full((n,), int(label)))",
+                  "    with torch.no_grad():", f"        out = model.decode(torch.randn(n, {lat.cfg.get('dim', 16)}))",
+                  "    set_cond(model)", "    return out", "", ""]
+    if lat is not None and not (cond or diff):
         lines += ["def vae_kl(model):", '    """학습 중 VAE 잠재 공간 블록들의 β·KL (손실에 출력 수로 나눠 더함)."""',
                   "    return sum(m.beta * m.kl for m in model.modules() if isinstance(m, VAELatent) and m.kl is not None)", "", "",
                   "def generate(model, n=16):", '    """정규분포에서 뽑은 잠재 값 n개 → 새 샘플 (학습할 때와 같은 정규화한 값)."""', "    model.eval()",
@@ -513,6 +531,58 @@ def to_pytorch(graph: dict, length: int, n_out: int, image: tuple = None, data_i
               f"    x = torch.randn({ex_shape})", "    with torch.no_grad():",
               f"        print(model(x).shape)       # torch.Size([4, {plan.n_out}])", ""]
     return "\n".join(lines)
+
+
+def _torch_gen_code(diff: bool, cond: bool, lat, in_shape: tuple, n_classes: int = 0) -> list:
+    """조건부 생성·확산 모델 코드: set_cond (클래스·시점 넣기), 학습 한 묶음의 손실 gen_loss, (확산이면) 잡음 일정과 generate."""
+    out = ["def set_cond(model, y=None, t=None):",
+           '    """클래스 조건 블록(y: 샘플마다 클래스 번호)·확산 시점 블록(t: 샘플마다 시점)에 넣을 값. 없으면 그대로 지나감."""',
+           "    for m in model.modules():",
+           '        if type(m).__name__ == "ClassCond":', "            m.y = y",
+           '        elif type(m).__name__ == "TimeEmbed":', "            m.t = t", "", ""]
+    if n_classes:
+        out += [f"N_CLASSES = {n_classes}                                   # 만들 때 클래스를 돌아가며 쓰는 수 (데이터의 클래스 수)", "", ""]
+    if diff:
+        from blocklearning.generate import T_STEPS
+        out += [f"T_STEPS = {T_STEPS}                                    # 확산 시점 수 (cosine 잡음 일정)",
+                "_f = torch.cos((torch.arange(T_STEPS + 1, dtype=torch.float64) / T_STEPS + 0.008) / 1.008 * math.pi / 2) ** 2",
+                "BETA = (1 - _f[1:] / _f[:-1]).clamp(1e-5, 0.999)",
+                "ALPHA = 1 - BETA",
+                "AB = torch.cumprod(ALPHA, 0)                     # ᾱ_t: 시점 t까지 남은 원래 값의 비율", "", "",
+                "def gen_loss(model, x, y, c=None):",
+                '    """확산: 시점 t만큼 잡음을 섞은 x_t = √ᾱ_t·x + √(1-ᾱ_t)·ε 를 넣고 원래 값 x를 맞힘 (y는 쓰지 않음)."""',
+                "    t = torch.randint(0, T_STEPS, (len(x),))",
+                "    eps = torch.randn_like(x)",
+                "    a = AB[t].float().view(-1, *([1] * (x.dim() - 1)))",
+                "    set_cond(model, y=c, t=t.float())",
+                "    return F.mse_loss(model(a.sqrt() * x + (1 - a).sqrt() * eps), x.reshape(len(x), -1))", "", "",
+                "def generate(model, n=16, label=None, lo=None, hi=None):",
+                '    """순수한 잡음에서 시작해 T_STEPS번 잡음을 걷어 낸 새 샘플 n개 (학습할 때와 같은 정규화한 값).'
+                + (' label: 만들 클래스 번호 (없으면 돌아가며).' if cond else '')
+                + ' lo, hi: 학습 X의 열마다 최소·최대 (X.min(0)·X.max(0)) — 걸음마다 맞힌 원래 값을 그 안으로 자름 (주지 않으면 ±3)."""',
+                "    model.eval()",
+                f"    x = torch.randn(n, {', '.join(str(v) for v in in_shape)})",
+                "    lo = torch.full(x.shape[1:], -3.0) if lo is None else torch.as_tensor(lo, dtype=torch.float32).reshape(x.shape[1:])",
+                "    hi = torch.full(x.shape[1:], 3.0) if hi is None else torch.as_tensor(hi, dtype=torch.float32).reshape(x.shape[1:])",
+                "    y = (torch.arange(n) % N_CLASSES if label is None else torch.full((n,), int(label)))" if cond else "    y = None",
+                "    with torch.no_grad():",
+                "        for t in reversed(range(T_STEPS)):",
+                "            set_cond(model, y=y, t=torch.full((n,), float(t)))",
+                "            ab_prev = AB[t - 1] if t > 0 else torch.tensor(1.0, dtype=torch.float64)",
+                "            x0 = model(x).reshape(x.shape).clamp(min=lo, max=hi)   # 모델이 맞힌 원래 값 (범위로 자름)",
+                "            x = (ab_prev.sqrt() * BETA[t] / (1 - AB[t])) * x0 + (ALPHA[t].sqrt() * (1 - ab_prev) / (1 - AB[t])) * x",
+                "            if t > 0:",
+                "                x = x + (BETA[t] * (1 - AB[t - 1]) / (1 - AB[t])).sqrt() * torch.randn_like(x)",
+                "    set_cond(model)",
+                "    return x.reshape(n, -1)", "", ""]
+    else:
+        out += ["def vae_kl(model):", '    """학습 중 VAE 잠재 공간 블록들의 β·KL (손실에 출력 수로 나눠 더함)."""',
+                "    return sum(m.beta * m.kl for m in model.modules() if isinstance(m, VAELatent) and m.kl is not None)", "", "",
+                "def gen_loss(model, x, y, c=None):",
+                '    """조건부 VAE: 클래스를 넣고 되살린 것의 MSE + β·KL ÷ 출력 수."""',
+                "    set_cond(model, y=c)",
+                "    return F.mse_loss(model(x), y) + vae_kl(model) / y.shape[1]", "", ""]
+    return out
 
 
 def _y_doc(task: str) -> str:
@@ -863,7 +933,7 @@ def _keras_lines(s: Step, n_out: int) -> list:
     raise ValueError(f"코드로 바꿀 수 없는 층: {t}")
 
 
-KERAS_UNSUPPORTED = ("mnv3s", "tv_backbone", "vae_latent", "adaptive_pool", "attn_pool", "rmsnorm", "eca", "cbam", "spatial_attn", "linear_attn", "nonlocal",
+KERAS_UNSUPPORTED = ("mnv3s", "tv_backbone", "vae_latent", "class_cond", "time_embed", "adaptive_pool", "attn_pool", "rmsnorm", "eca", "cbam", "spatial_attn", "linear_attn", "nonlocal",
                      "cross_attn", "pos_enc", "cls_token", "embedding", "spectrogram", "rand_scale", "rand_stretch", "drop_path")
 
 
