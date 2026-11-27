@@ -300,14 +300,14 @@ class Split(nn.Module):
 
 
 class Reshape(nn.Module):
-    """값 전체를 (c, 나머지) 줄로 다시 묶음."""
+    """값 전체를 (c, 나머지) 줄로, h가 있으면 (c, h, 나머지) 그림으로 다시 묶음."""
 
-    def __init__(self, c):
+    def __init__(self, c, h=0):
         super().__init__()
-        self.c = c
+        self.c, self.h = c, h
 
     def forward(self, x):
-        return x.reshape(x.shape[0], self.c, -1)
+        return x.reshape(x.shape[0], self.c, self.h, -1) if self.h else x.reshape(x.shape[0], self.c, -1)
 
 
 class Transpose(nn.Module):

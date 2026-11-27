@@ -494,7 +494,7 @@ const EXTRA = {
   },
   gaussian_noise: (x, st, P, k, training) => (training ? x.add(tf.randomNormal(x.shape).mul(st.cfg.std ?? 0.1)) : x),
   slice: (x, st) => { const b = new Array(x.rank).fill(0), s = new Array(x.rank).fill(-1); b[1] = st.cfg.start || 0; s[1] = st.cfg.count; return x.slice(b, s); },
-  reshape: (x, st) => x.reshape([x.shape[0], st.cfg.channels, -1]),
+  reshape: (x, st) => x.reshape(st.cfg.height ? [x.shape[0], st.cfg.channels, st.cfg.height, -1] : [x.shape[0], st.cfg.channels, -1]),
   permute: (x) => tf.transpose(x, x.rank === 3 ? [0, 2, 1] : [0, 1, 3, 2]),
   to_seq: (x) => x.reshape([x.shape[0], x.shape[1], -1]),
   crop: (x, st) => { const a = st.cfg.amount || 1, b = [0, 0].concat(x.shape.slice(2).map(() => a)), s = [-1, -1].concat(x.shape.slice(2).map((v) => v - 2 * a)); return x.slice(b, s); },

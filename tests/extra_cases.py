@@ -113,6 +113,8 @@ def extra_cases():
         merge_case("multiply"), merge_case("average"), merge_case("maximum"),
         case("slice", "s", [("slice", {"start": 1, "count": 2})]),
         case("reshape", "s", [("reshape", {"channels": 8})]),
+        case("reshape_img", "s", [("reshape", {"channels": 2, "height": 6}), ("conv2d", {"channels": 3, "kernel": 3, "stride": 1})]),
+        case("reshape_img2d", "i", [("reshape", {"channels": 2, "height": 4})]),
         case("permute", "s", [("permute", {})]),
         case("permute2d", "i", [("permute", {})]),
         case("to_seq", "i", [("to_seq", {}), ("conv", {"channels": 3, "kernel": 3, "stride": 1})]),

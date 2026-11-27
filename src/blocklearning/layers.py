@@ -99,7 +99,8 @@ EXTRA_PARAMS = {
     "patch_embed": [("patch", 2, 8, 4, (2, 4, 8), "조각 크기는 2·4·8"), ("dim", 1, 256, 32, None, "dim은 1–256")],
     "groupnorm": [("groups", 1, 32, 4, (1, 2, 4, 8, 16, 32), "groups는 1·2·4·8·16·32")],
     "slice": [("start", 0, 1024, 0, None, "시작 채널은 0 이상"), ("count", 1, 1024, None, None, "채널 수는 1 이상")],
-    "reshape": [("channels", 1, 65536, None, None, "채널 수는 1 이상")],
+    "reshape": [("channels", 1, 65536, None, None, "채널 수는 1 이상"),
+                ("height", 0, 65536, 0, None, "높이는 0(줄로 묶음) 또는 1 이상")],
     "crop": [("amount", 1, 64, 1, None, "자르는 칸은 1–64")],
     "pad": [("amount", 1, 64, 1, None, "채우는 칸은 1–64")],
     "rand_rotate": [("degrees", 1, 180, 15, None, "각도는 1–180")],
@@ -222,7 +223,13 @@ def shape(w, b: dict, shape_in, path, ctx):
         if n % o("channels"):
             w.issue(path, f"Reshape: 값 {n}개를 채널 {o('channels')}개로 나눌 수 없음", f"{n}의 약수로 정하세요")
             return None
-        return (o("channels"), n // o("channels"))
+        rest = n // o("channels")
+        if not o("height"):                                  # 줄 (채널, 나머지)
+            return (o("channels"), rest)
+        if rest % o("height"):
+            w.issue(path, f"Reshape: 채널마다 값 {rest}개를 높이 {o('height')}로 나눌 수 없음", f"{rest}의 약수로 정하세요")
+            return None
+        return (o("channels"), o("height"), rest // o("height"))   # 그림 (채널, 높이, 너비)
     if t in ("rand_flip", "rand_shift"):
         return s if _need(w, t, s, (2, 3), path) else None
     if t in ("rand_rotate", "rand_zoom"):
@@ -541,7 +548,7 @@ def torch_args(t: str, b: dict, ins, ins2=None):
     if t == "slice":
         return "Split", {"start": o("start"), "count": o("count")}
     if t == "reshape":
-        return "Reshape", {"c": o("channels")}
+        return "Reshape", dict({"c": o("channels")}, **({"h": o("height")} if o("height") else {}))
     if t == "permute":
         return "Transpose", {}
     if t == "to_seq":

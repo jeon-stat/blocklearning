@@ -895,6 +895,8 @@ def _keras_extra(s: Step) -> list:
         c = o("channels")
         first = "(0, 2, 1)" if rank == 2 else "(0, 3, 1, 2)" if rank == 3 else None
         pre = f"tf.transpose(t, {first})" if first else "t"
+        if len(s.out_shape) == 3:                            # 그림 (채널, 높이, 너비) → Keras는 (높이, 너비, 채널)
+            return [f"{n} = layers.Lambda(lambda t: tf.transpose(tf.reshape({pre}, (-1, {c}, {s.out_shape[1]}, {s.out_shape[2]})), (0, 2, 3, 1)), {nm})({a})"]
         return [f"{n} = layers.Lambda(lambda t: tf.transpose(tf.reshape({pre}, (-1, {c}, {s.out_shape[1]})), (0, 2, 1)), {nm})({a})"]
     if t == "permute":
         return [f"{n} = layers.Permute({'(2, 1)' if rank == 2 else '(2, 1, 3)'}, {nm})({a})"]
